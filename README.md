@@ -301,23 +301,34 @@ per-aircraft automatically: the plugin resolves it in this order (see
 `ResolveSharedCockpitConfigPath`) —
 
 1. `$XPMULTICREW_SHARED_COCKPIT_FILE`, if set — explicit override.
-2. `XPMultiCrew_shared_cockpit_profiles/<ICAO type>.txt`, if that file
-   exists for the aircraft you're currently flying (e.g.
-   [`XPMultiCrew_shared_cockpit_profiles/C172.txt`](XPMultiCrew_shared_cockpit_profiles/C172.txt),
-   a complete, real-`DataRefs.txt`-checked list for the default X-Plane 12
-   Cessna 172SP) — add a `<ICAO>.txt` file here for any other aircraft you
-   fly, no ROLE/PEER needed in it, just `DATAREF` lines.
-3. `XPMultiCrew_shared_cockpit.txt` (copy from
+2. `XPMultiCrew_shared_cockpit_profiles/<ICAO type>.txt`, next to X-Plane,
+   if that file exists for the aircraft you're currently flying — your own
+   override/customization, checked first so it always wins if present. Add
+   a `<ICAO>.txt` file here for any aircraft, no ROLE/PEER needed in it,
+   just `DATAREF` lines.
+3. The profile bundled *with the plugin itself*
+   (`Resources/plugins/XPMultiCrew/Resources/shared_cockpit_profiles/<ICAO type>.txt`) —
+   ships pre-populated (currently
+   [`C172.txt`](plugin/Resources/shared_cockpit_profiles/C172.txt), a
+   complete, real-`DataRefs.txt`-checked list for the default X-Plane 12
+   Cessna 172SP) and is (re)installed automatically every time the plugin
+   is installed/updated via the companion app, so only one person ever has
+   to figure out a correct `DATAREF` list for a given aircraft and everyone
+   benefits — no manual setup needed for aircraft that already have one.
+4. `XPMultiCrew_shared_cockpit.txt` (copy from
    [`XPMultiCrew_shared_cockpit.example.txt`](XPMultiCrew_shared_cockpit.example.txt)) —
-   flat fallback for aircraft without a profile yet. If this file also sets
-   `ROLE`/a direct `PEER` address, the plugin auto-starts with that manual
-   peer on `XPluginEnable` instead of waiting for the companion app — that
-   ROLE/PEER pair is ignored once you start Shared Cockpit from the
-   companion app instead (which always goes through the rendezvous
-   server).
+   flat fallback for aircraft without a profile anywhere above. If this
+   file also sets `ROLE`/a direct `PEER` address, the plugin auto-starts
+   with that manual peer on `XPluginEnable` instead of waiting for the
+   companion app — that ROLE/PEER pair is ignored once you start Shared
+   Cockpit from the companion app instead (which always goes through the
+   rendezvous server).
 
 Both of you need to be flying the same aircraft (and have the same profile
-file on both machines) — plan's first target: standard Cessna 172.
+file on both machines) — plan's first target: standard Cessna 172, which
+now works out of the box thanks to the bundled profile above. Want another
+aircraft supported for everyone? Add a `<ICAO>.txt` under
+`plugin/Resources/shared_cockpit_profiles/` and open a PR.
 
 **Verified so far:** the wire format (`shared_cockpit/dataref_sync_protocol.h`)
 and the Euler→quaternion conversion used to hand physics back cleanly

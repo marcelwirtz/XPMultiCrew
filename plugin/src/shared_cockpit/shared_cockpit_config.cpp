@@ -70,15 +70,28 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
     return config;
 }
 
-std::string ResolveSharedCockpitConfigPath(const std::string& default_path, const std::string& icao_type) {
+std::string ResolveSharedCockpitConfigPath(const std::string& default_path, const std::string& icao_type,
+                                            const std::string& plugin_resources_path) {
     if (const char* env = std::getenv("XPMULTICREW_SHARED_COCKPIT_FILE")) {
         return env;
     }
     if (!icao_type.empty()) {
-        const std::string profile_path =
+        // A user's own override/customization, next to X-Plane, always
+        // wins over the plugin's bundled default if present.
+        const std::string user_profile_path =
             std::string(kSharedCockpitProfilesDir) + "/" + icao_type + ".txt";
-        if (std::ifstream probe(profile_path); probe.is_open()) {
-            return profile_path;
+        if (std::ifstream probe(user_profile_path); probe.is_open()) {
+            return user_profile_path;
+        }
+        // The profile bundled with (and auto-installed alongside) the
+        // plugin itself - see kSharedCockpitProfilesSubdir's comment.
+        if (!plugin_resources_path.empty()) {
+            const std::string bundled_path = plugin_resources_path + "/" +
+                                              std::string(kSharedCockpitProfilesSubdir) + "/" + icao_type +
+                                              ".txt";
+            if (std::ifstream probe(bundled_path); probe.is_open()) {
+                return bundled_path;
+            }
         }
     }
     return default_path;

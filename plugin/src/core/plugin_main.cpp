@@ -943,12 +943,12 @@ PLUGIN_API int XPluginEnable() {
         // The DATAREF list still comes from a config file, even though
         // ROLE/server/code here come from the companion app instead - see
         // the README's Phase 3 "not yet done" note. Prefers a per-aircraft
-        // profile (XPMultiCrew_shared_cockpit_profiles/<ICAO>.txt) over the
-        // flat fallback file if one exists for the current aircraft - see
+        // profile (user override next to X-Plane, then the plugin's own
+        // bundled default) over the flat fallback file - see
         // ResolveSharedCockpitConfigPath's comment.
         const std::string icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
-        const auto file_config = flytogether::LoadSharedCockpitConfig(
-            flytogether::ResolveSharedCockpitConfigPath("XPMultiCrew_shared_cockpit.txt", icao));
+        const auto file_config = flytogether::LoadSharedCockpitConfig(flytogether::ResolveSharedCockpitConfigPath(
+            "XPMultiCrew_shared_cockpit.txt", icao, GetPluginResourcesPath()));
         StartSharedCockpitRendezvous(host, port, role, code, file_config.datarefs);
     };
     if (g_control_listener.Start(control_callbacks)) {
@@ -1013,8 +1013,9 @@ PLUGIN_API int XPluginEnable() {
     }
 
     const std::string enable_icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
-    const flytogether::SharedCockpitConfig shared_cockpit_config = flytogether::LoadSharedCockpitConfig(
-        flytogether::ResolveSharedCockpitConfigPath("XPMultiCrew_shared_cockpit.txt", enable_icao));
+    const flytogether::SharedCockpitConfig shared_cockpit_config =
+        flytogether::LoadSharedCockpitConfig(flytogether::ResolveSharedCockpitConfigPath(
+            "XPMultiCrew_shared_cockpit.txt", enable_icao, GetPluginResourcesPath()));
     if (shared_cockpit_config.enabled) {
         StartSharedCockpit(shared_cockpit_config.role, shared_cockpit_config.peers,
                             shared_cockpit_config.datarefs);

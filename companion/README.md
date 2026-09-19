@@ -197,9 +197,16 @@ sed "s|/absolute/path/to/xpmulticrew-companion-linux-amd64|$(pwd)/build/bin/xpmu
 Then "XPMultiCrew" shows up in your normal application launcher/menu -
 double-click, no terminal needed.
 
-The Shared Cockpit "DATAREF" list (which systems to sync) still comes from
-`XPMultiCrew_shared_cockpit.txt` if present next to X-Plane - this app only
-covers ROLE/PEER and Formation/rendezvous, not yet the dataref list itself.
+The Shared Cockpit "DATAREF" list (which systems to sync) is resolved
+per-aircraft by the plugin itself (see the root README's
+`ResolveSharedCockpitConfigPath` section) - this app's Install/Update
+Plugin action ships and updates the plugin-bundled default profiles
+(currently just the C172) automatically as part of the plugin's own
+`Resources/` folder, no separate step needed here. A user's own override
+file next to X-Plane, or the flat `XPMultiCrew_shared_cockpit.txt`
+fallback, still work exactly as before for aircraft without a bundled
+profile - this app only covers ROLE/PEER and Formation/rendezvous, not the
+dataref list itself.
 
 ## Release binaries
 

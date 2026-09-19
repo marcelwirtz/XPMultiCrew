@@ -85,6 +85,33 @@ int main() {
     assert(config.datarefs[0] == "sim/flightmodel/controls/parkbrake");
     std::printf("Resolved profile path loads correctly\n");
 
+    // 6. A plugin-bundled profile (3rd parameter) is used for an aircraft
+    // with no user override, instead of falling all the way back to the
+    // flat path.
+    const std::string bundled_resources_dir = "bundled_resources";
+    const std::string bundled_profiles_dir =
+        bundled_resources_dir + "/" + std::string(kSharedCockpitProfilesSubdir);
+    fs::create_directories(bundled_profiles_dir);
+    WriteFile(bundled_profiles_dir + "/B738.txt", "DATAREF sim/cockpit/electrical/battery_on\n");
+    const std::string bundled_resolved =
+        ResolveSharedCockpitConfigPath(flat_path, "B738", bundled_resources_dir);
+    assert(bundled_resolved == bundled_profiles_dir + "/B738.txt");
+    std::printf("Falls back to the plugin-bundled profile when no user override exists: %s\n",
+                 bundled_resolved.c_str());
+
+    // 7. ...but a user override at the X-Plane root still wins over the
+    // plugin-bundled default, even when a plugin_resources_path is given.
+    WriteFile(profiles_dir + "/B738.txt", "DATAREF sim/flightmodel/controls/parkbrake\n");
+    assert(ResolveSharedCockpitConfigPath(flat_path, "B738", bundled_resources_dir) ==
+           profiles_dir + "/B738.txt");
+    std::printf("User override still wins over the plugin-bundled profile: OK\n");
+
+    // 8. With neither a user override nor a bundled profile, and a
+    // plugin_resources_path given, this still falls all the way back to
+    // the flat path (bundled dir present, but no file for this ICAO type).
+    assert(ResolveSharedCockpitConfigPath(flat_path, "A320", bundled_resources_dir) == flat_path);
+    std::printf("Falls back to flat path when neither override nor bundled profile exists: OK\n");
+
     fs::current_path(old_cwd);
     fs::remove_all(tmp_dir);
 
