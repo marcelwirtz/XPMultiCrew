@@ -299,6 +299,70 @@ func TestKeepaliveIsAckedForAKnownClient(t *testing.T) {
 	}
 }
 
+func TestJoinSessionIsRateLimitedPerSourceIP(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(1) // creates the session so there's a valid code to (not) find
+	attacker := addrFor(9999)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession})
+	code := sender.messagesTo(a)[0].Code
+	sender.sent = nil
+
+	// The first maxJoinAttemptsPerWindow attempts (even wrong-code ones)
+	// go through normally and get the usual "no such session" error, not
+	// the rate-limit error - guessing a handful of codes must not be
+	// distinguishable from being throttled.
+	for i := 0; i < maxJoinAttemptsPerWindow; i++ {
+		server.HandleMessage(attacker, ClientMessage{Type: MsgJoinSession, Code: "WRONG1"})
+	}
+	msgs := sender.messagesTo(attacker)
+	if len(msgs) != maxJoinAttemptsPerWindow {
+		t.Fatalf("expected %d responses before throttling, got %d: %+v",
+			maxJoinAttemptsPerWindow, len(msgs), msgs)
+	}
+	for _, m := range msgs {
+		if m.Type != MsgError || m.Message == "" {
+			t.Fatalf("expected ordinary 'no such session' errors before throttling, got %+v", m)
+		}
+	}
+
+	// The next attempt from the same source IP - even with the *correct*
+	// code this time - is throttled instead of actually joining. This is
+	// the core property: once over the limit, guessing correctly doesn't
+	// help within the same window.
+	sender.sent = nil
+	server.HandleMessage(attacker, ClientMessage{Type: MsgJoinSession, Code: code})
+	throttled := sender.messagesTo(attacker)
+	if len(throttled) != 1 || throttled[0].Type != MsgError {
+		t.Fatalf("expected a single throttling error, got %+v", throttled)
+	}
+
+	server.mu.Lock()
+	_, joined := server.sessions[code].Members[2]
+	server.mu.Unlock()
+	if joined {
+		t.Fatal("a throttled join_session must not actually join the session, even with the right code")
+	}
+
+	// A different source IP is unaffected by the first one being throttled
+	// (addrFor always returns the same IP, so build one with a different
+	// IP directly).
+	other := &net.UDPAddr{IP: net.ParseIP("198.51.100.7"), Port: 1}
+	sender.sent = nil
+	server.HandleMessage(other, ClientMessage{Type: MsgJoinSession, Code: code})
+	otherMsgs := sender.messagesTo(other)
+	otherJoined := false
+	for _, m := range otherMsgs {
+		if m.Type == MsgSessionCreated {
+			otherJoined = true
+		}
+	}
+	if !otherJoined {
+		t.Fatalf("a different source IP should not be affected by another IP's throttling, got %+v", otherMsgs)
+	}
+}
+
 func TestKeepaliveFromUnknownClientIsHarmless(t *testing.T) {
 	sender := &mockSender{}
 	server := NewServer(sender)

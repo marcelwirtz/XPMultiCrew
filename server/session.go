@@ -27,6 +27,31 @@ const sessionCodeLength = 6
 // ever gets a chance to keep it alive.
 const clientTimeout = 120 * time.Second
 
+// Anti-guessing throttle for join_session: a session code is only 6
+// characters from a 33-character alphabet (~1.3 billion combinations, see
+// randomSessionCode) - fine against an occasional mistyped code, but not
+// against a script trying many codes per second against a server exposed
+// on the open internet, where a successful guess means joining someone
+// else's Shared Cockpit session and taking over their aircraft. Capping
+// how many join_session requests one source IP can make per window
+// doesn't stop a distributed attack (and a spoofed UDP source IP could
+// evade it entirely), but it turns "guess thousands of codes per second"
+// into an impractically slow attack from any single address, at
+// essentially no cost to real users - a reconnecting plugin retries at
+// most a couple of times per window (see plugin_main.cpp's
+// kReconnectRetryInterval).
+const (
+	joinAttemptWindow        = 10 * time.Second
+	maxJoinAttemptsPerWindow = 8
+)
+
+// joinAttemptCounter tracks one source IP's join_session requests within
+// the current joinAttemptWindow.
+type joinAttemptCounter struct {
+	count       int
+	windowStart time.Time
+}
+
 // ClientState is one connected UDP endpoint's membership in a session.
 type ClientState struct {
 	SessionCode string
@@ -57,17 +82,33 @@ type Sender interface {
 type Server struct {
 	sender Sender
 
-	mu            sync.Mutex
-	sessions      map[string]*Session
-	clientsByAddr map[string]*ClientState
+	mu               sync.Mutex
+	sessions         map[string]*Session
+	clientsByAddr    map[string]*ClientState
+	joinAttemptsByIP map[string]*joinAttemptCounter
 }
 
 func NewServer(sender Sender) *Server {
 	return &Server{
-		sender:        sender,
-		sessions:      make(map[string]*Session),
-		clientsByAddr: make(map[string]*ClientState),
+		sender:           sender,
+		sessions:         make(map[string]*Session),
+		clientsByAddr:    make(map[string]*ClientState),
+		joinAttemptsByIP: make(map[string]*joinAttemptCounter),
 	}
+}
+
+// allowJoinAttempt reports whether ip is still under the join_session rate
+// limit, incrementing its counter (creating/resetting it if its window has
+// elapsed) as a side effect. Caller must hold s.mu.
+func (s *Server) allowJoinAttempt(ip string) bool {
+	now := time.Now()
+	c, ok := s.joinAttemptsByIP[ip]
+	if !ok || now.Sub(c.windowStart) >= joinAttemptWindow {
+		s.joinAttemptsByIP[ip] = &joinAttemptCounter{count: 1, windowStart: now}
+		return true
+	}
+	c.count++
+	return c.count <= maxJoinAttemptsPerWindow
 }
 
 func randomSessionCode() (string, error) {
@@ -128,6 +169,11 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr) {
 func (s *Server) handleJoinSession(addr *net.UDPAddr, code string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if !s.allowJoinAttempt(addr.IP.String()) {
+		s.sender.SendTo(addr, ServerMessage{Type: MsgError, Message: "too many join attempts, please wait and try again"})
+		return
+	}
 
 	session, ok := s.sessions[code]
 	if !ok {
@@ -231,6 +277,11 @@ func (s *Server) removeMemberFromSession(member *ClientState) {
 // that become empty. Call this periodically (see main.go). This is the
 // fallback for clients that go away without sending leave_session first
 // (crash, killed process, lost connectivity).
+//
+// Also prunes expired join_session rate-limit counters (see
+// allowJoinAttempt) - without this, a sustained scan from many distinct
+// source IPs would otherwise grow joinAttemptsByIP without bound for as
+// long as the server runs.
 func (s *Server) SweepStaleClients(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -241,5 +292,11 @@ func (s *Server) SweepStaleClients(now time.Time) {
 		}
 		delete(s.clientsByAddr, addrKey)
 		s.removeMemberFromSession(member)
+	}
+
+	for ip, c := range s.joinAttemptsByIP {
+		if now.Sub(c.windowStart) > joinAttemptWindow {
+			delete(s.joinAttemptsByIP, ip)
+		}
 	}
 }
