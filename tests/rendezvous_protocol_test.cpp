@@ -52,6 +52,39 @@ void TestEncodeClientMessageShapes() {
     std::printf("TestEncodeClientMessageShapes: OK\n");
 }
 
+void TestEncodeClientMessageEscapesCode() {
+    // `code` reaches EncodeClientMessage straight from the companion app's
+    // control-listener protocol with no character-set validation (see
+    // control/control_listener.cpp) - a stray '"' must not corrupt the
+    // JSON this produces.
+    RendezvousClientMessage join;
+    join.type = "join_session";
+    join.code = "AB\"CD";
+    assert(EncodeClientMessage(join) == R"({"type":"join_session","code":"AB\"CD"})");
+
+    RendezvousServerMessage decoded;
+    assert(DecodeServerMessage(EncodeClientMessage(join), decoded));
+    // EncodeClientMessage only ever sets "type"/"code"/"payload", but
+    // DecodeServerMessage's ExtractString is the same escape-aware decoder
+    // used for both directions - round-tripping through it here proves the
+    // escaped quote survives instead of truncating the value.
+    assert(decoded.code == "AB\"CD");
+
+    std::printf("TestEncodeClientMessageEscapesCode: OK\n");
+}
+
+void TestDecodeServerMessageHandlesEscapedQuotes() {
+    // A "message" (or any other string field) containing an escaped quote,
+    // as Go's encoding/json would produce it - must not be truncated at
+    // the escaped quote.
+    RendezvousServerMessage msg;
+    const bool ok = DecodeServerMessage(
+        R"({"type":"error","message":"bad code: \"NOPE\""})", msg);
+    assert(ok);
+    assert(msg.message == "bad code: \"NOPE\"");
+    std::printf("TestDecodeServerMessageHandlesEscapedQuotes: OK\n");
+}
+
 void TestDecodeServerMessageShapes() {
     // Exact shapes server/protocol.go's compact encoding/json.Marshal
     // produces (verified against the real server binary's output).
@@ -132,7 +165,9 @@ int main() {
     TestBase64RoundTripsArbitraryLengths();
     TestBase64KnownVector();
     TestEncodeClientMessageShapes();
+    TestEncodeClientMessageEscapesCode();
     TestDecodeServerMessageShapes();
+    TestDecodeServerMessageHandlesEscapedQuotes();
     TestSplitHostPort();
     std::printf("All rendezvous_protocol tests passed.\n");
     return 0;
