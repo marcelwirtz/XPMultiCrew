@@ -1,6 +1,7 @@
 #include "formation/peer_list.h"
 
-#include <cctype>
+#include "flytogether/string_utils.h"
+
 #include <cstdlib>
 #include <fstream>
 
@@ -15,18 +16,7 @@ std::vector<Peer> LoadPeerList(const std::string& path) {
 
     std::string line;
     while (std::getline(file, line)) {
-        const auto hash_pos = line.find('#');
-        if (hash_pos != std::string::npos) {
-            line = line.substr(0, hash_pos);
-        }
-        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) {
-            line.pop_back();
-        }
-        size_t start = 0;
-        while (start < line.size() && std::isspace(static_cast<unsigned char>(line[start]))) {
-            ++start;
-        }
-        line = line.substr(start);
+        line = TrimConfigLine(line);
         if (line.empty()) {
             continue;
         }

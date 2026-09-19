@@ -1,31 +1,12 @@
 #include "shared_cockpit/shared_cockpit_config.h"
 
+#include "flytogether/string_utils.h"
 #include "formation/rendezvous_protocol.h" // SplitHostPort
 
-#include <cctype>
 #include <cstdlib>
 #include <fstream>
 
 namespace flytogether {
-
-namespace {
-
-std::string Trim(std::string s) {
-    const auto hash_pos = s.find('#');
-    if (hash_pos != std::string::npos) {
-        s = s.substr(0, hash_pos);
-    }
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) {
-        s.pop_back();
-    }
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) {
-        ++start;
-    }
-    return s.substr(start);
-}
-
-} // namespace
 
 SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
     SharedCockpitConfig config;
@@ -37,7 +18,7 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
 
     std::string line;
     while (std::getline(file, line)) {
-        line = Trim(line);
+        line = TrimConfigLine(line);
         if (line.empty()) {
             continue;
         }
@@ -45,7 +26,7 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
         const auto space_pos = line.find(' ');
         const std::string keyword = space_pos == std::string::npos ? line : line.substr(0, space_pos);
         const std::string rest =
-            space_pos == std::string::npos ? std::string() : Trim(line.substr(space_pos + 1));
+            space_pos == std::string::npos ? std::string() : TrimConfigLine(line.substr(space_pos + 1));
 
         if (keyword == "ROLE") {
             if (rest == "MASTER") {
