@@ -86,12 +86,28 @@ void DatarefSync::ApplyValue(WatchedDataref& w, const DatarefValue& value) {
         case DatarefValueType::kDouble:
             XPLMSetDatad(w.ref, value.double_value);
             break;
-        case DatarefValueType::kIntArray:
-            XPLMSetDatavi(w.ref, const_cast<int*>(value.int_array), 0, value.array_len);
+        case DatarefValueType::kIntArray: {
+            // value.array_len comes straight off the network (peer-supplied,
+            // clamped only to kDatarefSyncMaxArrayLen by the decoder) - clamp
+            // it again to this specific dataref's actual element count before
+            // handing it to XPLM, so a peer/protocol mismatch (e.g. a stale
+            // profile watching a dataref that's a shorter array on this
+            // side) can't make XPLMSetDatavi write past the real array.
+            const int real_len = XPLMGetDatavi(w.ref, nullptr, 0, 0);
+            const int count = std::min(value.array_len, real_len);
+            if (count > 0) {
+                XPLMSetDatavi(w.ref, const_cast<int*>(value.int_array), 0, count);
+            }
             break;
-        case DatarefValueType::kFloatArray:
-            XPLMSetDatavf(w.ref, const_cast<float*>(value.float_array), 0, value.array_len);
+        }
+        case DatarefValueType::kFloatArray: {
+            const int real_len = XPLMGetDatavf(w.ref, nullptr, 0, 0);
+            const int count = std::min(value.array_len, real_len);
+            if (count > 0) {
+                XPLMSetDatavf(w.ref, const_cast<float*>(value.float_array), 0, count);
+            }
             break;
+        }
     }
     // Cache the value we just applied so the next Poll() doesn't see it as
     // a new local change and bounce it right back to whoever sent it.
