@@ -1,0 +1,64 @@
+# Shared Cockpit "systems" dataref list for the default X-Plane 12 Cessna
+# 172SP (ICAO type "C172") - see shared_cockpit/shared_cockpit_config.h's
+# ResolveSharedCockpitConfigPath: this file is picked up automatically
+# whenever the current aircraft's ICAO type matches this filename, no
+# ROLE/PEER needed here (those come from the companion app - see the root
+# README's Phase 3 section).
+#
+# Every dataref below was checked against a real X-Plane 12
+# Resources/plugins/DataRefs.txt, not guessed, and all are the "writable"
+# (y) kind. Deliberately NOT included: anything X-Plane only accepts
+# writes to via an override flag (e.g. sim/cockpit2/autopilot/heading_mode
+# needs sim/operation/override/override_autopilot engaged first) - mirroring
+# those blindly wouldn't stick, since X-Plane's own autopilot logic would
+# just overwrite them back next frame. Autopilot *mode engagement* (HDG/NAV/
+# ALT button state) is therefore out of scope for now; the bugs/targets
+# below (heading/altitude/vspeed/airspeed dial) work fine since those are
+# plain pilot-set values, not autopilot-owned state.
+#
+# Also note: flap position and the four exterior lights are NOT already
+# covered by the automatic position/attitude sync (that packet's
+# flap_ratio/light_bits fields are only used to draw OTHER pilots' aircraft
+# in Formation mode - shared_cockpit_sync.h's ApplyMasterPoseToOwnAircraft
+# only ever touches position/heading/pitch/roll on your own aircraft), so
+# they're listed here explicitly too.
+
+# Radios
+DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz
+DATAREF sim/cockpit/radios/transponder_code
+DATAREF sim/cockpit/radios/transponder_mode
+
+# Autopilot bugs/targets (see the note above re: engagement modes)
+DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot
+DATAREF sim/cockpit2/autopilot/altitude_dial_ft
+DATAREF sim/cockpit2/autopilot/vvi_dial_fpm
+DATAREF sim/cockpit2/autopilot/airspeed_dial_kts
+
+# Flight control trim
+DATAREF sim/cockpit2/controls/elevator_trim
+DATAREF sim/cockpit2/controls/aileron_trim
+DATAREF sim/cockpit2/controls/rudder_trim
+
+# Flaps and parking brake
+DATAREF sim/flightmodel/controls/flaprqst
+DATAREF sim/flightmodel/controls/parkbrake
+
+# Engine / fuel
+DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all
+DATAREF sim/cockpit/engine/fuel_pump_on
+DATAREF sim/cockpit/engine/fuel_tank_selector
+
+# Electrical / avionics
+DATAREF sim/cockpit2/electrical/battery_on
+DATAREF sim/cockpit2/electrical/generator_on
+DATAREF sim/cockpit2/switches/avionics_power_on
+DATAREF sim/cockpit/switches/pitot_heat_on
+
+# Exterior lights
+DATAREF sim/cockpit/electrical/beacon_lights_on
+DATAREF sim/cockpit/electrical/landing_lights_on
+DATAREF sim/cockpit/electrical/nav_lights_on
+DATAREF sim/cockpit/electrical/strobe_lights_on

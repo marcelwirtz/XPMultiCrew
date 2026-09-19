@@ -1,0 +1,13 @@
+# Phase 1 LAN peer list for the XPMultiCrew plugin's Formation mode.
+#
+# One "host:port" per line, comments start with #. Every peer listed here
+# receives your own aircraft state; you'll see anyone whose list includes
+# you, regardless of how many entries you have (not hardcoded to 2 peers).
+#
+# Copy this file to "XPMultiCrew_peers.txt" next to where you start
+# X-Plane from (its working directory), or point the plugin at it via the
+# XPMULTICREW_PEERS_FILE environment variable, and fill in real LAN IPs.
+# All peers use UDP port 49002 (flytogether::kFormationUdpPort).
+#
+# 192.168.1.42:49002
+# 192.168.1.77:49002

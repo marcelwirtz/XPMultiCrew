@@ -1,0 +1,233 @@
+name: Release
+
+# Builds the plugin (Linux + Windows), the companion app (Linux + Windows)
+# and the rendezvous server, packages each as a downloadable zip, and
+# publishes them as assets on a GitHub Release - triggered by pushing a
+# version tag, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  XPSDK_URL: https://developer.x-plane.com/wp-content/plugins/code-sample-generation/sdk_zip_files/XPSDK430.zip
+
+jobs:
+  plugin-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch X-Plane SDK
+        run: |
+          mkdir -p third_party
+          curl -sL "$XPSDK_URL" -o xpsdk.zip
+          unzip -q xpsdk.zip -d xpsdk_extract
+          mv xpsdk_extract/SDK third_party/XPSDK
+
+      - name: Fetch XPMP2
+        run: git clone --depth 1 https://github.com/TwinFan/XPMP2.git third_party/XPMP2
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          cd build
+          zip -r ../xpmulticrew-plugin-linux.zip XPMultiCrew
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xpmulticrew-plugin-linux
+          path: xpmulticrew-plugin-linux.zip
+
+  plugin-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch X-Plane SDK
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path third_party -Force | Out-Null
+          Invoke-WebRequest -Uri $env:XPSDK_URL -OutFile xpsdk.zip
+          Expand-Archive -Path xpsdk.zip -DestinationPath xpsdk_extract
+          Move-Item xpsdk_extract/SDK third_party/XPSDK
+
+      - name: Fetch XPMP2
+        run: git clone --depth 1 https://github.com/TwinFan/XPMP2.git third_party/XPMP2
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo
+
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path stage/XPMultiCrew -Force | Out-Null
+          Copy-Item build/XPMultiCrew/RelWithDebInfo/win.xpl stage/XPMultiCrew/
+          Copy-Item build/XPMultiCrew/RelWithDebInfo/Resources stage/XPMultiCrew/Resources -Recurse
+          Compress-Archive -Path stage/XPMultiCrew -DestinationPath xpmulticrew-plugin-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xpmulticrew-plugin-windows
+          path: xpmulticrew-plugin-windows.zip
+
+  companion-linux:
+    needs: plugin-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        run: |
+          # Wails refuses to run if the CLI version doesn't match the
+          # project's go.mod library version, so install exactly that
+          # version instead of @latest (which broke this job once already).
+          wails_version=$(grep -oP 'wailsapp/wails/v2 \K\S+' companion/go.mod)
+          go install "github.com/wailsapp/wails/v2/cmd/wails@${wails_version}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Test
+        working-directory: companion
+        run: go test -tags webkit2_41 ./...
+
+      # Stage the plugin this job's build depends on (plugin-linux, above)
+      # into companion/embedded_plugin/ so the companion binary embeds and
+      # can install it - see companion/plugin_install.go. This is what
+      # turns two separate downloads into the one combined package below.
+      - uses: actions/download-artifact@v4
+        with:
+          name: xpmulticrew-plugin-linux
+          path: .
+
+      - name: Stage plugin for embedding
+        run: unzip -q xpmulticrew-plugin-linux.zip -d companion/embedded_plugin
+
+      - name: Build
+        working-directory: companion
+        run: wails build -tags webkit2_41
+
+      - name: Package
+        run: |
+          mkdir -p stage
+          cp companion/build/bin/xpmulticrew-companion stage/
+          cp companion/xpmulticrew-companion.desktop stage/
+          cd stage && zip ../xpmulticrew-linux.zip xpmulticrew-companion xpmulticrew-companion.desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xpmulticrew-linux
+          path: xpmulticrew-linux.zip
+
+  companion-windows:
+    needs: plugin-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Install Wails CLI
+        shell: pwsh
+        run: |
+          $wailsVersion = (Select-String -Path companion/go.mod -Pattern 'wailsapp/wails/v2 (\S+)').Matches.Groups[1].Value
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$wailsVersion"
+          "$(go env GOPATH)\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Test
+        working-directory: companion
+        run: go test ./...
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: xpmulticrew-plugin-windows
+          path: .
+
+      - name: Stage plugin for embedding
+        shell: pwsh
+        run: Expand-Archive -Path xpmulticrew-plugin-windows.zip -DestinationPath companion/embedded_plugin
+
+      - name: Build
+        working-directory: companion
+        run: wails build
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path companion/build/bin/xpmulticrew-companion.exe -DestinationPath xpmulticrew-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xpmulticrew-windows
+          path: xpmulticrew-windows.zip
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Test
+        working-directory: server
+        run: go test ./...
+
+      - name: Build (Linux + Windows, pure Go so no cross-toolchain needed)
+        working-directory: server
+        run: |
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o ../xpmulticrew-rendezvous-linux-amd64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../xpmulticrew-rendezvous-windows-amd64.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xpmulticrew-rendezvous
+          path: |
+            xpmulticrew-rendezvous-linux-amd64
+            xpmulticrew-rendezvous-windows-amd64.exe
+
+  publish:
+    needs: [companion-linux, companion-windows, server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/xpmulticrew-linux/xpmulticrew-linux.zip
+            artifacts/xpmulticrew-windows/xpmulticrew-windows.zip
+            artifacts/xpmulticrew-rendezvous/xpmulticrew-rendezvous-linux-amd64
+            artifacts/xpmulticrew-rendezvous/xpmulticrew-rendezvous-windows-amd64.exe
+          generate_release_notes: true

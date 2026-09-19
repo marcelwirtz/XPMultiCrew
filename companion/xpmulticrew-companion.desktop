@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=XPMultiCrew
+Comment=Session management companion for the XPMultiCrew X-Plane plugin
+Exec=/absolute/path/to/xpmulticrew-companion-linux-amd64
+Terminal=false
+Categories=Game;Network;

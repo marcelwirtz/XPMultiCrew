@@ -1,0 +1,35 @@
+# Phase 3 Shared Cockpit setup for the XPMultiCrew plugin (docs/plan.md
+# section 6). One directive per line, # comments and blank lines ignored.
+#
+# Copy this file to "XPMultiCrew_shared_cockpit.txt" next to where you
+# start X-Plane from (its working directory), or point the plugin at it
+# via the XPMULTICREW_SHARED_COCKPIT_FILE environment variable.
+#
+# Both of you must be flying the SAME aircraft (plan's first target:
+# standard Cessna 172) - position/attitude sync and the generic dataref
+# sync below both assume that.
+#
+# The pilot who's actually flying (position/attitude authoritative):
+#
+#   ROLE MASTER
+#   PEER 192.168.1.50:49020   # the other pilot's machine
+#   DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz
+#   DATAREF sim/cockpit/radios/transponder_code
+#   DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot
+#   DATAREF sim/flightmodel/controls/parkbrake
+#
+# The other pilot (physics overridden, follows MASTER's position/attitude;
+# can still flip the DATAREF-listed switches - they mirror back to MASTER):
+#
+#   ROLE CLIENT
+#   PEER 192.168.1.42:49020   # the master's machine
+#   DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz
+#   DATAREF sim/cockpit/radios/transponder_code
+#   DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot
+#   DATAREF sim/flightmodel/controls/parkbrake
+#
+# The DATAREF list above is a small starter set (radio, transponder, AP
+# heading bug, parking brake) - not a curated "complete C172 panel". Add
+# whatever datarefs you want mirrored; both sides need the same list.
+# Whoever changes a DATAREF-listed value last wins if both sides touch it
+# near-simultaneously - there's no per-switch ownership/request-release yet.

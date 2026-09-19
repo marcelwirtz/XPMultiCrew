@@ -1,0 +1,15 @@
+# XPMultiCrew's bundled generic CSL package (see docs/plan.md section 5 and
+# the "generic CSL now, richer packages optional later" decision).
+#
+# A single hand-built placeholder model (fuselage/wing/tail boxes, flat
+# orange-red texture - see generic.obj/generic.png) used for every remote
+# aircraft, regardless of its real ICAO type, so Formation mode works with
+# zero manual setup. Format per the OBJ8 CSL spec used by XPMP2/libxplanemp.
+
+EXPORT_NAME XPMultiCrew_Generic
+
+OBJ8_AIRCRAFT Generic
+
+OBJ8 SOLID YES XPMultiCrew_Generic/generic.obj
+
+ICAO GENR

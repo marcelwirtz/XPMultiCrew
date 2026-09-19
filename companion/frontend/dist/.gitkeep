@@ -1,0 +1,1 @@
+placeholder so //go:embed all:frontend/dist has something to embed before the real frontend build runs (see companion/.gitignore)

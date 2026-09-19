@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XPMultiCrew</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14171c;
+    --panel: #1c2027;
+    --border: #2c3138;
+    --text: #e6e8eb;
+    --muted: #8b93a1;
+    --accent: #4da3ff;
+    --accent-hover: #6db4ff;
+    --ok: #5fd97a;
+    --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+    user-select: none;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .panel h2 {
+    font-size: 15px;
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 12px 0 4px;
+  }
+  input[type=text] {
+    width: 100%;
+    padding: 8px 10px;
+    background: #101317;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    user-select: text;
+  }
+  input[type=text]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .row.buttons { margin-top: 16px; }
+  button {
+    flex: 1;
+    padding: 9px 12px;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: #05070a;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  button.secondary:hover { border-color: var(--accent); }
+  .role-toggle {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .role-toggle button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .role-toggle button.active {
+    background: var(--accent);
+    color: #05070a;
+    border-color: var(--accent);
+  }
+  .status {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: #101317;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--muted);
+    word-break: break-word;
+  }
+  .status .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-right: 6px;
+  }
+  .status.ok .dot { background: var(--ok); }
+  .status.err .dot { background: var(--err); }
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .peer-list {
+    margin-top: 10px;
+    font-size: 13px;
+  }
+  .peer-list .empty {
+    color: var(--muted);
+  }
+  .peer-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .peer-list li {
+    padding: 6px 10px;
+    background: #101317;
+    border-radius: 6px;
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .peer-list li .icao {
+    color: var(--muted);
+  }
+  .version-info {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .version-info b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .version-info .update-available b {
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <h1>XPMultiCrew</h1>
+  <div class="subtitle">Companion app — talks to the X-Plane plugin on this machine only.</div>
+
+  <div class="status" id="loading-banner" style="display: none; margin-bottom: 20px;">
+    <span class="dot"></span><span>X-Plane is still loading — Create/Join/Start are disabled until it's done.</span>
+  </div>
+
+  <div class="panel" style="margin-bottom: 20px;">
+    <h2>Setup</h2>
+
+    <label>X-Plane installation folder</label>
+    <div class="row">
+      <input type="text" id="xplane-path" placeholder="Not set — choose your X-Plane folder" readonly>
+      <button id="choose-xplane-btn" class="secondary" style="flex: 0 0 auto;">Choose…</button>
+    </div>
+
+    <div class="row buttons">
+      <button id="install-plugin-btn">Install / Update Plugin</button>
+    </div>
+
+    <div class="status" id="setup-status"><span class="dot"></span><span id="setup-status-text">choose your X-Plane folder, then install the plugin</span></div>
+
+    <div class="version-info" id="version-info">
+      <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
+      <span>Available (bundled with this app): <b id="available-version">—</b></span>
+      <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Formation / Internet play</h2>
+
+      <label for="server">Server (host:port)</label>
+      <input type="text" id="server" placeholder="rendezvous.example.com:45000">
+
+      <label for="code">Session code (leave blank to create a new one)</label>
+      <input type="text" id="code" placeholder="ABC123">
+
+      <div class="row buttons">
+        <button id="create-btn">Create Session</button>
+        <button id="join-btn" class="secondary">Join Session</button>
+      </div>
+
+      <div class="status" id="formation-status"><span class="dot"></span><span id="formation-status-text">loading…</span></div>
+
+      <div class="peer-list" id="peer-list">
+        <div class="empty">no peers connected</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Shared Cockpit</h2>
+
+      <label>Role</label>
+      <div class="role-toggle">
+        <button id="role-master" class="active">MASTER</button>
+        <button id="role-client">CLIENT</button>
+      </div>
+
+      <label for="sc-server">Server (host:port)</label>
+      <input type="text" id="sc-server" placeholder="rendezvous.example.com:45000">
+
+      <label for="sc-code">Session code (MASTER: leave blank to create one)</label>
+      <input type="text" id="sc-code" placeholder="ABC123">
+
+      <div class="row buttons">
+        <button id="start-sc-btn">Start Shared Cockpit</button>
+      </div>
+
+      <div class="status" id="sc-status"><span class="dot"></span><span id="sc-status-text">loading…</span></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

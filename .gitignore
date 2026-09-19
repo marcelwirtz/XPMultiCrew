@@ -1,0 +1,17 @@
+build/
+build-*/
+third_party/XPSDK/
+third_party/XPMP2/
+
+# Internal planning doc - contains personal/private project context not
+# meant for the public repo.
+docs/plan.md
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code session state (not project content)
+.claude/

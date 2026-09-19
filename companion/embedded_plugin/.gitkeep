@@ -1,0 +1,1 @@
+placeholder so //go:embed all:embedded_plugin has something to embed before the real plugin build is staged here (see plugin_install.go and companion/.gitignore)

@@ -1,0 +1,14 @@
+[Unit]
+Description=XPMultiCrew rendezvous/relay server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/xpmulticrew/xpmulticrew-rendezvous -port 45000
+Restart=on-failure
+RestartSec=2
+# No filesystem writes, no elevated privileges needed.
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

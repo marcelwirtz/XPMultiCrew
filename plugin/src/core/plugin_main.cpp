@@ -1,0 +1,1074 @@
+// XPMultiCrew X-Plane plugin.
+//
+// Phase 0 (kept as-is, still runs): reads the aircraft's own position
+// dataref, writes it to X-Plane's Log.txt, and separately sends it as a raw
+// UDP packet to tools/udp_position_listener.
+//
+// Phase 1 (Formation mode LAN MVP, docs/plan.md section 5): reads a richer
+// aircraft state (position, attitude, a few surfaces/lights, ICAO type) and
+// exchanges it with an arbitrary number of peers (formation/peer_list.h)
+// over UDP, tracking each one's dead-reckoned pose (sync/remote_aircraft.h)
+// and drawing it via XPMP2 (TCAS override + XPLMInstance) using a small
+// bundled generic CSL model (plugin/Resources/CSL/Generic) - no manual CSL
+// download required for a first working version.
+//
+// Phase 2 (internet play, docs/plan.md section 7): a rendezvous/relay
+// server (server/) lets Formation peers find each other and exchange state
+// over the internet, not just LAN - see formation/rendezvous_client.h.
+//
+// Phase 3 (Shared Cockpit MVP, docs/plan.md section 6): one master
+// broadcasts its own aircraft's position/attitude, which every client
+// applies to its own aircraft by overriding X-Plane's physics
+// (sim/operation/override/override_planepath) - see
+// shared_cockpit/shared_cockpit_sync.h. A separate, symmetric "systems"
+// sync (shared_cockpit/dataref_sync.h) mirrors an arbitrary configured list
+// of switch/setting datarefs between both sides in either direction, since
+// both peers fly an identical aircraft. No request-release ownership
+// arbitration yet - last write wins.
+
+#include "XPLMDataAccess.h"
+#include "XPLMDefs.h"
+#include "XPLMGraphics.h"
+#include "XPLMPlugin.h"
+#include "XPLMProcessing.h"
+#include "XPLMUtilities.h"
+
+#include "XPMPMultiplayer.h"
+
+#include "control/control_listener.h"
+#include "flytogether/position_packet.h"
+#include "flytogether/udp_socket.h"
+#include "formation/csl_aircraft.h"
+#include "formation/formation_sync.h"
+#include "formation/peer_list.h"
+#include "formation/rendezvous_client.h"
+#include "formation/rendezvous_config.h"
+#include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
+#include "shared_cockpit/dataref_sync.h"
+#include "shared_cockpit/quaternion.h"
+#include "shared_cockpit/shared_cockpit_config.h"
+#include "shared_cockpit/shared_cockpit_sync.h"
+
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <memory>
+#include <random>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+// Set by plugin/CMakeLists.txt via target_compile_definitions, derived
+// from `git describe` - this fallback only matters if someone compiles
+// this file outside that build (IDE tooling, a stray manual invocation).
+#ifndef XPMULTICREW_VERSION
+#define XPMULTICREW_VERSION "unknown"
+#endif
+
+namespace {
+
+flytogether::ControlListener g_control_listener;
+
+// --- Phase 0 spike state (unchanged) ----------------------------------------
+
+XPLMDataRef g_latitude_ref = nullptr;
+XPLMDataRef g_longitude_ref = nullptr;
+XPLMDataRef g_elevation_ref = nullptr;
+
+flytogether::UdpSocket g_udp_socket;
+uint32_t g_sequence = 0;
+
+float LogPositionCallback(float /*elapsedSinceLastCall*/,
+                           float /*elapsedTimeSinceLastFlightLoop*/,
+                           int /*counter*/,
+                           void* /*refcon*/) {
+    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+        const double lat = XPLMGetDatad(g_latitude_ref);
+        const double lon = XPLMGetDatad(g_longitude_ref);
+        const double elev = XPLMGetDatad(g_elevation_ref);
+
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: lat=%.6f lon=%.6f elev=%.1fm\n", lat, lon,
+                      elev);
+        XPLMDebugString(buf);
+    }
+
+    return 5.0f; // reschedule in 5 seconds
+}
+
+float SendPositionOverUdpCallback(float /*elapsedSinceLastCall*/,
+                                   float /*elapsedTimeSinceLastFlightLoop*/,
+                                   int /*counter*/,
+                                   void* /*refcon*/) {
+    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+        flytogether::PositionPacket packet;
+        packet.sequence = g_sequence++;
+        packet.latitude = XPLMGetDatad(g_latitude_ref);
+        packet.longitude = XPLMGetDatad(g_longitude_ref);
+        packet.elevation = XPLMGetDatad(g_elevation_ref);
+
+        g_udp_socket.SendTo("127.0.0.1", flytogether::kSpikeUdpPort, &packet,
+                             sizeof(packet));
+    }
+
+    return 0.2f; // 5 Hz, matches the plan's throttled position update rate
+}
+
+// --- Phase 1: Formation mode LAN MVP ----------------------------------------
+
+XPLMDataRef g_heading_ref = nullptr;
+XPLMDataRef g_pitch_ref = nullptr;
+XPLMDataRef g_roll_ref = nullptr;
+XPLMDataRef g_gear_ref = nullptr;      // sim/flightmodel2/gear/deploy_ratio, float[]
+XPLMDataRef g_flap_ref = nullptr;      // sim/flightmodel/controls/flaprat, float
+XPLMDataRef g_speedbrake_ref = nullptr; // sim/cockpit2/controls/speedbrake_ratio, float
+XPLMDataRef g_engine_ref = nullptr;    // sim/flightmodel/engine/ENGN_thro, float[]
+XPLMDataRef g_beacon_ref = nullptr;
+XPLMDataRef g_strobe_ref = nullptr;
+XPLMDataRef g_nav_ref = nullptr;
+XPLMDataRef g_landing_ref = nullptr;
+
+flytogether::FormationSync g_formation_sync;
+uint32_t g_sender_id = 0;
+uint32_t g_formation_sequence = 0;
+char g_icao_type[9] = {}; // one extra byte so it's always null-terminated
+
+bool g_xpmp_initialized = false;
+std::unordered_map<uint32_t, std::unique_ptr<flytogether::RemoteAircraftXPMP>> g_xpmp_aircraft;
+double g_last_formation_log_s = 0.0;
+std::unordered_map<uint32_t, std::string> g_last_pushed_formation_peers; // for change detection only
+
+// --- Phase 2: rendezvous/relay client (docs/plan.md section 7) -------------
+
+flytogether::RendezvousClient g_rendezvous_client;
+std::unordered_map<int, flytogether::Peer> g_rendezvous_peers; // peer_id -> addr, for RemovePeer on peer_left
+bool g_rendezvous_active = false;
+std::string g_formation_session_code;
+int g_formation_own_peer_id = 0;
+
+// Rebuilds and pushes the Formation status text, including how many
+// peers are currently in the session - called from on_peer_joined and
+// on_peer_left too (not just on_session_ready), so the companion app
+// actually shows when someone joins or leaves instead of only ever
+// showing the state as of when *you* connected. That gap is exactly what
+// silently connecting someone else's aircraft into FormationSync without
+// updating this string used to hide.
+void UpdateFormationStatus() {
+    char status[160];
+    std::snprintf(status, sizeof(status), "connected, code '%s', peer %d - %zu peer(s) online",
+                  g_formation_session_code.c_str(), g_formation_own_peer_id, g_rendezvous_peers.size());
+    g_control_listener.SetFormationStatus(status);
+}
+
+// Wires up g_rendezvous_client's callbacks exactly once, regardless of
+// whether it ends up started from XPMultiCrew_rendezvous.txt or from the
+// companion app - both paths call StartRendezvous() below afterwards.
+void SetupRendezvousCallbacksOnce() {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+
+    g_rendezvous_client.on_session_ready = [](const std::string& code, int your_id) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: rendezvous session ready - code '%s', you are peer "
+                      "%d. Share the code with your co-pilot(s).\n",
+                      code.c_str(), your_id);
+        XPLMDebugString(buf);
+
+        g_formation_session_code = code;
+        g_formation_own_peer_id = your_id;
+        UpdateFormationStatus();
+        g_control_listener.SetFormationCode(code);
+    };
+    g_rendezvous_client.on_peer_joined = [](int peer_id, const std::string& host, uint16_t port) {
+        g_rendezvous_peers[peer_id] = flytogether::Peer{host, port};
+        g_formation_sync.AddPeer(host, port);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: rendezvous peer %d joined at %s:%u\n", peer_id,
+                      host.c_str(), port);
+        XPLMDebugString(buf);
+        UpdateFormationStatus();
+    };
+    g_rendezvous_client.on_peer_left = [](int peer_id) {
+        const auto it = g_rendezvous_peers.find(peer_id);
+        if (it != g_rendezvous_peers.end()) {
+            g_formation_sync.RemovePeer(it->second.host, it->second.port);
+            g_rendezvous_peers.erase(it);
+        }
+        UpdateFormationStatus();
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: rendezvous peer %d left\n", peer_id);
+        XPLMDebugString(buf);
+    };
+    g_rendezvous_client.on_relay_received = [](int /*from_peer_id*/,
+                                                 const std::vector<uint8_t>& bytes) {
+        if (bytes.size() != sizeof(flytogether::AircraftStatePacket)) {
+            return;
+        }
+        flytogether::AircraftStatePacket packet;
+        std::memcpy(&packet, bytes.data(), sizeof(packet));
+        g_formation_sync.IngestPacket(packet, XPLMGetElapsedTime());
+    };
+    g_rendezvous_client.on_error = [](const std::string& message) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: rendezvous error: %s\n", message.c_str());
+        XPLMDebugString(buf);
+        g_control_listener.SetFormationStatus("error: " + message);
+    };
+}
+
+// Callable from either XPMultiCrew_rendezvous.txt's auto-start (XPluginEnable)
+// or the companion app's "Create Session"/"Join Session" requests - clicking a
+// button means the flight loop is already running, which is exactly what
+// sidesteps the loading-screen keepalive-timing bug the file-based path can
+// hit (see server/session.go's clientTimeout comment).
+void StartRendezvous(const std::string& host, uint16_t port, bool create, const std::string& code) {
+    SetupRendezvousCallbacksOnce();
+    if (g_rendezvous_active) {
+        // Always allow a fresh attempt rather than getting permanently
+        // stuck: a previous attempt that opened its socket fine but then
+        // silently failed to actually reach the server (e.g. a DNS
+        // resolution error, now surfaced via on_error instead of being
+        // silent) would otherwise block every future click forever, since
+        // this flag used to only get set on success and never reset short
+        // of a full plugin disable/enable.
+        XPLMDebugString("XPMultiCrew: rendezvous already active, reconnecting fresh\n");
+        g_rendezvous_client.Stop();
+        g_rendezvous_peers.clear();
+        g_rendezvous_active = false;
+    }
+    if (!g_rendezvous_client.Start(host, port)) {
+        XPLMDebugString("XPMultiCrew: failed to start rendezvous client (UDP socket?)\n");
+        g_control_listener.SetFormationStatus("failed to start (UDP socket busy?)");
+        return;
+    }
+    g_rendezvous_active = true;
+    g_control_listener.SetFormationCode(""); // clear any stale code from a previous session
+    g_control_listener.SetFormationStatus("connecting to " + host + ":" + std::to_string(port) + "...");
+    if (create) {
+        g_rendezvous_client.CreateSession();
+    } else {
+        g_rendezvous_client.JoinSession(code);
+    }
+}
+
+// Returns this plugin's own "Resources" folder, e.g.
+// ".../Resources/plugins/XPMultiCrew/Resources", derived from the running
+// plugin's own file path so no hardcoded install location is needed.
+std::string GetPluginResourcesPath() {
+    char path_buf[512] = {};
+    XPLMGetPluginInfo(XPLMGetMyID(), nullptr, path_buf, nullptr, nullptr);
+    std::string path(path_buf);
+    const auto sep_pos = path.find_last_of("/\\");
+    if (sep_pos != std::string::npos) {
+        path.erase(sep_pos);
+    }
+    return path + "/Resources";
+}
+
+// Returns "<X-Plane>/Resources/plugins" - the direct parent of this
+// plugin's own install folder - derived from own_resources_path (as
+// returned by GetPluginResourcesPath() above, ".../plugins/XPMultiCrew/
+// Resources") by stripping two path components. Used only to check the
+// short, explicit allow-list below (kKnownSharedCslDirs), never as a
+// general recursive search root - see that constant's comment for why.
+std::string GetXPlanePluginsRootPath(const std::string& own_resources_path) {
+    std::string path = own_resources_path;
+    for (int i = 0; i < 2; ++i) {
+        const auto sep_pos = path.find_last_of("/\\");
+        if (sep_pos == std::string::npos) {
+            break;
+        }
+        path.erase(sep_pos);
+    }
+    return path;
+}
+
+// Other tools (ATC clients, traffic add-ons) sometimes install a CSL
+// package under a well-known shared folder name directly inside
+// <X-Plane>/Resources/plugins/, rather than under their own plugin's
+// Resources/ - IVAO_CSL (used by several IVAO-network clients) is the
+// common one. Checking these explicitly, by name, lets a user reuse a
+// package they've already installed for another tool instead of
+// duplicating it under our own Resources/CSL - without recursively
+// scanning the whole plugins/ folder, which would be slower (many
+// installed plugins ship large, unrelated resource trees) and would
+// silently pull in whatever CSL packages other tools bundle - including
+// their licensing terms - without the user consciously choosing to share
+// them with this plugin specifically.
+const std::vector<std::string> kKnownSharedCslDirs = {
+    "IVAO_CSL",
+};
+
+// Reads the first element of a float-array dataref, or 0 if the dataref
+// wasn't found (e.g. name changed in a future X-Plane version - see the
+// dataref sources noted in docs/plan.md's handoff prompt discussion).
+float ReadFirstArrayElement(XPLMDataRef ref) {
+    if (!ref) return 0.0f;
+    float value = 0.0f;
+    XPLMGetDatavf(ref, &value, 0, 1);
+    return value;
+}
+
+uint8_t ReadLightBits() {
+    uint8_t bits = 0;
+    if (g_beacon_ref && XPLMGetDataf(g_beacon_ref) > 0.5f) bits |= flytogether::LightBits::kBeacon;
+    if (g_strobe_ref && XPLMGetDataf(g_strobe_ref) > 0.5f) bits |= flytogether::LightBits::kStrobe;
+    if (g_nav_ref && XPLMGetDataf(g_nav_ref) > 0.5f) bits |= flytogether::LightBits::kNav;
+    if (g_landing_ref && XPLMGetDataf(g_landing_ref) > 0.5f) bits |= flytogether::LightBits::kLanding;
+    return bits;
+}
+
+// Reads all the datarefs both Formation mode (sending "here's another
+// aircraft") and Shared Cockpit's master (sending "here's the aircraft
+// we're both in") need. `sequence` is passed in/incremented by the caller
+// since each use has its own independent counter.
+flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id, uint32_t sequence) {
+    flytogether::AircraftStatePacket packet;
+    packet.sender_id = sender_id;
+    packet.sequence = sequence;
+
+    packet.latitude = g_latitude_ref ? XPLMGetDatad(g_latitude_ref) : 0.0;
+    packet.longitude = g_longitude_ref ? XPLMGetDatad(g_longitude_ref) : 0.0;
+    packet.elevation_m = g_elevation_ref ? XPLMGetDatad(g_elevation_ref) : 0.0;
+
+    packet.heading_deg = g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0f;
+    packet.pitch_deg = g_pitch_ref ? XPLMGetDataf(g_pitch_ref) : 0.0f;
+    packet.roll_deg = g_roll_ref ? XPLMGetDataf(g_roll_ref) : 0.0f;
+
+    packet.gear_ratio = ReadFirstArrayElement(g_gear_ref);
+    packet.flap_ratio = g_flap_ref ? XPLMGetDataf(g_flap_ref) : 0.0f;
+    packet.speedbrake_ratio = g_speedbrake_ref ? XPLMGetDataf(g_speedbrake_ref) : 0.0f;
+    packet.engine_ratio = ReadFirstArrayElement(g_engine_ref);
+    packet.light_bits = ReadLightBits();
+
+    std::memcpy(packet.icao_type, g_icao_type, sizeof(packet.icao_type));
+    return packet;
+}
+
+float SendFormationStateCallback(float /*elapsedSinceLastCall*/,
+                                  float /*elapsedTimeSinceLastFlightLoop*/,
+                                  int /*counter*/,
+                                  void* /*refcon*/) {
+    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+        const flytogether::AircraftStatePacket packet =
+            BuildOwnAircraftStatePacket(g_sender_id, g_formation_sequence++);
+
+        g_formation_sync.SendOwnState(packet);
+        // Also relay through the rendezvous server whenever we're in a
+        // session, in parallel with the direct sends above. This is a
+        // deliberate simplification vs. detecting hole-punch success/
+        // failure per peer (docs/plan.md section 7): RemoteAircraft's
+        // sequence-number dedup (sync/remote_aircraft.cpp) already makes
+        // receiving the same state twice harmless, and the bandwidth cost
+        // at this packet size/rate is negligible.
+        g_rendezvous_client.SendRelay(&packet, sizeof(packet));
+    }
+
+    // 20 Hz, the upper end of the plan's recommended 10-20 Hz position rate.
+    return 1.0f / 20.0f;
+}
+
+// Runs every frame: feeds incoming network packets into FormationSync,
+// keeps one XPMP2 aircraft per currently-active peer (created/destroyed as
+// peers appear/go stale), and pushes each one's freshly dead-reckoned pose
+// so XPMP2's own per-frame UpdatePosition() has current data to draw.
+float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
+                               float /*elapsedTimeSinceLastFlightLoop*/,
+                               int /*counter*/,
+                               void* /*refcon*/) {
+    const double now = XPLMGetElapsedTime();
+    g_formation_sync.PollIncoming(now);
+    g_formation_sync.RemoveStaleAircraft(now);
+
+    // Also drains/dispatches rendezvous messages and sends its own
+    // wall-clock-timed keepalive if we're in a session - see
+    // RendezvousClient::PollIncoming()'s comment for why that timer isn't
+    // driven by X-Plane's (pausable) sim-elapsed time.
+    g_rendezvous_client.PollIncoming();
+
+    std::unordered_map<uint32_t, std::string> active;
+    g_formation_sync.ForEachRemoteAircraft(
+        now, [&](uint32_t sender_id, const flytogether::AircraftPose& /*pose*/,
+                 const flytogether::AircraftStatePacket& latest) {
+            active.emplace(sender_id,
+                            std::string(latest.icao_type,
+                                        strnlen(latest.icao_type, sizeof(latest.icao_type))));
+        });
+
+    // Push the peer list to the companion app (for its "connected peers"
+    // list) only when it actually changed - this runs every frame, and
+    // SetFormationPeers() sends a UDP packet, so unconditionally calling
+    // it here would flood the socket for no reason.
+    if (active != g_last_pushed_formation_peers) {
+        g_last_pushed_formation_peers = active;
+        std::string encoded;
+        for (const auto& [sender_id, icao] : active) {
+            if (!encoded.empty()) {
+                encoded += ";";
+            }
+            encoded += std::to_string(sender_id) + ":" + icao;
+        }
+        g_control_listener.SetFormationPeers(encoded);
+    }
+
+    // Drop XPMP2 aircraft for peers that are no longer active.
+    for (auto it = g_xpmp_aircraft.begin(); it != g_xpmp_aircraft.end();) {
+        if (active.find(it->first) == active.end()) {
+            it = g_xpmp_aircraft.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Create XPMP2 aircraft for newly-seen peers.
+    for (const auto& [sender_id, icao] : active) {
+        if (g_xpmp_aircraft.find(sender_id) == g_xpmp_aircraft.end()) {
+            try {
+                g_xpmp_aircraft.emplace(
+                    sender_id, std::make_unique<flytogether::RemoteAircraftXPMP>(icao, sender_id));
+            } catch (const std::exception& e) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                              "XPMultiCrew: failed to create CSL aircraft for peer %u: %s\n",
+                              sender_id, e.what());
+                XPLMDebugString(buf);
+            }
+        }
+    }
+
+    // Push this frame's dead-reckoned pose into each aircraft still tracked.
+    g_formation_sync.ForEachRemoteAircraft(
+        now, [](uint32_t sender_id, const flytogether::AircraftPose& pose,
+                const flytogether::AircraftStatePacket& /*latest*/) {
+            const auto it = g_xpmp_aircraft.find(sender_id);
+            if (it != g_xpmp_aircraft.end()) {
+                it->second->SetPose(pose);
+            }
+        });
+
+    if (now - g_last_formation_log_s >= 1.0) {
+        g_last_formation_log_s = now;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew[formation]: tracking %zu peer(s), %zu drawn via CSL\n",
+                      g_formation_sync.tracked_aircraft_count(), g_xpmp_aircraft.size());
+        XPLMDebugString(buf);
+    }
+
+    return -1.0f; // reschedule for next frame
+}
+
+// --- Phase 3: Shared Cockpit MVP (docs/plan.md section 6) -------------------
+//
+// Master/client position+attitude takeover only, plus generic bidirectional
+// "systems" dataref sync (shared_cockpit/dataref_sync.h) - see the
+// discussion that led here: no per-aircraft mapping file needed since both
+// peers fly an identical aircraft, so watched dataref names resolve to the
+// same thing on both sides. Request-release ownership of individual
+// switches is not implemented; whichever side wrote last simply wins.
+
+XPLMDataRef g_override_planepath_ref = nullptr; // int[20], index 0 = own aircraft
+XPLMDataRef g_local_x_ref = nullptr;
+XPLMDataRef g_local_y_ref = nullptr;
+XPLMDataRef g_local_z_ref = nullptr;
+XPLMDataRef g_quaternion_ref = nullptr; // float[4]
+XPLMDataRef g_local_vx_ref = nullptr;
+XPLMDataRef g_local_vy_ref = nullptr;
+XPLMDataRef g_local_vz_ref = nullptr;
+
+flytogether::SharedCockpitSync g_shared_cockpit;
+flytogether::DatarefSync g_dataref_sync;
+uint32_t g_shared_cockpit_sequence = 0;
+bool g_physics_override_active = false;
+bool g_shared_cockpit_active = false;
+
+// Shared Cockpit's own rendezvous session, separate from Formation's
+// g_rendezvous_client above (see control_listener.h's updated protocol
+// comment) - peer discovery goes through the same rendezvous/relay server,
+// but keeping a dedicated client/session means a Formation session and a
+// Shared Cockpit session never share one code space or one relay stream
+// (mixing AircraftStatePacket-for-Formation and
+// AircraftStatePacket/DatarefSyncMessage-for-Shared-Cockpit payloads on
+// one relay channel would need a type discriminator neither protocol has).
+flytogether::RendezvousClient g_shared_cockpit_rendezvous;
+bool g_shared_cockpit_rendezvous_active = false;
+flytogether::SharedCockpitRole g_pending_shared_cockpit_role = flytogether::SharedCockpitRole::kNone;
+std::vector<std::string> g_pending_shared_cockpit_datarefs;
+
+// Client only: take over the user's own aircraft physics
+// (sim/operation/override/override_planepath[0]) so it can be positioned
+// directly instead of flying on its own local flight model. Only touches
+// index 0 (the user's own aircraft) - see
+// https://developer.x-plane.com/article/movingtheplane/'s explicit warning
+// not to (ab)use this for AI aircraft, which have their own API
+// (XPLMDisableAIForPlane, not used here since Formation mode draws other
+// aircraft via XPMP2/TCAS override instead, not X-Plane's AI slots).
+void SetPhysicsOverride(bool enabled) {
+    if (!g_override_planepath_ref) {
+        return;
+    }
+    int value = enabled ? 1 : 0;
+    XPLMSetDatavi(g_override_planepath_ref, &value, 0, 1);
+    g_physics_override_active = enabled;
+}
+
+void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose) {
+    if (!g_physics_override_active) {
+        SetPhysicsOverride(true);
+    }
+
+    double local_x = 0.0, local_y = 0.0, local_z = 0.0;
+    XPLMWorldToLocal(pose.latitude, pose.longitude, pose.elevation_m, &local_x, &local_y, &local_z);
+
+    if (g_local_x_ref) XPLMSetDatad(g_local_x_ref, local_x);
+    if (g_local_y_ref) XPLMSetDatad(g_local_y_ref, local_y);
+    if (g_local_z_ref) XPLMSetDatad(g_local_z_ref, local_z);
+    if (g_heading_ref) XPLMSetDataf(g_heading_ref, pose.heading_deg);
+    if (g_pitch_ref) XPLMSetDataf(g_pitch_ref, pose.pitch_deg);
+    if (g_roll_ref) XPLMSetDataf(g_roll_ref, pose.roll_deg);
+}
+
+// Hands physics control back cleanly (see "Transitioning From Disabled to
+// Enabled Flight Model" in the same X-Plane dev article): reconstruct the
+// quaternion from the orientation we were last driving so re-enabling
+// doesn't snap the model to some stale rotation, and zero the velocity
+// vector as a safe default (a brief settle is expected and acceptable per
+// docs/plan.md section 9's "notfalls mit leichtem Snap statt Drift").
+// Called on disable/stop so a user is never left with a frozen aircraft.
+void ReleasePhysicsOverride() {
+    if (!g_physics_override_active) {
+        return;
+    }
+
+    const float psi = g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0f;
+    const float theta = g_pitch_ref ? XPLMGetDataf(g_pitch_ref) : 0.0f;
+    const float phi = g_roll_ref ? XPLMGetDataf(g_roll_ref) : 0.0f;
+    const flytogether::Quaternion q = flytogether::EulerDegToQuaternion(psi, theta, phi);
+
+    if (g_quaternion_ref) {
+        float q_array[4] = {q.q0, q.q1, q.q2, q.q3};
+        XPLMSetDatavf(g_quaternion_ref, q_array, 0, 4);
+    }
+    if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, 0.0f);
+    if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, 0.0f);
+    if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, 0.0f);
+
+    SetPhysicsOverride(false);
+}
+
+float SendSharedCockpitStateCallback(float /*elapsedSinceLastCall*/,
+                                      float /*elapsedTimeSinceLastFlightLoop*/,
+                                      int /*counter*/,
+                                      void* /*refcon*/) {
+    const flytogether::AircraftStatePacket packet =
+        BuildOwnAircraftStatePacket(g_sender_id, g_shared_cockpit_sequence++);
+    g_shared_cockpit.SendOwnState(packet); // no-op unless we're MASTER
+
+    // 20 Hz, matching Formation mode's rate - Shared Cockpit needs at
+    // least that for a physically-overridden aircraft to look smooth.
+    return 1.0f / 20.0f;
+}
+
+// Drains/dispatches Shared Cockpit's own rendezvous session messages (peer
+// discovery, relay fallback, keepalive) - same reasoning as
+// UpdateFormationCallback's g_rendezvous_client.PollIncoming() call.
+// Registered unconditionally at XPluginEnable (like
+// PollControlListenerCallback), NOT tied to g_shared_cockpit_active's
+// lifecycle: it has to already be running before StartSharedCockpit() is
+// ever called, since on_peer_joined (which triggers that call) only fires
+// as a result of this polling.
+float PollSharedCockpitRendezvousCallback(float /*elapsedSinceLastCall*/,
+                                           float /*elapsedTimeSinceLastFlightLoop*/,
+                                           int /*counter*/,
+                                           void* /*refcon*/) {
+    g_shared_cockpit_rendezvous.PollIncoming();
+    return -1.0f; // every frame, same reasoning as PollControlListenerCallback
+}
+
+float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
+                                   float /*elapsedTimeSinceLastFlightLoop*/,
+                                   int /*counter*/,
+                                   void* /*refcon*/) {
+    const double now = XPLMGetElapsedTime();
+    g_shared_cockpit.PollIncoming(now); // no-op unless we're CLIENT
+
+    if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
+        if (g_shared_cockpit.HasMasterState() && !g_shared_cockpit.IsMasterStale(now)) {
+            ApplyMasterPoseToOwnAircraft(g_shared_cockpit.ComputeMasterPose(now));
+        } else if (g_physics_override_active) {
+            // Master's gone quiet - hand control back rather than freezing
+            // the client's aircraft in place indefinitely.
+            ReleasePhysicsOverride();
+        }
+    }
+
+    return -1.0f; // every frame, same reasoning as UpdateFormationCallback
+}
+
+float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
+                               float /*elapsedTimeSinceLastFlightLoop*/,
+                               int /*counter*/,
+                               void* /*refcon*/) {
+    g_dataref_sync.Poll();
+    return 1.0f / 10.0f; // 10 Hz - switches don't need Formation's 20 Hz
+}
+
+// Tears down the direct-UDP sync engines (SharedCockpitSync/DatarefSync)
+// and hands physics control back if it was taken. Does NOT touch
+// g_shared_cockpit_rendezvous - that's a separate session lifecycle,
+// stopped independently (a peer leaving the rendezvous session should stop
+// the sync engines; stopping the sync engines directly shouldn't
+// necessarily tear down the session, e.g. while restarting after a
+// mid-flight hiccup).
+void StopSharedCockpit() {
+    if (!g_shared_cockpit_active) {
+        return;
+    }
+    XPLMUnregisterFlightLoopCallback(SendSharedCockpitStateCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(UpdateSharedCockpitCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(PollDatarefSyncCallback, nullptr);
+    ReleasePhysicsOverride();
+    g_shared_cockpit.Stop();
+    g_dataref_sync.Stop();
+    g_shared_cockpit_active = false;
+}
+
+// Callable from either XPMultiCrew_shared_cockpit.txt's auto-start
+// (XPluginEnable, with a manually-configured peer list - still supported
+// for LAN/scripted setups) or, once Shared Cockpit's dedicated rendezvous
+// session has discovered the other side's address, from
+// SetupSharedCockpitRendezvousCallbacksOnce()'s on_peer_joined below.
+void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<flytogether::Peer>& peers,
+                         const std::vector<std::string>& datarefs) {
+    if (g_shared_cockpit_active) {
+        // Same reasoning as StartRendezvous(): always allow a fresh
+        // attempt instead of getting stuck if the first one didn't
+        // actually work out.
+        XPLMDebugString("XPMultiCrew: shared cockpit already active, restarting fresh\n");
+        StopSharedCockpit();
+    }
+
+    if (!g_shared_cockpit.Start(role, peers)) {
+        XPLMDebugString("XPMultiCrew: failed to start shared cockpit sync (UDP port busy?)\n");
+        g_control_listener.SetSharedCockpitStatus("failed to start (UDP port busy?)");
+        return;
+    }
+    g_shared_cockpit_active = true;
+
+    // Relay every position/dataref update through the Shared Cockpit
+    // rendezvous session in parallel with the direct sends above - see
+    // SharedCockpitSync::SetRelaySender's comment for why direct UDP alone
+    // isn't reliable enough over the internet. RendezvousClient::SendRelay
+    // no-ops when not actually in a session (e.g. the file-config manual-
+    // peer path above never starts g_shared_cockpit_rendezvous), so this
+    // is harmless to always wire up.
+    g_shared_cockpit.SetRelaySender([](const void* data, size_t len) {
+        g_shared_cockpit_rendezvous.SendRelay(data, len);
+    });
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit ready as %s, %zu peer(s)\n",
+                  role == flytogether::SharedCockpitRole::kMaster ? "MASTER" : "CLIENT", peers.size());
+    XPLMDebugString(buf);
+    g_control_listener.SetSharedCockpitStatus(role == flytogether::SharedCockpitRole::kMaster
+                                              ? "running as MASTER"
+                                              : "running as CLIENT");
+
+    XPLMRegisterFlightLoopCallback(SendSharedCockpitStateCallback, 1.0f / 20.0f, nullptr);
+    XPLMRegisterFlightLoopCallback(UpdateSharedCockpitCallback, -1.0f, nullptr);
+
+    if (g_dataref_sync.Start(datarefs, peers)) {
+        g_dataref_sync.SetRelaySender([](const void* data, size_t len) {
+            g_shared_cockpit_rendezvous.SendRelay(data, len);
+        });
+        char dr_buf[160];
+        std::snprintf(dr_buf, sizeof(dr_buf), "XPMultiCrew: dataref sync watching %zu dataref(s)\n",
+                      g_dataref_sync.watched_count());
+        XPLMDebugString(dr_buf);
+        XPLMRegisterFlightLoopCallback(PollDatarefSyncCallback, 1.0f / 10.0f, nullptr);
+    } else {
+        XPLMDebugString("XPMultiCrew: failed to start dataref sync (UDP port busy?)\n");
+    }
+}
+
+// Wires up g_shared_cockpit_rendezvous's callbacks exactly once. Mirrors
+// SetupRendezvousCallbacksOnce() above, but for Shared Cockpit's 2-party
+// session: once the other side is discovered (on_peer_joined), that's the
+// signal to actually start the direct-UDP sync engines via
+// StartSharedCockpit() - unlike the old manually-typed-peer path, we don't
+// know the peer's address until the rendezvous server tells us.
+void SetupSharedCockpitRendezvousCallbacksOnce() {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+
+    g_shared_cockpit_rendezvous.on_session_ready = [](const std::string& code, int /*your_id*/) {
+        if (g_pending_shared_cockpit_role == flytogether::SharedCockpitRole::kMaster) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "XPMultiCrew: shared cockpit session ready - code '%s'. Share it with "
+                          "your co-pilot.\n",
+                          code.c_str());
+            XPLMDebugString(buf);
+            g_control_listener.SetSharedCockpitStatus("waiting for co-pilot, code '" + code + "'");
+            g_control_listener.SetSharedCockpitCode(code);
+        } else {
+            XPLMDebugString("XPMultiCrew: joined shared cockpit session, waiting for host\n");
+            g_control_listener.SetSharedCockpitStatus("joined, waiting for host...");
+        }
+    };
+    g_shared_cockpit_rendezvous.on_peer_joined = [](int peer_id, const std::string& host, uint16_t port) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit peer %d found at %s:%u\n", peer_id,
+                      host.c_str(), port);
+        XPLMDebugString(buf);
+        StartSharedCockpit(g_pending_shared_cockpit_role, {flytogether::Peer{host, port}},
+                            g_pending_shared_cockpit_datarefs);
+    };
+    g_shared_cockpit_rendezvous.on_peer_left = [](int /*peer_id*/) {
+        XPLMDebugString("XPMultiCrew: shared cockpit peer left\n");
+        g_control_listener.SetSharedCockpitStatus("co-pilot disconnected");
+        StopSharedCockpit();
+    };
+    g_shared_cockpit_rendezvous.on_relay_received = [](int /*from_peer_id*/,
+                                                         const std::vector<uint8_t>& bytes) {
+        const double now = XPLMGetElapsedTime();
+        // Disambiguate by shape: a position update is always exactly
+        // sizeof(AircraftStatePacket) (and IngestRelayedPacket re-checks
+        // magic/version); anything else is tried as a dataref-sync message
+        // (IngestRelayedMessage's own magic/version check rejects garbage).
+        if (bytes.size() == sizeof(flytogether::AircraftStatePacket)) {
+            g_shared_cockpit.IngestRelayedPacket(bytes.data(), bytes.size(), now);
+        } else {
+            g_dataref_sync.IngestRelayedMessage(bytes.data(), bytes.size());
+        }
+    };
+    g_shared_cockpit_rendezvous.on_error = [](const std::string& message) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit rendezvous error: %s\n",
+                      message.c_str());
+        XPLMDebugString(buf);
+        g_control_listener.SetSharedCockpitStatus("error: " + message);
+    };
+}
+
+// Callable from the companion app's "Start Shared Cockpit" request. Starts
+// (or restarts fresh - same reasoning as StartRendezvous()) Shared
+// Cockpit's own rendezvous session; the actual sync engines only start
+// once on_peer_joined fires above with the discovered peer address.
+void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
+                                   flytogether::SharedCockpitRole role, const std::string& code,
+                                   const std::vector<std::string>& datarefs) {
+    SetupSharedCockpitRendezvousCallbacksOnce();
+    if (g_shared_cockpit_rendezvous_active) {
+        XPLMDebugString("XPMultiCrew: shared cockpit rendezvous already active, reconnecting fresh\n");
+        g_shared_cockpit_rendezvous.Stop();
+        g_shared_cockpit_rendezvous_active = false;
+        StopSharedCockpit();
+    }
+
+    g_pending_shared_cockpit_role = role;
+    g_pending_shared_cockpit_datarefs = datarefs;
+
+    if (!g_shared_cockpit_rendezvous.Start(host, port)) {
+        XPLMDebugString("XPMultiCrew: failed to start shared cockpit rendezvous client (UDP socket?)\n");
+        g_control_listener.SetSharedCockpitStatus("failed to start (UDP socket busy?)");
+        return;
+    }
+    g_shared_cockpit_rendezvous_active = true;
+    g_control_listener.SetSharedCockpitCode(""); // clear any stale code from a previous session
+    g_control_listener.SetSharedCockpitStatus("connecting to " + host + ":" + std::to_string(port) +
+                                               "...");
+    if (role == flytogether::SharedCockpitRole::kMaster) {
+        g_shared_cockpit_rendezvous.CreateSession();
+    } else {
+        g_shared_cockpit_rendezvous.JoinSession(code);
+    }
+}
+
+float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
+                                   float /*elapsedTimeSinceLastFlightLoop*/,
+                                   int /*counter*/,
+                                   void* /*refcon*/) {
+    g_control_listener.Poll();
+    return -1.0f; // every frame, so the companion app feels responsive
+}
+
+} // namespace
+
+extern "C" {
+
+PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
+    std::strcpy(outName, "XPMultiCrew");
+    std::strcpy(outSig, "io.github.xpmulticrew.plugin");
+    std::strcpy(outDesc,
+                "Cross-platform multiplayer & shared cockpit plugin for "
+                "X-Plane 12 (Formation, internet play, Shared Cockpit MVP).");
+
+    g_latitude_ref = XPLMFindDataRef("sim/flightmodel/position/latitude");
+    g_longitude_ref = XPLMFindDataRef("sim/flightmodel/position/longitude");
+    g_elevation_ref = XPLMFindDataRef("sim/flightmodel/position/elevation");
+
+    g_heading_ref = XPLMFindDataRef("sim/flightmodel/position/psi");
+    g_pitch_ref = XPLMFindDataRef("sim/flightmodel/position/theta");
+    g_roll_ref = XPLMFindDataRef("sim/flightmodel/position/phi");
+    g_gear_ref = XPLMFindDataRef("sim/flightmodel2/gear/deploy_ratio");
+    g_flap_ref = XPLMFindDataRef("sim/flightmodel/controls/flaprat");
+    g_speedbrake_ref = XPLMFindDataRef("sim/cockpit2/controls/speedbrake_ratio");
+    g_engine_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_thro");
+    g_beacon_ref = XPLMFindDataRef("sim/cockpit/electrical/beacon_lights_on");
+    g_strobe_ref = XPLMFindDataRef("sim/cockpit/electrical/strobe_lights_on");
+    g_nav_ref = XPLMFindDataRef("sim/cockpit/electrical/nav_lights_on");
+    g_landing_ref = XPLMFindDataRef("sim/cockpit/electrical/landing_lights_on");
+
+    g_override_planepath_ref = XPLMFindDataRef("sim/operation/override/override_planepath");
+    g_local_x_ref = XPLMFindDataRef("sim/flightmodel/position/local_x");
+    g_local_y_ref = XPLMFindDataRef("sim/flightmodel/position/local_y");
+    g_local_z_ref = XPLMFindDataRef("sim/flightmodel/position/local_z");
+    g_quaternion_ref = XPLMFindDataRef("sim/flightmodel/position/q");
+    g_local_vx_ref = XPLMFindDataRef("sim/flightmodel/position/local_vx");
+    g_local_vy_ref = XPLMFindDataRef("sim/flightmodel/position/local_vy");
+    g_local_vz_ref = XPLMFindDataRef("sim/flightmodel/position/local_vz");
+
+    if (XPLMDataRef icao_ref = XPLMFindDataRef("sim/aircraft/view/acf_ICAO")) {
+        XPLMGetDatab(icao_ref, g_icao_type, 0, sizeof(g_icao_type) - 1);
+        g_icao_type[sizeof(g_icao_type) - 1] = '\0';
+    }
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint32_t> dist(1, 0xFFFFFFFEu);
+    g_sender_id = dist(gen);
+
+    const std::string resources_path = GetPluginResourcesPath();
+    const std::string xpmp2_resources = resources_path + "/XPMP2";
+    const std::string csl_path = resources_path + "/CSL";
+
+    const char* xpmp_err = XPMPMultiplayerInit("XPMultiCrew", xpmp2_resources.c_str(),
+                                                nullptr, "GENR", "XPMultiCrew");
+    if (xpmp_err && xpmp_err[0]) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerInit failed: %s\n", xpmp_err);
+        XPLMDebugString(buf);
+    } else {
+        g_xpmp_initialized = true;
+        const char* csl_err = XPMPLoadCSLPackage(csl_path.c_str());
+        if (csl_err && csl_err[0]) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
+                          csl_path.c_str(), csl_err);
+            XPLMDebugString(buf);
+        }
+
+        const std::string plugins_root = GetXPlanePluginsRootPath(resources_path);
+        for (const auto& shared_dir_name : kKnownSharedCslDirs) {
+            const std::string shared_path = plugins_root + "/" + shared_dir_name;
+            std::error_code ec;
+            if (!std::filesystem::is_directory(shared_path, ec) || ec) {
+                continue; // not installed - not an error, just nothing to load
+            }
+            const char* shared_err = XPMPLoadCSLPackage(shared_path.c_str());
+            char buf[512];
+            if (shared_err && shared_err[0]) {
+                std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
+                              shared_path.c_str(), shared_err);
+            } else {
+                std::snprintf(buf, sizeof(buf), "XPMultiCrew: loaded shared CSL package from %s\n",
+                              shared_path.c_str());
+            }
+            XPLMDebugString(buf);
+        }
+    }
+
+    return 1;
+}
+
+PLUGIN_API void XPluginStop() {
+    g_latitude_ref = nullptr;
+    g_longitude_ref = nullptr;
+    g_elevation_ref = nullptr;
+
+    if (g_xpmp_initialized) {
+        XPMPMultiplayerCleanup();
+        g_xpmp_initialized = false;
+    }
+}
+
+PLUGIN_API int XPluginEnable() {
+    flytogether::ControlListener::Callbacks control_callbacks;
+    control_callbacks.on_create_session = [](const std::string& host_port) {
+        std::string host;
+        uint16_t port = 0;
+        if (!flytogether::SplitHostPort(host_port, host, port)) {
+            g_control_listener.SetFormationStatus("invalid server address (need host:port)");
+            return;
+        }
+        StartRendezvous(host, port, /*create=*/true, "");
+    };
+    control_callbacks.on_join_session = [](const std::string& host_port, const std::string& code) {
+        std::string host;
+        uint16_t port = 0;
+        if (!flytogether::SplitHostPort(host_port, host, port)) {
+            g_control_listener.SetFormationStatus("invalid server address (need host:port)");
+            return;
+        }
+        if (code.empty()) {
+            g_control_listener.SetFormationStatus("enter a session code to join");
+            return;
+        }
+        StartRendezvous(host, port, /*create=*/false, code);
+    };
+    control_callbacks.on_start_shared_cockpit = [](bool is_master, const std::string& server_host_port,
+                                                     const std::string& code) {
+        std::string host;
+        uint16_t port = 0;
+        if (!flytogether::SplitHostPort(server_host_port, host, port)) {
+            g_control_listener.SetSharedCockpitStatus("invalid server address (need host:port)");
+            return;
+        }
+        const auto role =
+            is_master ? flytogether::SharedCockpitRole::kMaster : flytogether::SharedCockpitRole::kClient;
+        if (role == flytogether::SharedCockpitRole::kClient && code.empty()) {
+            g_control_listener.SetSharedCockpitStatus("enter a session code to join");
+            return;
+        }
+        // The DATAREF list still comes from a config file, even though
+        // ROLE/server/code here come from the companion app instead - see
+        // the README's Phase 3 "not yet done" note. Prefers a per-aircraft
+        // profile (XPMultiCrew_shared_cockpit_profiles/<ICAO>.txt) over the
+        // flat fallback file if one exists for the current aircraft - see
+        // ResolveSharedCockpitConfigPath's comment.
+        const std::string icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
+        const auto file_config = flytogether::LoadSharedCockpitConfig(
+            flytogether::ResolveSharedCockpitConfigPath("XPMultiCrew_shared_cockpit.txt", icao));
+        StartSharedCockpitRendezvous(host, port, role, code, file_config.datarefs);
+    };
+    if (g_control_listener.Start(control_callbacks)) {
+        XPLMRegisterFlightLoopCallback(PollControlListenerCallback, -1.0f, nullptr);
+        g_control_listener.SetPluginVersion(XPMULTICREW_VERSION);
+    } else {
+        XPLMDebugString("XPMultiCrew: failed to start control listener (UDP port busy?), "
+                         "companion app won't be reachable\n");
+    }
+
+    // Always running from enable onward, same reasoning as
+    // PollControlListenerCallback: a "Start Shared Cockpit" button click can
+    // happen at any time, and its CreateSession()/JoinSession() replies have
+    // to be pollable immediately.
+    XPLMRegisterFlightLoopCallback(PollSharedCockpitRendezvousCallback, -1.0f, nullptr);
+
+    XPLMRegisterFlightLoopCallback(LogPositionCallback, 5.0f, nullptr);
+
+    if (g_udp_socket.Open()) {
+        XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
+    } else {
+        XPLMDebugString("XPMultiCrew: failed to open UDP socket, position "
+                         "will not be sent over the network\n");
+    }
+
+    const std::string peer_list_path =
+        flytogether::ResolvePeerListPath("XPMultiCrew_peers.txt");
+    if (g_formation_sync.Start(peer_list_path)) {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: formation sync ready, sender_id=%u, "
+                      "%zu peer(s) loaded from '%s'\n",
+                      g_sender_id, g_formation_sync.peer_count(),
+                      peer_list_path.c_str());
+        XPLMDebugString(buf);
+
+        XPLMRegisterFlightLoopCallback(SendFormationStateCallback, 1.0f / 20.0f, nullptr);
+        XPLMRegisterFlightLoopCallback(UpdateFormationCallback, -1.0f, nullptr);
+    } else {
+        XPLMDebugString("XPMultiCrew: failed to start formation sync (UDP "
+                         "port busy?), Formation mode disabled\n");
+    }
+
+    if (g_xpmp_initialized) {
+        const char* err = XPMPMultiplayerEnable();
+        if (err && err[0]) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
+            XPLMDebugString(buf);
+        }
+    }
+
+    // Auto-start from file config still works as before (e.g. for
+    // scripted/automated setups) - the companion app (control/control_listener.h) is an
+    // additional, independent way to trigger the same StartRendezvous()/
+    // StartSharedCockpit() calls on demand, not a replacement.
+    const flytogether::RendezvousConfig rendezvous_config = flytogether::LoadRendezvousConfig(
+        flytogether::ResolveRendezvousConfigPath("XPMultiCrew_rendezvous.txt"));
+    if (rendezvous_config.enabled) {
+        StartRendezvous(rendezvous_config.server_host, rendezvous_config.server_port,
+                         rendezvous_config.create_session, rendezvous_config.join_code);
+    }
+
+    const std::string enable_icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
+    const flytogether::SharedCockpitConfig shared_cockpit_config = flytogether::LoadSharedCockpitConfig(
+        flytogether::ResolveSharedCockpitConfigPath("XPMultiCrew_shared_cockpit.txt", enable_icao));
+    if (shared_cockpit_config.enabled) {
+        StartSharedCockpit(shared_cockpit_config.role, shared_cockpit_config.peers,
+                            shared_cockpit_config.datarefs);
+    }
+
+    return 1;
+}
+
+PLUGIN_API void XPluginDisable() {
+    XPLMUnregisterFlightLoopCallback(PollControlListenerCallback, nullptr);
+    g_control_listener.Stop();
+
+    XPLMUnregisterFlightLoopCallback(LogPositionCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(SendPositionOverUdpCallback, nullptr);
+    g_udp_socket.Close();
+
+    XPLMUnregisterFlightLoopCallback(SendFormationStateCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(UpdateFormationCallback, nullptr);
+    g_formation_sync.Stop();
+
+    g_rendezvous_client.Stop();
+    g_rendezvous_peers.clear();
+    g_rendezvous_active = false;
+
+    g_xpmp_aircraft.clear();
+    if (g_xpmp_initialized) {
+        XPMPMultiplayerDisable();
+    }
+
+    XPLMUnregisterFlightLoopCallback(PollSharedCockpitRendezvousCallback, nullptr);
+    g_shared_cockpit_rendezvous.Stop();
+    g_shared_cockpit_rendezvous_active = false;
+
+    // Never leave the user's aircraft frozen under an active physics
+    // override just because the plugin got disabled.
+    StopSharedCockpit();
+}
+
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID /*inFrom*/, int inMsg, void* inParam) {
+    // XPLM_MSG_PLANE_LOADED/UNLOADED's parameter is an aircraft index
+    // bit-cast into the void*, not a real pointer - 0 is always the
+    // user's own aircraft (see XPLMPlugin.h's comment on both messages).
+    // Unlike flight-loop callbacks (which simply don't run during a
+    // loading screen), XPluginReceiveMessage is delivered directly by
+    // X-Plane's own messaging system, so this is the one reliable signal
+    // for "a flight just finished loading" available to a plugin - see
+    // control_listener.h's SIM_READY status line, which surfaces this to
+    // the companion app.
+    const auto plane_index = reinterpret_cast<intptr_t>(inParam);
+    if (inMsg == XPLM_MSG_PLANE_LOADED && plane_index == 0) {
+        g_control_listener.SetSimReady(true);
+    } else if (inMsg == XPLM_MSG_PLANE_UNLOADED && plane_index == 0) {
+        g_control_listener.SetSimReady(false);
+    }
+}
+
+} // extern "C"
