@@ -6,6 +6,10 @@ export function ChooseXPlanePath():Promise<main.ChooseXPlaneResult>;
 
 export function CreateSession(arg1:string):Promise<void>;
 
+export function DisconnectFormation():Promise<void>;
+
+export function DisconnectSharedCockpit():Promise<void>;
+
 export function GetAvailablePluginVersion():Promise<string>;
 
 export function GetInstalledPluginVersion():Promise<string>;

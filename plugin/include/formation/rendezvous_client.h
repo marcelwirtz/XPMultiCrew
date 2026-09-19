@@ -26,6 +26,7 @@ public:
     using PeerLeftFn = std::function<void(int peerId)>;
     using RelayReceivedFn = std::function<void(int fromPeerId, const std::vector<uint8_t>& bytes)>;
     using ErrorFn = std::function<void(const std::string& message)>;
+    using DisconnectedFn = std::function<void()>;
 
     bool Start(const std::string& serverHost, uint16_t serverPort);
 
@@ -51,7 +52,24 @@ public:
     // desynced the two, and the client kept trying to relay into a session
     // the server had already forgotten. Call this at whatever cadence is
     // convenient (e.g. once per rendered frame); it self-throttles.
-    void PollIncoming();
+    //
+    // Also detects a dead server/network path: every incoming message
+    // (including the "keepalive_ack" the server sends back for every
+    // keepalive, see server/protocol.go) resets an internal "last heard
+    // from the server" timer. If nothing at all arrives for
+    // kServerResponseTimeout, on_disconnected fires once and we stop
+    // considering ourselves in-session (so keepalives/relay go quiet
+    // instead of shouting into the void) - this is what lets a caller
+    // implement auto-reconnect: rejoin with the same session code once
+    // this fires, see plugin_main.cpp. The ack specifically exists so a
+    // client alone in a session (no peer yet, hence no relay/peer_*
+    // traffic to rely on instead) still gets a periodic "still there"
+    // signal - without it, "alone and quiet" would be indistinguishable
+    // from "disconnected". `timeout` defaults to kServerResponseTimeout;
+    // overridable so tests don't have to wait 40 real seconds to exercise
+    // this path (same pattern as RemoteAircraft::IsStale/
+    // SharedCockpitSync::IsMasterStale's timeout parameter).
+    void PollIncoming(std::chrono::steady_clock::duration timeout = kServerResponseTimeout);
 
     bool InSession() const { return in_session_; }
 
@@ -60,6 +78,7 @@ public:
     PeerLeftFn on_peer_left;
     RelayReceivedFn on_relay_received;
     ErrorFn on_error;
+    DisconnectedFn on_disconnected;
 
 private:
     void Send(const RendezvousClientMessage& msg);
@@ -71,6 +90,14 @@ private:
     uint16_t server_port_ = 0;
     bool in_session_ = false;
     std::chrono::steady_clock::time_point last_keepalive_sent_{};
+    std::chrono::steady_clock::time_point last_received_{};
+
+    // Comfortably more than 3 missed 10s keepalive/ack round-trips, to
+    // absorb jitter/packet loss without false-triggering, but well under
+    // the server's own 120s eviction (clientTimeout in server/session.go)
+    // so a real outage is caught and retried well before the server would
+    // have given up on us anyway.
+    static constexpr std::chrono::seconds kServerResponseTimeout{40};
 };
 
 } // namespace flytogether

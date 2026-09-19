@@ -21,6 +21,13 @@ const (
 	MsgPeerJoined     MessageType = "peer_joined"
 	MsgPeerLeft       MessageType = "peer_left"
 	MsgError          MessageType = "error"
+	// Sent in reply to every keepalive, purely so the client has a
+	// positive "the server is still there" signal even while alone in a
+	// quiet session (no peer, no relay traffic) - see
+	// RendezvousClient::PollIncoming's on_disconnected handling, which
+	// would otherwise have no way to tell "quiet because nobody's here
+	// yet" apart from "quiet because the server/network is unreachable".
+	MsgKeepaliveAck MessageType = "keepalive_ack"
 )
 
 // ClientMessage is anything a client sends to the server.

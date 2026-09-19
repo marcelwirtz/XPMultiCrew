@@ -101,6 +101,72 @@ int main() {
         std::printf("Stop() while in a session correctly sends leave_session: %s\n", leave_msg.c_str());
     }
 
+    // --- Silence past the timeout fires on_disconnected exactly once ---
+    {
+        RendezvousClient client;
+        bool disconnected = false;
+        client.on_disconnected = [&] { disconnected = true; };
+        assert(client.Start("127.0.0.1", kFakeServerPort));
+        client.CreateSession();
+
+        std::string client_host;
+        uint16_t client_port = 0;
+        RecvOne(fake_server, 500ms, &client_host, &client_port);
+        const std::string reply = R"({"type":"session_created","code":"XYZ789","your_id":1})";
+        assert(fake_server.SendTo(client_host, client_port, reply.data(), reply.size()));
+        client.PollIncoming(50ms); // short override so this test doesn't wait 40 real seconds
+        assert(client.InSession());
+        assert(!disconnected);
+
+        // The fake server goes silent from here - no keepalive_ack, no
+        // peer/relay traffic - simulating a dead server/network path.
+        std::this_thread::sleep_for(80ms);
+        client.PollIncoming(50ms);
+        assert(disconnected);
+        assert(!client.InSession());
+        std::printf("Silence past the timeout correctly fires on_disconnected: OK\n");
+
+        // Firing again on a later poll (still silent) would make
+        // plugin_main.cpp's reconnect scheduling re-trigger repeatedly for
+        // one real outage - must only fire once per disconnect.
+        disconnected = false;
+        std::this_thread::sleep_for(80ms);
+        client.PollIncoming(50ms);
+        assert(!disconnected);
+        std::printf("on_disconnected does not re-fire while already disconnected: OK\n");
+    }
+
+    // --- keepalive_ack alone (no peer, no relay) keeps the connection
+    // alive - the scenario on_disconnected exists to not misfire on ---
+    {
+        RendezvousClient client;
+        bool disconnected = false;
+        client.on_disconnected = [&] { disconnected = true; };
+        assert(client.Start("127.0.0.1", kFakeServerPort));
+        client.CreateSession();
+
+        std::string client_host;
+        uint16_t client_port = 0;
+        RecvOne(fake_server, 500ms, &client_host, &client_port);
+        const std::string reply = R"({"type":"session_created","code":"LONE01","your_id":1})";
+        assert(fake_server.SendTo(client_host, client_port, reply.data(), reply.size()));
+        client.PollIncoming(50ms);
+        assert(client.InSession());
+
+        // Nothing but a bare keepalive_ack arrives (as if alone in the
+        // session, waiting for a co-pilot) - must NOT be mistaken for a
+        // disconnect just because there's no peer/relay traffic.
+        for (int i = 0; i < 3; ++i) {
+            std::this_thread::sleep_for(30ms);
+            const std::string ack = R"({"type":"keepalive_ack"})";
+            assert(fake_server.SendTo(client_host, client_port, ack.data(), ack.size()));
+            client.PollIncoming(50ms);
+        }
+        assert(client.InSession());
+        assert(!disconnected);
+        std::printf("keepalive_ack alone correctly keeps a lone-in-session client connected: OK\n");
+    }
+
     std::printf("\nALL RENDEZVOUS CLIENT CHECKS PASSED\n");
     return 0;
 }

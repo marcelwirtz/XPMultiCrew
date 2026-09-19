@@ -284,3 +284,32 @@ func TestRelayFromUnknownClientReturnsError(t *testing.T) {
 		t.Fatalf("expected an error for relay from a client not in any session, got %+v", msgs)
 	}
 }
+
+func TestKeepaliveIsAckedForAKnownClient(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(10001)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession})
+	server.HandleMessage(a, ClientMessage{Type: MsgKeepalive})
+
+	msgs := sender.messagesTo(a)
+	if len(msgs) != 2 || msgs[1].Type != MsgKeepaliveAck {
+		t.Fatalf("expected session_created then keepalive_ack, got %+v", msgs)
+	}
+}
+
+func TestKeepaliveFromUnknownClientIsHarmless(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(1)
+
+	// Not in any session (e.g. a keepalive that arrives just after the
+	// server already evicted this client) - must not panic or send
+	// anything back, same as leave_session's equivalent case.
+	server.HandleMessage(a, ClientMessage{Type: MsgKeepalive})
+
+	if msgs := sender.messagesTo(a); len(msgs) != 0 {
+		t.Fatalf("expected no messages, got: %+v", msgs)
+	}
+}

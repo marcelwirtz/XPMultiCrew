@@ -117,6 +117,21 @@ func (a *App) StartSharedCockpit(role, server, code string) error {
 	return a.plugin.Send("START_SHARED_COCKPIT " + role + " " + server + " " + code)
 }
 
+// DisconnectFormation asks the plugin to leave its current Formation
+// session (if any) and stop auto-reconnecting - see control_listener.h's
+// DISCONNECT_FORMATION and RendezvousClient::on_disconnected's comment.
+// Bound to the frontend's "Disconnect" button in the Formation panel.
+func (a *App) DisconnectFormation() error {
+	return a.plugin.Send("DISCONNECT_FORMATION")
+}
+
+// DisconnectSharedCockpit is DisconnectFormation's Shared Cockpit
+// equivalent. Bound to the frontend's "Disconnect" button in the Shared
+// Cockpit panel.
+func (a *App) DisconnectSharedCockpit() error {
+	return a.plugin.Send("DISCONNECT_SHARED_COCKPIT")
+}
+
 // GetXPlanePath returns the previously chosen X-Plane installation path,
 // or "" if none has been chosen yet. Called by the frontend on load to
 // prefill the Setup panel.

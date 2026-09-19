@@ -259,6 +259,21 @@ succeeded versus falling back to relay for that test - both work from the
 user's perspective, so there was no way to tell without packet capture;
 worth checking next time if latency matters to you.
 
+**Auto-reconnect:** the plugin keeps retrying (every 5s) to rejoin your
+current session on its own if the connection to the rendezvous server is
+lost - a transient network/server blip no longer strands you mid-flight
+waiting for someone to notice and re-click Create/Join. Detected via a
+`keepalive_ack` the server now sends back for every keepalive
+(`RendezvousClient::on_disconnected`, see its comment for why a plain
+"haven't heard anything" timeout alone isn't enough while alone in a
+quiet session with no peer yet). This only stops once you explicitly hit
+**Disconnect** in the companion app - the same button also finally
+provides a way to leave a session at all, short of quitting the plugin.
+Same behavior for Shared Cockpit, with one difference: losing the
+rendezvous heartbeat does *not* interrupt an already-running flight, since
+the direct-UDP sync to your co-pilot's already-known address may well
+still be working fine even though the backup relay path briefly dropped.
+
 ## Phase 3: Shared Cockpit MVP
 
 Two pilots fly the *same* aircraft in separate X-Plane instances. One is

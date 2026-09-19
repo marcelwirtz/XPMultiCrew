@@ -82,7 +82,7 @@ void RendezvousClient::MaybeSendKeepalive() {
     SendKeepaliveNow();
 }
 
-void RendezvousClient::PollIncoming() {
+void RendezvousClient::PollIncoming(std::chrono::steady_clock::duration timeout) {
     char buf[4096];
     while (true) {
         const int received = socket_.ReceiveFrom(buf, sizeof(buf));
@@ -94,10 +94,13 @@ void RendezvousClient::PollIncoming() {
         if (!DecodeServerMessage(std::string(buf, static_cast<size_t>(received)), msg)) {
             continue;
         }
+        // Any decodable message at all, including a bare keepalive_ack,
+        // is proof the server is still there - see kServerResponseTimeout.
+        last_received_ = std::chrono::steady_clock::now();
 
         if (msg.type == "session_created") {
             in_session_ = true;
-            last_keepalive_sent_ = std::chrono::steady_clock::now();
+            last_keepalive_sent_ = last_received_;
             if (on_session_ready) on_session_ready(msg.code, msg.your_id);
         } else if (msg.type == "peer_joined") {
             std::string host;
@@ -119,8 +122,19 @@ void RendezvousClient::PollIncoming() {
             in_session_ = false;
             if (on_error) on_error(msg.message);
         }
+        // "keepalive_ack" itself needs no handling beyond the
+        // last_received_ update above.
     }
-    MaybeSendKeepalive();
+
+    if (in_session_) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_received_ > timeout) {
+            in_session_ = false;
+            if (on_disconnected) on_disconnected();
+        } else {
+            MaybeSendKeepalive();
+        }
+    }
 }
 
 } // namespace flytogether

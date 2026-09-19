@@ -31,6 +31,13 @@ stdlib only (no external dependencies).
   it polls for our replies and sends keepalives) doesn't run at all during
   a loading screen, which can easily take 30-60+ seconds - a short timeout
   evicted sessions before the plugin ever got a chance to keep one alive.
+- Every `keepalive` gets a `keepalive_ack` back. This is the client's own
+  auto-reconnect's only positive "the server is actually still there"
+  signal: a client alone in a session (no peer yet, so no relay/peer_*
+  traffic either) would otherwise see total silence and have no way to
+  tell "quiet because nobody's here yet" apart from "quiet because the
+  server/network is unreachable" - see
+  `plugin/include/formation/rendezvous_client.h`'s `on_disconnected`.
 
 The server is deliberately payload-agnostic: `payload` is just base64 bytes
 from the plugin's netcore (e.g. an `AircraftStatePacket`) — the server never

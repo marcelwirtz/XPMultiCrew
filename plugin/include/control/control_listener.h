@@ -27,7 +27,15 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   CREATE_SESSION <host:port>
 //   JOIN_SESSION <host:port> <code>
 //   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
+//   DISCONNECT_FORMATION
+//   DISCONNECT_SHARED_COCKPIT
 //   GET_STATUS
+// DISCONNECT_FORMATION/DISCONNECT_SHARED_COCKPIT are the explicit opt-out
+// for RendezvousClient::on_disconnected's auto-reconnect (see its
+// comment): plugin_main.cpp keeps retrying a lost connection on its own
+// forever, specifically so a transient network/server blip doesn't need
+// the user to notice and re-click Create/Join - these commands are the
+// only way to actually stop that and go back to "not connected".
 // Shared Cockpit's peer discovery goes through the same rendezvous/relay
 // server as Formation mode (docs/plan.md section 7), not a manually-typed
 // peer address - see plugin_main.cpp's dedicated g_shared_cockpit_rendezvous
@@ -83,6 +91,8 @@ public:
         std::function<void(const std::string& hostPort, const std::string& code)> on_join_session;
         std::function<void(bool isMaster, const std::string& serverHostPort, const std::string& code)>
             on_start_shared_cockpit;
+        std::function<void()> on_disconnect_formation;
+        std::function<void()> on_disconnect_shared_cockpit;
     };
 
     bool Start(const Callbacks& callbacks);

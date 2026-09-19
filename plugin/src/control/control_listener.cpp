@@ -56,6 +56,10 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_start_shared_cockpit) {
             callbacks_.on_start_shared_cockpit(role == "MASTER", host_port, code);
         }
+    } else if (cmd == "DISCONNECT_FORMATION") {
+        if (callbacks_.on_disconnect_formation) callbacks_.on_disconnect_formation();
+    } else if (cmd == "DISCONNECT_SHARED_COCKPIT") {
+        if (callbacks_.on_disconnect_shared_cockpit) callbacks_.on_disconnect_shared_cockpit();
     } else if (cmd == "GET_STATUS") {
         SendStatus();
     }

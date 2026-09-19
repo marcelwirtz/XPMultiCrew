@@ -10,6 +10,14 @@ export function CreateSession(arg1) {
   return window['go']['main']['App']['CreateSession'](arg1);
 }
 
+export function DisconnectFormation() {
+  return window['go']['main']['App']['DisconnectFormation']();
+}
+
+export function DisconnectSharedCockpit() {
+  return window['go']['main']['App']['DisconnectSharedCockpit']();
+}
+
 export function GetAvailablePluginVersion() {
   return window['go']['main']['App']['GetAvailablePluginVersion']();
 }

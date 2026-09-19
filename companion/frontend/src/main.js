@@ -1,6 +1,8 @@
 import {
   ChooseXPlanePath,
   CreateSession,
+  DisconnectFormation,
+  DisconnectSharedCockpit,
   GetAvailablePluginVersion,
   GetInstalledPluginVersion,
   GetXPlanePath,
@@ -104,10 +106,40 @@ document.getElementById('start-sc-btn').addEventListener('click', async () => {
   }
 });
 
+// Stops RendezvousClient::on_disconnected's auto-reconnect (see
+// control_listener.h's DISCONNECT_FORMATION/DISCONNECT_SHARED_COCKPIT) -
+// without these, there was no way to actually leave a session short of
+// quitting the whole companion app.
+document.getElementById('disconnect-formation-btn').addEventListener('click', async () => {
+  try {
+    await DisconnectFormation();
+  } catch (e) {
+    alert(e);
+  }
+});
+
+document.getElementById('disconnect-sc-btn').addEventListener('click', async () => {
+  try {
+    await DisconnectSharedCockpit();
+  } catch (e) {
+    alert(e);
+  }
+});
+
 function classify(text) {
-  if (/error|failed|invalid/i.test(text)) return 'err';
+  if (/error|failed|invalid|lost/i.test(text)) return 'err';
   if (/connected|ready|running/i.test(text)) return 'ok';
   return '';
+}
+
+// The plugin's exact idle-state strings (control_listener.h's
+// formation_status_/shared_cockpit_status_ defaults, and DISCONNECT_*'s
+// reset) - anything else means there's an active or in-progress session
+// worth offering to disconnect from, and Create/Join/Start should be
+// blocked so a click can't start a second, competing session on top of
+// it (including while auto-reconnecting after a connection loss).
+function isIdle(text) {
+  return text === 'not connected' || text === 'not started' || /plugin not seen yet/i.test(text);
 }
 
 function renderPeerList(peers) {
@@ -168,12 +200,14 @@ EventsOn('status', (data) => {
 
   // Blocked while X-Plane is still loading (a click would otherwise sit
   // unprocessed until loading finishes anyway, but blocking here is more
-  // honest about that wait) and once already connected/running, so you
-  // can't accidentally kick off a second Create/Join/Start on top of a
-  // working session.
-  const formationConnected = formationKind === 'ok';
-  const sharedCockpitRunning = sharedCockpitKind === 'ok';
-  document.getElementById('create-btn').disabled = !data.simReady || formationConnected;
-  document.getElementById('join-btn').disabled = !data.simReady || formationConnected;
-  document.getElementById('start-sc-btn').disabled = !data.simReady || sharedCockpitRunning;
+  // honest about that wait) and once already connected/connecting/
+  // reconnecting, so you can't accidentally kick off a second Create/
+  // Join/Start on top of a session that's still active or being restored.
+  const formationIdle = isIdle(data.formation);
+  const sharedCockpitIdle = isIdle(data.sharedCockpit);
+  document.getElementById('create-btn').disabled = !data.simReady || !formationIdle;
+  document.getElementById('join-btn').disabled = !data.simReady || !formationIdle;
+  document.getElementById('start-sc-btn').disabled = !data.simReady || !sharedCockpitIdle;
+  document.getElementById('disconnect-formation-btn').disabled = formationIdle;
+  document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
 });

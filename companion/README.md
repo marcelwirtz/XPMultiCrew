@@ -87,13 +87,19 @@ X-Plane instance on the same machine, not a remote one):
   CREATE_SESSION <host:port>
   JOIN_SESSION <host:port> <code>
   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
+  DISCONNECT_FORMATION
+  DISCONNECT_SHARED_COCKPIT
   GET_STATUS
   ```
   Shared Cockpit's peer discovery goes through the same rendezvous/relay
   server as Formation's Create/Join Session, not a manually-typed peer
   address - see the root `README.md`'s Phase 3 section for why (it's what
   makes it work over the internet without port forwarding). MASTER leaves
-  the code blank; CLIENT must supply one.
+  the code blank; CLIENT must supply one. `DISCONNECT_FORMATION`/
+  `DISCONNECT_SHARED_COCKPIT` (each panel's "Disconnect" button) are the
+  only way to actually leave a session and stop the plugin's own
+  auto-reconnect (see root README's Phase 2 section) - without them there
+  was no way to disconnect short of quitting the plugin entirely.
 - The plugin pushes status to `49031` (this app listens there), any time it
   changes and in reply to `GET_STATUS`:
   ```
@@ -119,8 +125,12 @@ X-Plane instance on the same machine, not a remote one):
   Create/Join/Start while it's `0` (a click sent during loading wouldn't
   actually be lost either way, see `control_listener.h`'s comment, but
   blocking is clearer than a click silently doing nothing for a while).
-  Create/Join/Start are also disabled once already connected/running, so
-  you can't kick off a second one on top of a working session.
+  Create/Join/Start are also disabled once already connected/running (or
+  auto-reconnecting after a connection loss - anything other than the
+  plugin's exact idle-state status text, see `main.js`'s `isIdle`), so you
+  can't kick off a second one on top of a working session; each panel's
+  "Disconnect" button is enabled exactly when its Create/Join/Start
+  counterparts are disabled for that reason.
 
 `app.go` polls `GET_STATUS` once a second and re-emits whatever
 `PluginClient` currently holds as a `"status"` event to the frontend

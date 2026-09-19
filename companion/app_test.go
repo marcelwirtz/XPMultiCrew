@@ -67,3 +67,27 @@ func TestStartSharedCockpitRequiresServer(t *testing.T) {
 		t.Fatal("expected an error when server address is blank")
 	}
 }
+
+func TestDisconnectFormationSendsCommand(t *testing.T) {
+	_, recv := recvLine(t)
+	app := NewApp()
+
+	if err := app.DisconnectFormation(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := recv(); got != "DISCONNECT_FORMATION" {
+		t.Fatalf("unexpected command line: %q", got)
+	}
+}
+
+func TestDisconnectSharedCockpitSendsCommand(t *testing.T) {
+	_, recv := recvLine(t)
+	app := NewApp()
+
+	if err := app.DisconnectSharedCockpit(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := recv(); got != "DISCONNECT_SHARED_COCKPIT" {
+		t.Fatalf("unexpected command line: %q", got)
+	}
+}

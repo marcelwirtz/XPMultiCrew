@@ -183,6 +183,11 @@ func (s *Server) handleKeepalive(addr *net.UDPAddr) {
 	defer s.mu.Unlock()
 	if member, ok := s.clientsByAddr[addr.String()]; ok {
 		member.LastSeen = time.Now()
+		// Acked even with no session activity to reply to (no peer yet, no
+		// relay traffic) - the client's own disconnect-detection needs
+		// this positive signal to tell "quiet because alone" apart from
+		// "quiet because unreachable". See protocol.go's MsgKeepaliveAck.
+		s.sender.SendTo(addr, ServerMessage{Type: MsgKeepaliveAck})
 	}
 }
 

@@ -21,7 +21,7 @@ struct RendezvousClientMessage {
 
 // Server -> client
 struct RendezvousServerMessage {
-    std::string type; // "session_created" | "peer_joined" | "peer_left" | "relay" | "error"
+    std::string type; // "session_created" | "peer_joined" | "peer_left" | "relay" | "error" | "keepalive_ack"
     std::string code;
     int your_id = 0;
     int peer_id = 0;
