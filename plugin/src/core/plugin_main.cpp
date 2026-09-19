@@ -148,14 +148,46 @@ bool g_rendezvous_active = false;
 std::string g_formation_session_code;
 int g_formation_own_peer_id = 0;
 
-// Auto-reconnect: true from the moment the user asks to connect (Create/
-// Join Session, or the file-based auto-start) until they explicitly
-// disconnect via the companion app - see control_listener.h's
-// DISCONNECT_FORMATION. While true, RendezvousClient::on_disconnected
+constexpr std::chrono::seconds kReconnectRetryInterval{5};
+
+// Wall-clock auto-reconnect gate, shared by Formation's and Shared
+// Cockpit's independent rendezvous sessions (each gets its own instance -
+// see g_formation_reconnect/g_shared_cockpit_reconnect below). `wanted` is
+// true from the moment the user asks to connect (Create/Join Session, or
+// the file-based auto-start) until they explicitly disconnect via the
+// companion app - see control_listener.h's DISCONNECT_FORMATION/
+// DISCONNECT_SHARED_COCKPIT. While true, RendezvousClient::on_disconnected
 // (fired after kServerResponseTimeout of silence from the server) keeps
-// getting retried on a wall-clock timer rather than giving up, so a
-// transient network/server blip doesn't strand the user mid-flight.
-bool g_formation_reconnect_wanted = false;
+// getting retried via Due() below rather than giving up, so a transient
+// network/server blip doesn't strand the user mid-flight.
+struct ReconnectGate {
+    bool wanted = false;
+    std::chrono::steady_clock::time_point last_attempt{};
+
+    // Resets the retry clock so the next Due() call waits a full
+    // kReconnectRetryInterval - called whenever a fresh attempt is made
+    // explicitly (Create/Join), so it doesn't fire a redundant duplicate
+    // attempt moments later while still waiting on that first one's reply.
+    void Reset() { last_attempt = std::chrono::steady_clock::now(); }
+
+    // True if a retry is due right now, in which case the retry clock is
+    // also reset as a side effect (same as Reset()) so the caller's own
+    // retry counts as this interval's attempt. False if not wanted,
+    // already in session, or simply not time yet.
+    bool Due(bool in_session) {
+        if (!wanted || in_session) {
+            return false;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_attempt < kReconnectRetryInterval) {
+            return false;
+        }
+        last_attempt = now;
+        return true;
+    }
+};
+
+ReconnectGate g_formation_reconnect;
 std::string g_formation_reconnect_host;
 uint16_t g_formation_reconnect_port = 0;
 // Only used for the very first attempt (before we have an assigned
@@ -167,8 +199,6 @@ uint16_t g_formation_reconnect_port = 0;
 // reconnect.
 bool g_formation_reconnect_create = false;
 std::string g_formation_reconnect_code;
-std::chrono::steady_clock::time_point g_formation_last_reconnect_attempt{};
-constexpr std::chrono::seconds kReconnectRetryInterval{5};
 
 // Rebuilds and pushes the Formation status text, including how many
 // peers are currently in the session - called from on_peer_joined and
@@ -258,11 +288,11 @@ void SetupRendezvousCallbacksOnce() {
         g_rendezvous_peers.clear();
         g_last_pushed_formation_peers.clear();
         g_control_listener.SetFormationPeers("");
-        // g_formation_reconnect_wanted stays true here (unless the user
+        // g_formation_reconnect.wanted stays true here (unless the user
         // explicitly disconnected, in which case Stop() already made this
         // moot) - UpdateFormationCallback's reconnect scheduler picks this
         // up and keeps retrying on its own.
-        g_control_listener.SetFormationStatus(g_formation_reconnect_wanted ? "connection lost, reconnecting..."
+        g_control_listener.SetFormationStatus(g_formation_reconnect.wanted ? "connection lost, reconnecting..."
                                                                             : "not connected");
     };
 }
@@ -275,7 +305,7 @@ void SetupRendezvousCallbacksOnce() {
 void StartRendezvous(const std::string& host, uint16_t port, bool create, const std::string& code) {
     SetupRendezvousCallbacksOnce();
 
-    g_formation_reconnect_wanted = true;
+    g_formation_reconnect.wanted = true;
     g_formation_reconnect_host = host;
     g_formation_reconnect_port = port;
     g_formation_reconnect_create = create;
@@ -284,7 +314,7 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
     // a full kReconnectRetryInterval before its first attempt, instead of
     // potentially firing a redundant duplicate CreateSession/JoinSession
     // moments after this one while still waiting on session_ready.
-    g_formation_last_reconnect_attempt = std::chrono::steady_clock::now();
+    g_formation_reconnect.Reset();
 
     if (g_rendezvous_active) {
         // Always allow a fresh attempt rather than getting permanently
@@ -316,10 +346,10 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
 
 // Companion app's explicit "Disconnect" - the only thing that actually
 // stops StartRendezvous()/on_disconnected's auto-reconnect (see
-// g_formation_reconnect_wanted's comment) instead of just losing the
+// g_formation_reconnect's comment) instead of just losing the
 // connection and trying again.
 void DisconnectFormation() {
-    g_formation_reconnect_wanted = false;
+    g_formation_reconnect.wanted = false;
     for (const auto& [peer_id, peer] : g_rendezvous_peers) {
         g_formation_sync.RemovePeer(peer.host, peer.port);
     }
@@ -335,7 +365,7 @@ void DisconnectFormation() {
 }
 
 // Reconnect scheduler for both rendezvous sessions - if the user wants to
-// be connected (g_formation_reconnect_wanted/g_shared_cockpit_reconnect_wanted)
+// be connected (g_formation_reconnect.wanted/g_shared_cockpit_reconnect.wanted)
 // but currently isn't (RendezvousClient::InSession() false, e.g. right
 // after on_disconnected fired), retry roughly every kReconnectRetryInterval
 // using a wall-clock timer for the same reason MaybeSendKeepalive() does -
@@ -344,14 +374,9 @@ void DisconnectFormation() {
 // PollSharedCockpitRendezvousCallback, which already run every frame
 // unconditionally.
 void MaybeReconnectFormation() {
-    if (!g_formation_reconnect_wanted || g_rendezvous_client.InSession()) {
+    if (!g_formation_reconnect.Due(g_rendezvous_client.InSession())) {
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    if (now - g_formation_last_reconnect_attempt < kReconnectRetryInterval) {
-        return;
-    }
-    g_formation_last_reconnect_attempt = now;
     XPLMDebugString("XPMultiCrew: attempting to reconnect the rendezvous session...\n");
     // Rejoin the exact same session once we have an assigned code (see
     // on_session_ready) rather than re-running create_session, which
@@ -606,14 +631,13 @@ bool g_shared_cockpit_active = false;
 flytogether::RendezvousClient g_shared_cockpit_rendezvous;
 bool g_shared_cockpit_rendezvous_active = false;
 
-// Auto-reconnect, mirroring g_formation_reconnect_wanted's comment above -
-// same idea, separate session.
-bool g_shared_cockpit_reconnect_wanted = false;
+// Auto-reconnect, mirroring g_formation_reconnect's comment above - same
+// idea, separate session.
+ReconnectGate g_shared_cockpit_reconnect;
 std::string g_shared_cockpit_reconnect_host;
 uint16_t g_shared_cockpit_reconnect_port = 0;
 flytogether::SharedCockpitRole g_shared_cockpit_reconnect_role = flytogether::SharedCockpitRole::kNone;
 std::string g_shared_cockpit_reconnect_code; // updated on_session_ready, same reasoning as Formation's
-std::chrono::steady_clock::time_point g_shared_cockpit_last_reconnect_attempt{};
 flytogether::SharedCockpitRole g_pending_shared_cockpit_role = flytogether::SharedCockpitRole::kNone;
 std::vector<std::string> g_pending_shared_cockpit_datarefs;
 
@@ -874,15 +898,24 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
     g_shared_cockpit_rendezvous.on_relay_received = [](int /*from_peer_id*/,
                                                          const std::vector<uint8_t>& bytes) {
         const double now = XPLMGetElapsedTime();
-        // Disambiguate by shape: a position update is always exactly
-        // sizeof(AircraftStatePacket) (and IngestRelayedPacket re-checks
-        // magic/version); anything else is tried as a dataref-sync message
-        // (IngestRelayedMessage's own magic/version check rejects garbage).
-        if (bytes.size() == sizeof(flytogether::AircraftStatePacket)) {
+        // Disambiguate by the leading magic value, not by size: both
+        // AircraftStatePacket and an encoded DatarefSyncMessage start with a
+        // uint32 magic, and relying on size alone (the two happen to be
+        // exactly equal for some plausible dataref-name lengths) risked
+        // routing a dataref-sync message through the position-packet path
+        // or vice versa. Each Ingest* call re-validates its own magic on
+        // top of this, so a corrupted/foreign payload is still rejected
+        // either way.
+        uint32_t magic = 0;
+        if (bytes.size() >= sizeof(magic)) {
+            std::memcpy(&magic, bytes.data(), sizeof(magic));
+        }
+        if (magic == flytogether::kAircraftStateMagic) {
             g_shared_cockpit.IngestRelayedPacket(bytes.data(), bytes.size(), now);
-        } else {
+        } else if (magic == flytogether::kDatarefSyncMagic) {
             g_dataref_sync.IngestRelayedMessage(bytes.data(), bytes.size());
         }
+        // Anything else (wrong magic, too short): not one of ours, ignore.
     };
     g_shared_cockpit_rendezvous.on_error = [](const std::string& message) {
         char buf[512];
@@ -901,7 +934,7 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         // flight over a lost backup path would be worse than just quietly
         // reconnecting it in the background.
         g_control_listener.SetSharedCockpitStatus(
-            g_shared_cockpit_reconnect_wanted ? "connection lost, reconnecting..." : "not started");
+            g_shared_cockpit_reconnect.wanted ? "connection lost, reconnecting..." : "not started");
     };
 }
 
@@ -914,12 +947,12 @@ void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
                                    const std::vector<std::string>& datarefs) {
     SetupSharedCockpitRendezvousCallbacksOnce();
 
-    g_shared_cockpit_reconnect_wanted = true;
+    g_shared_cockpit_reconnect.wanted = true;
     g_shared_cockpit_reconnect_host = host;
     g_shared_cockpit_reconnect_port = port;
     g_shared_cockpit_reconnect_role = role;
     g_shared_cockpit_reconnect_code = code; // "" for MASTER's first attempt, see MaybeReconnectSharedCockpit
-    g_shared_cockpit_last_reconnect_attempt = std::chrono::steady_clock::now();
+    g_shared_cockpit_reconnect.Reset();
 
     if (g_shared_cockpit_rendezvous_active) {
         XPLMDebugString("XPMultiCrew: shared cockpit rendezvous already active, reconnecting fresh\n");
@@ -950,7 +983,7 @@ void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
 // Companion app's explicit "Disconnect" for Shared Cockpit - mirrors
 // DisconnectFormation().
 void DisconnectSharedCockpit() {
-    g_shared_cockpit_reconnect_wanted = false;
+    g_shared_cockpit_reconnect.wanted = false;
     StopSharedCockpit();
     g_shared_cockpit_rendezvous.Stop(); // sends leave_session if we were actually in one
     g_shared_cockpit_rendezvous_active = false;
@@ -962,14 +995,9 @@ void DisconnectSharedCockpit() {
 // PollSharedCockpitRendezvousCallback, which already runs every frame
 // unconditionally.
 void MaybeReconnectSharedCockpit() {
-    if (!g_shared_cockpit_reconnect_wanted || g_shared_cockpit_rendezvous.InSession()) {
+    if (!g_shared_cockpit_reconnect.Due(g_shared_cockpit_rendezvous.InSession())) {
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    if (now - g_shared_cockpit_last_reconnect_attempt < kReconnectRetryInterval) {
-        return;
-    }
-    g_shared_cockpit_last_reconnect_attempt = now;
     XPLMDebugString("XPMultiCrew: attempting to reconnect the shared cockpit rendezvous session...\n");
     if (g_shared_cockpit_reconnect_code.empty() &&
         g_shared_cockpit_reconnect_role == flytogether::SharedCockpitRole::kMaster) {
@@ -1234,7 +1262,7 @@ PLUGIN_API void XPluginDisable() {
     g_rendezvous_client.Stop();
     g_rendezvous_peers.clear();
     g_rendezvous_active = false;
-    g_formation_reconnect_wanted = false; // don't reconnect into a disabled plugin
+    g_formation_reconnect.wanted = false; // don't reconnect into a disabled plugin
 
     g_xpmp_aircraft.clear();
     if (g_xpmp_initialized) {
@@ -1244,7 +1272,7 @@ PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(PollSharedCockpitRendezvousCallback, nullptr);
     g_shared_cockpit_rendezvous.Stop();
     g_shared_cockpit_rendezvous_active = false;
-    g_shared_cockpit_reconnect_wanted = false;
+    g_shared_cockpit_reconnect.wanted = false;
 
     // Never leave the user's aircraft frozen under an active physics
     // override just because the plugin got disabled.
