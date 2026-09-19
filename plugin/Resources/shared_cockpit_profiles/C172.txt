@@ -23,13 +23,27 @@
 # only ever touches position/heading/pitch/roll on your own aircraft), so
 # they're listed here explicitly too.
 
-# Radios
+# Radios - active and standby, so a flip/flop swap either pilot makes
+# shows up correctly on both sides, not just the currently-active side
 DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/com1_standby_frequency_hz
 DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/com2_standby_frequency_hz
 DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/nav1_standby_frequency_hz
 DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz
+DATAREF sim/cockpit2/radios/actuators/nav2_standby_frequency_hz
+DATAREF sim/cockpit/radios/adf1_freq_hz
+DATAREF sim/cockpit/radios/adf1_stdby_freq_hz
+DATAREF sim/cockpit/radios/dme_freq_hz
 DATAREF sim/cockpit/radios/transponder_code
 DATAREF sim/cockpit/radios/transponder_mode
+
+# Course/OBS selectors and audio panel selection
+DATAREF sim/cockpit2/radios/actuators/nav1_obs_deg_mag_pilot
+DATAREF sim/cockpit2/radios/actuators/nav2_obs_deg_mag_pilot
+DATAREF sim/cockpit2/radios/actuators/audio_com_selection
+DATAREF sim/cockpit2/radios/actuators/audio_nav_selection
 
 # Autopilot bugs/targets (see the note above re: engagement modes)
 DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot
@@ -46,16 +60,20 @@ DATAREF sim/cockpit2/controls/rudder_trim
 DATAREF sim/flightmodel/controls/flaprqst
 DATAREF sim/flightmodel/controls/parkbrake
 
-# Engine / fuel
+# Engine / fuel / start procedure
 DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all
+DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio
+DATAREF sim/cockpit2/engine/actuators/primer_on
+DATAREF sim/cockpit2/engine/actuators/ignition_key
 DATAREF sim/cockpit/engine/fuel_pump_on
 DATAREF sim/cockpit/engine/fuel_tank_selector
 
-# Electrical / avionics
+# Electrical / avionics / pitot-static
 DATAREF sim/cockpit2/electrical/battery_on
 DATAREF sim/cockpit2/electrical/generator_on
 DATAREF sim/cockpit2/switches/avionics_power_on
 DATAREF sim/cockpit/switches/pitot_heat_on
+DATAREF sim/cockpit2/switches/alternate_static_air_ratio
 
 # Exterior lights
 DATAREF sim/cockpit/electrical/beacon_lights_on
