@@ -123,3 +123,71 @@ target_include_directories(shared_cockpit_config_test PRIVATE
 target_compile_features(shared_cockpit_config_test PRIVATE cxx_std_17)
 
 add_test(NAME shared_cockpit_config_test COMMAND shared_cockpit_config_test)
+
+add_executable(peer_list_test
+    peer_list_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/peer_list.cpp
+)
+
+target_include_directories(peer_list_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+)
+
+target_compile_features(peer_list_test PRIVATE cxx_std_17)
+
+add_test(NAME peer_list_test COMMAND peer_list_test)
+
+add_executable(rendezvous_config_test
+    rendezvous_config_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_config.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_protocol.cpp
+)
+
+target_include_directories(rendezvous_config_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+)
+
+target_compile_features(rendezvous_config_test PRIVATE cxx_std_17)
+
+add_test(NAME rendezvous_config_test COMMAND rendezvous_config_test)
+
+add_executable(formation_sync_test
+    formation_sync_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/formation_sync.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/peer_list.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
+)
+
+target_include_directories(formation_sync_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+)
+
+target_link_libraries(formation_sync_test PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(formation_sync_test PRIVATE ws2_32)
+endif()
+target_compile_features(formation_sync_test PRIVATE cxx_std_17)
+
+add_test(NAME formation_sync_test COMMAND formation_sync_test)
+
+add_executable(shared_cockpit_sync_test
+    shared_cockpit_sync_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/shared_cockpit_sync.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
+)
+
+target_include_directories(shared_cockpit_sync_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+)
+
+target_link_libraries(shared_cockpit_sync_test PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(shared_cockpit_sync_test PRIVATE ws2_32)
+endif()
+target_compile_features(shared_cockpit_sync_test PRIVATE cxx_std_17)
+
+add_test(NAME shared_cockpit_sync_test COMMAND shared_cockpit_sync_test)
