@@ -295,6 +295,16 @@ control (position/attitude) is one-way, master → client. There's no
 per-switch ownership/request-release arbitration yet — whichever side
 writes last wins if both touch the same dataref near-simultaneously.
 
+**The CLIENT gets the MASTER's complete systems state once, right when it
+connects** — not just future changes from that point on. Both sides
+technically broadcast everything they're watching the moment they start
+(nothing's "known yet" to compare against), but the CLIENT seeds its own
+baseline from its current cold-start values first so it doesn't
+reciprocally broadcast *those* back at the MASTER it just joined — see
+`DatarefSync::Start`'s `seedFromCurrentValues` comment. Without this, both
+sides' initial dumps would race, and whichever arrived last would
+silently clobber the other's already-configured cockpit.
+
 **Peer discovery works exactly like Formation's internet play** (same
 rendezvous/relay server, `server/`, docs/plan.md section 7) rather than a
 manually-typed peer address — this is what lets two people play over the

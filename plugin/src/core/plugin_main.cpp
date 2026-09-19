@@ -805,7 +805,14 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     XPLMRegisterFlightLoopCallback(SendSharedCockpitStateCallback, 1.0f / 20.0f, nullptr);
     XPLMRegisterFlightLoopCallback(UpdateSharedCockpitCallback, -1.0f, nullptr);
 
-    if (g_dataref_sync.Start(datarefs, peers)) {
+    // CLIENT seeds from its own current (cold-start) values so it doesn't
+    // broadcast them back at the MASTER it just joined - see
+    // DatarefSync::Start's comment. This is what makes the MASTER's
+    // untouched Start() (still comparing against "nothing known yet") the
+    // sole, deterministic source of the newly-joined CLIENT's initial
+    // full state, instead of a race between both sides' cold-start dumps.
+    const bool seed_from_current_values = role == flytogether::SharedCockpitRole::kClient;
+    if (g_dataref_sync.Start(datarefs, peers, seed_from_current_values)) {
         g_dataref_sync.SetRelaySender([](const void* data, size_t len) {
             g_shared_cockpit_rendezvous.SendRelay(data, len);
         });

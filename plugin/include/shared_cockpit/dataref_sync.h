@@ -37,7 +37,25 @@ constexpr uint16_t kDatarefSyncUdpPort = 49021;
 // lines) - not a custom mapping/getter-setter per dataref.
 class DatarefSync {
 public:
-    bool Start(const std::vector<std::string>& watchedNames, const std::vector<Peer>& peers);
+    // `seedFromCurrentValues`: if true, every watched dataref's *current*
+    // value is cached as already-known up front, so the first Poll()
+    // afterwards only broadcasts genuine future changes instead of
+    // treating every dataref as "just changed" - see Poll()'s
+    // `!w.has_last_known` check. Without this, a freshly-joined side
+    // would otherwise immediately broadcast its own stale/cold-start
+    // values back at the peer it just joined, alongside (and racing) the
+    // full state that side is itself broadcasting for the same reason -
+    // whichever message arrived last would silently win, sometimes
+    // clobbering a carefully-configured cockpit with the other side's
+    // defaults. Pass true for the joining CLIENT (so only the MASTER's
+    // already-configured state - which never sets this - reaches the
+    // client deterministically); leave false for the MASTER, so its own
+    // current state (fully "unknown" from this instance's point of view
+    // right after Start()) *is* broadcast in full on the very next
+    // Poll() - this is what gives a newly-connected client the master's
+    // complete state, not just future deltas from that point on.
+    bool Start(const std::vector<std::string>& watchedNames, const std::vector<Peer>& peers,
+               bool seedFromCurrentValues = false);
     void Stop();
 
     // Call every frame or so: reads each watched dataref, broadcasts any

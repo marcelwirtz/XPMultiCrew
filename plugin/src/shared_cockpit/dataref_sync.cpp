@@ -4,7 +4,8 @@
 
 namespace flytogether {
 
-bool DatarefSync::Start(const std::vector<std::string>& watchedNames, const std::vector<Peer>& peers) {
+bool DatarefSync::Start(const std::vector<std::string>& watchedNames, const std::vector<Peer>& peers,
+                         bool seedFromCurrentValues) {
     peers_ = peers;
     watched_.clear();
     index_by_name_.clear();
@@ -18,6 +19,10 @@ bool DatarefSync::Start(const std::vector<std::string>& watchedNames, const std:
         w.name = name;
         w.ref = ref;
         w.xplm_type = XPLMGetDataRefTypes(ref);
+        if (seedFromCurrentValues) {
+            w.last_known = ReadCurrentValue(w);
+            w.has_last_known = true;
+        }
         watched_.push_back(w);
         index_by_name_[name] = watched_.size() - 1;
     }
