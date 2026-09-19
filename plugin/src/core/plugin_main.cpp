@@ -798,6 +798,14 @@ float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
                                    float /*elapsedTimeSinceLastFlightLoop*/,
                                    int /*counter*/,
                                    void* /*refcon*/) {
+    // This callback executing at all is proof the sim isn't on a loading
+    // screen right now (see control_listener.h's SIM_READY comment) -
+    // catches the one case XPLM_MSG_PLANE_LOADED alone misses: the very
+    // first flight of an X-Plane session, which can finish loading before
+    // this plugin was even enabled to receive that message.
+    if (!g_control_listener.IsSimReady()) {
+        g_control_listener.SetSimReady(true);
+    }
     g_control_listener.Poll();
     return -1.0f; // every frame, so the companion app feels responsive
 }

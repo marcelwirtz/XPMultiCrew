@@ -58,6 +58,18 @@ int main() {
 
     assert(listener.Start(callbacks));
 
+    // IsSimReady() lets plugin_main.cpp's PollControlListenerCallback
+    // self-heal SIM_READY on its own first tick (catching the case where
+    // XPLM_MSG_PLANE_LOADED fires before the plugin is enabled to receive
+    // it - see control_listener.h's SIM_READY comment) - starts false,
+    // reflects whatever SetSimReady last set.
+    assert(!listener.IsSimReady());
+    listener.SetSimReady(true);
+    assert(listener.IsSimReady());
+    listener.SetSimReady(false);
+    assert(!listener.IsSimReady());
+    std::printf("IsSimReady() reflects SetSimReady(): OK\n");
+
     // A raw socket standing in for the companion app.
     UdpSocket companion;
     assert(companion.Open());

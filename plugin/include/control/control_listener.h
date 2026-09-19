@@ -57,10 +57,21 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // read it out of the status text and retype it (mostly useful for
 // re-sharing it, or if you fat-fingered "Join" instead of "Create").
 // SIM_READY reflects whether X-Plane has actually finished loading a
-// flight (XPLM_MSG_PLANE_LOADED for the user's own aircraft) - all flight
-// loop callbacks, including this listener's own Poll(), simply don't run
-// during a loading screen, so a command sent while SIM_READY is 0 doesn't
-// get lost on the protocol level, just delayed until loading finishes.
+// flight. Set two ways: (1) XPLM_MSG_PLANE_LOADED/UNLOADED for the user's
+// own aircraft, which correctly catches every flight *reload* during a
+// running session; and (2) plugin_main.cpp's PollControlListenerCallback
+// calling IsSimReady()/SetSimReady(true) on its own first tick each time
+// it runs. (2) exists because (1) alone misses the very first flight of
+// an X-Plane session: X-Plane loads the default aircraft as part of its
+// own startup, before Resources/plugins are enabled, so that initial
+// XPLM_MSG_PLANE_LOADED can fire before this plugin is even listening for
+// it - leaving SIM_READY stuck at 0 forever otherwise, with the companion
+// app's buttons permanently disabled. Flight loop callbacks (unlike
+// messages) are a reliable proxy either way: they simply don't run during
+// a loading screen (same reasoning applies to this listener's own Poll(),
+// so a command sent while SIM_READY is 0 doesn't get lost on the protocol
+// level, just delayed until loading finishes) and reliably resume once
+// it's actually running - including for that very first flight.
 // The companion app additionally chooses to disable its Create/Join/Start
 // buttons while SIM_READY is 0, so a click doesn't just appear to do
 // nothing for a while - see companion/README.md for the frontend side of
@@ -88,6 +99,7 @@ public:
     void SetSharedCockpitCode(const std::string& code);
     void SetFormationPeers(const std::string& encodedPeers);
     void SetSimReady(bool ready);
+    bool IsSimReady() const { return sim_ready_; }
     void SetPluginVersion(const std::string& version);
 
 private:
