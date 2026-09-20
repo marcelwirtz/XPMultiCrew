@@ -42,7 +42,6 @@
 #include "formation/formation_sync.h"
 #include "formation/peer_list.h"
 #include "formation/rendezvous_client.h"
-#include "formation/rendezvous_config.h"
 #include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
@@ -217,9 +216,9 @@ void UpdateFormationStatus() {
     g_control_listener.SetFormationStatus(status);
 }
 
-// Wires up g_rendezvous_client's callbacks exactly once, regardless of
-// whether it ends up started from XPMultiCrew_rendezvous.txt or from the
-// companion app - both paths call StartRendezvous() below afterwards.
+// Wires up g_rendezvous_client's callbacks exactly once - called from
+// StartRendezvous() below, itself only ever triggered by the companion
+// app's "Create Session"/"Join Session" requests.
 void SetupRendezvousCallbacksOnce() {
     static bool done = false;
     if (done) {
@@ -300,11 +299,13 @@ void SetupRendezvousCallbacksOnce() {
     };
 }
 
-// Callable from either XPMultiCrew_rendezvous.txt's auto-start (XPluginEnable)
-// or the companion app's "Create Session"/"Join Session" requests - clicking a
-// button means the flight loop is already running, which is exactly what
-// sidesteps the loading-screen keepalive-timing bug the file-based path can
-// hit (see server/session.go's clientTimeout comment).
+// Callable from the companion app's "Create Session"/"Join Session"
+// requests. Formation used to also support a file-based auto-start
+// (XPMultiCrew_rendezvous.txt, evaluated once in XPluginEnable) - removed
+// since it could only ever run before the flight loop (and thus the
+// connection's keepalive) was even active, which is exactly the
+// loading-screen keepalive-timing bug server/session.go's clientTimeout
+// comment describes; a button click always happens well after that.
 void StartRendezvous(const std::string& host, uint16_t port, bool create, const std::string& code) {
     SetupRendezvousCallbacksOnce();
 
@@ -1251,19 +1252,12 @@ PLUGIN_API int XPluginEnable() {
         }
     }
 
-    // Formation's file-based auto-start still works as-is (e.g. for
-    // scripted/automated LAN setups) - the companion app is an additional,
-    // independent way to trigger the same StartRendezvous() on demand, not
-    // a replacement. Shared Cockpit has no equivalent: it always starts
-    // through the companion app (see on_start_shared_cockpit above), which
-    // is what makes rendezvous-based peer discovery (not a manually-typed
-    // address) the only way in - see shared_cockpit_config.h's comment.
-    const flytogether::RendezvousConfig rendezvous_config = flytogether::LoadRendezvousConfig(
-        flytogether::ResolveRendezvousConfigPath("XPMultiCrew_rendezvous.txt"));
-    if (rendezvous_config.enabled) {
-        StartRendezvous(rendezvous_config.server_host, rendezvous_config.server_port,
-                         rendezvous_config.create_session, rendezvous_config.join_code);
-    }
+    // Formation's internet play (rendezvous/relay) also only ever starts
+    // through the companion app now, same as Shared Cockpit - see
+    // StartRendezvous()'s comment for why the file-based auto-start this
+    // used to support was removed. LAN peers (formation/peer_list.h,
+    // loaded into g_formation_sync above) are unaffected - that's a plain
+    // list of direct peer addresses, not a rendezvous session to start.
 
     return 1;
 }

@@ -43,15 +43,11 @@ ufw allow 45000/udp
 
 ## Point clients at it
 
-In each pilot's `XPMultiCrew_rendezvous.txt`:
-
-```
-SERVER your-vps-hostname-or-ip:45000
-CREATE
-```
-
-(or `JOIN <code>` for everyone after the first person). See the top-level
-README's Phase 2 section for the full setup flow.
+In the [companion app](../companion/)'s Formation panel, enter
+`your-vps-hostname-or-ip:45000` as the server and click **Create
+Session** (first person) or **Join Session** with the code they share
+(everyone after). See the top-level README's Phase 2 section for the
+full setup flow.
 
 ## Updating
 

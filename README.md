@@ -206,30 +206,17 @@ exact same dead-reckoning/CSL-drawing pipeline Formation mode already uses
 for LAN peers, so nothing downstream needed to change.
 
 **Setup:** run the server somewhere reachable (e.g. your VPS, see
-`server/DEPLOY.md`), then either:
+`server/DEPLOY.md`), then run the [companion app](companion/) and use its
+"Create Session" (first person, shares the resulting code) / "Join
+Session" (everyone else, enters that code) buttons. This always starts
+after X-Plane's flight loop (and thus the connection's keepalive) is
+already running, unlike an earlier file-based auto-start
+(`XPMultiCrew_rendezvous.txt`, evaluated once at plugin-enable time) that
+could get caught out by X-Plane's loading screen eating the whole window
+before it ever got a chance to keep itself alive - see
+`server/session.go`'s `clientTimeout` comment - and has been removed.
 
-- **Recommended:** run the [companion app](companion/) and use its
-  "Create Session" / "Join Session" buttons - this also sidesteps a real
-  bug the file-based path can hit (see `server/session.go`'s
-  `clientTimeout` comment: X-Plane's loading screen can eat the whole
-  window before a file-triggered auto-connect gets a chance to keep itself
-  alive; clicking a button only happens once the flight loop - and thus
-  the connection's keepalive - is already running).
-- Or create `XPMultiCrew_rendezvous.txt` next to X-Plane (or set
-  `XPMULTICREW_RENDEZVOUS_FILE`), which still works exactly as before:
-
-```
-# whoever starts first:
-SERVER your-vps.example.com:45000
-CREATE
-
-# everyone else, once they have the code (shown in the companion app's
-# status, or the first person's Log.txt):
-SERVER your-vps.example.com:45000
-JOIN 2K2SYJ
-```
-
-`Log.txt` prints the session code and each peer join/leave/error either way.
+`Log.txt` prints the session code and each peer join/leave/error too.
 
 **Verified so far:** the Go server has a full unit + real-socket
 integration test suite (`server/`, 12+ tests); the C++ `RendezvousClient`

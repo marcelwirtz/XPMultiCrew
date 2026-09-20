@@ -137,21 +137,6 @@ target_compile_features(peer_list_test PRIVATE cxx_std_17)
 
 add_test(NAME peer_list_test COMMAND peer_list_test)
 
-add_executable(rendezvous_config_test
-    rendezvous_config_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_config.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_protocol.cpp
-)
-
-target_include_directories(rendezvous_config_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
-)
-
-target_compile_features(rendezvous_config_test PRIVATE cxx_std_17)
-
-add_test(NAME rendezvous_config_test COMMAND rendezvous_config_test)
-
 add_executable(formation_sync_test
     formation_sync_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/formation_sync.cpp

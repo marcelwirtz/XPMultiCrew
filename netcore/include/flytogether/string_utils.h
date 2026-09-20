@@ -7,9 +7,8 @@ namespace flytogether {
 
 // Strips a trailing '#'-comment (if any), then leading/trailing whitespace.
 // Shared by every line-oriented config file format in this project
-// (formation/peer_list.h, formation/rendezvous_config.h,
-// shared_cockpit/shared_cockpit_config.h) so the trimming rules can't
-// silently drift between them.
+// (formation/peer_list.h, shared_cockpit/shared_cockpit_config.h) so the
+// trimming rules can't silently drift between them.
 inline std::string TrimConfigLine(std::string s) {
     const auto hash_pos = s.find('#');
     if (hash_pos != std::string::npos) {

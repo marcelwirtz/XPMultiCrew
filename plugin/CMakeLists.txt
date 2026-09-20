@@ -75,7 +75,6 @@ add_library(XPMultiCrew SHARED
     src/formation/csl_aircraft.cpp
     src/formation/rendezvous_protocol.cpp
     src/formation/rendezvous_client.cpp
-    src/formation/rendezvous_config.cpp
     src/shared_cockpit/quaternion.cpp
     src/shared_cockpit/shared_cockpit_sync.cpp
     src/shared_cockpit/shared_cockpit_config.cpp
