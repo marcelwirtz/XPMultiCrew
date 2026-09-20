@@ -197,7 +197,7 @@ refreshSavedServers();
 document.getElementById('update-btn').addEventListener('click', async () => {
   if (!lastFormationIdle || !lastSharedCockpitIdle) {
     const proceed = confirm(
-      'A Formation or Shared Cockpit session looks active. Updating restarts this app and drops its ' +
+      'A Multiplayer or Shared Cockpit session looks active. Updating restarts this app and drops its ' +
         'connection to that session (the X-Plane plugin itself keeps running). Continue?',
     );
     if (!proceed) return;
