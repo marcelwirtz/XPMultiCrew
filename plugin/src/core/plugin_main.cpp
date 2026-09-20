@@ -1251,24 +1251,18 @@ PLUGIN_API int XPluginEnable() {
         }
     }
 
-    // Auto-start from file config still works as before (e.g. for
-    // scripted/automated setups) - the companion app (control/control_listener.h) is an
-    // additional, independent way to trigger the same StartRendezvous()/
-    // StartSharedCockpit() calls on demand, not a replacement.
+    // Formation's file-based auto-start still works as-is (e.g. for
+    // scripted/automated LAN setups) - the companion app is an additional,
+    // independent way to trigger the same StartRendezvous() on demand, not
+    // a replacement. Shared Cockpit has no equivalent: it always starts
+    // through the companion app (see on_start_shared_cockpit above), which
+    // is what makes rendezvous-based peer discovery (not a manually-typed
+    // address) the only way in - see shared_cockpit_config.h's comment.
     const flytogether::RendezvousConfig rendezvous_config = flytogether::LoadRendezvousConfig(
         flytogether::ResolveRendezvousConfigPath("XPMultiCrew_rendezvous.txt"));
     if (rendezvous_config.enabled) {
         StartRendezvous(rendezvous_config.server_host, rendezvous_config.server_port,
                          rendezvous_config.create_session, rendezvous_config.join_code);
-    }
-
-    const std::string enable_icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
-    const flytogether::SharedCockpitConfig shared_cockpit_config =
-        flytogether::LoadSharedCockpitConfig(flytogether::ResolveSharedCockpitConfigPath(
-            "XPMultiCrew_shared_cockpit.txt", enable_icao, GetPluginResourcesPath()));
-    if (shared_cockpit_config.enabled) {
-        StartSharedCockpit(shared_cockpit_config.role, shared_cockpit_config.peers,
-                            shared_cockpit_config.datarefs);
     }
 
     return 1;

@@ -342,12 +342,18 @@ per-aircraft automatically: the plugin resolves it in this order (see
    benefits — no manual setup needed for aircraft that already have one.
 4. `XPMultiCrew_shared_cockpit.txt` (copy from
    [`XPMultiCrew_shared_cockpit.example.txt`](XPMultiCrew_shared_cockpit.example.txt)) —
-   flat fallback for aircraft without a profile anywhere above. If this
-   file also sets `ROLE`/a direct `PEER` address, the plugin auto-starts
-   with that manual peer on `XPluginEnable` instead of waiting for the
-   companion app — that ROLE/PEER pair is ignored once you start Shared
-   Cockpit from the companion app instead (which always goes through the
-   rendezvous server).
+   flat fallback for aircraft without a profile anywhere above.
+
+None of these files ever set `ROLE` or a peer address — Shared Cockpit
+only ever starts through the companion app, which is what makes
+rendezvous-based peer discovery (not a manually-typed address) the only
+way in. An earlier version also let this flat file auto-start Shared
+Cockpit with a manually-typed `ROLE`/`PEER` pair on `XPluginEnable`; that
+was removed since it (a) read the current aircraft's ICAO type before
+X-Plane had actually loaded it, at `XPluginEnable`-time, so it could
+never even resolve to the right per-aircraft profile in the first place,
+and (b) the companion app is the only setup path worth maintaining going
+forward.
 
 Both of you need to be flying the same aircraft (and have the same profile
 file on both machines) — plan's first target: standard Cessna 172, which

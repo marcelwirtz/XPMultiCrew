@@ -1,36 +1,24 @@
 #pragma once
 
-#include "formation/peer_list.h"
-#include "shared_cockpit/shared_cockpit_sync.h"
-
 #include <string>
 #include <vector>
 
 namespace flytogether {
 
-// File-based Shared Cockpit setup - same deliberately-manual stand-in for
-// a real UI as peer_list.h/rendezvous_config.h (see docs/plan.md section 6
-// and the GUI-trigger idea noted for Phase 4).
+// File-based "systems" DATAREF list for Shared Cockpit - see
+// ResolveSharedCockpitConfigPath below for how the right file is picked
+// per aircraft. ROLE/server/session-code/peer discovery always come from
+// the companion app (which goes through the rendezvous server, see
+// formation/rendezvous_client.h) - these files never set them; the
+// companion app is the only way to start Shared Cockpit.
 //
 // Expected file contents, one directive per line (# comments, blank lines
 // ignored):
-//   ROLE MASTER
-//   PEER <host>:<port>            # the other pilot(s); position broadcast
-//                                  # (MASTER only) AND dataref sync (both
-//                                  # roles - see DatarefSync) both use this
-//   DATAREF <dataref/path>         # one line per "systems" dataref to keep
-//                                  # in sync between both cockpits; same
-//                                  # list on both sides, since Shared
-//                                  # Cockpit assumes an identical aircraft
-// or
-//   ROLE CLIENT
-//   PEER <host>:<port>            # the master, so this side's own switch
-//                                  # changes have somewhere to go
-//   DATAREF <dataref/path>
+//   DATAREF <dataref/path>   # one line per "systems" dataref to keep in
+//                            # sync between both cockpits; same list on
+//                            # both sides, since Shared Cockpit assumes
+//                            # an identical aircraft
 struct SharedCockpitConfig {
-    bool enabled = false; // true only if ROLE was given
-    SharedCockpitRole role = SharedCockpitRole::kNone;
-    std::vector<Peer> peers; // who to send position (MASTER)/dataref changes (both) to
     std::vector<std::string> datarefs; // "systems" datarefs to sync, see DatarefSync
 };
 

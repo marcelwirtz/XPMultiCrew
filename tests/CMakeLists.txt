@@ -112,7 +112,6 @@ add_test(NAME rendezvous_client_test COMMAND rendezvous_client_test)
 add_executable(shared_cockpit_config_test
     shared_cockpit_config_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/shared_cockpit_config.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_protocol.cpp
 )
 
 target_include_directories(shared_cockpit_config_test PRIVATE

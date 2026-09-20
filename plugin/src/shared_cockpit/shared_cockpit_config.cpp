@@ -1,7 +1,6 @@
 #include "shared_cockpit/shared_cockpit_config.h"
 
 #include "flytogether/string_utils.h"
-#include "formation/rendezvous_protocol.h" // SplitHostPort
 
 #include <cstdlib>
 #include <fstream>
@@ -28,26 +27,17 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
         const std::string rest =
             space_pos == std::string::npos ? std::string() : TrimConfigLine(line.substr(space_pos + 1));
 
-        if (keyword == "ROLE") {
-            if (rest == "MASTER") {
-                config.role = SharedCockpitRole::kMaster;
-            } else if (rest == "CLIENT") {
-                config.role = SharedCockpitRole::kClient;
-            }
-        } else if (keyword == "PEER") {
-            std::string host;
-            uint16_t port = 0;
-            if (SplitHostPort(rest, host, port)) {
-                config.peers.push_back(Peer{host, port});
-            }
-        } else if (keyword == "DATAREF") {
+        if (keyword == "DATAREF") {
             if (!rest.empty()) {
                 config.datarefs.push_back(rest);
             }
         }
+        // ROLE/PEER are no longer recognized here - Shared Cockpit only
+        // ever starts through the companion app (rendezvous-based peer
+        // discovery), never from a manually-typed peer in this file - see
+        // this header's comment.
     }
 
-    config.enabled = config.role != SharedCockpitRole::kNone;
     return config;
 }
 
