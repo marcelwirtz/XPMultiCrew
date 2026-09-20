@@ -4,6 +4,17 @@
 #include <cstdlib>
 
 #if defined(_WIN32)
+// Belt-and-suspenders alongside tests/CMakeLists.txt's/plugin/CMakeLists.txt's
+// own compile-definition versions of these two (see either one's comment
+// for the full explanation) - defined here too so this file is safe to
+// compile on its own in any future target that forgets that flag, not
+// just the ones that happen to set it today.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 
 #include <bcrypt.h>

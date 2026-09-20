@@ -12,6 +12,23 @@ cmake_minimum_required(VERSION 3.16)
 # broken assertion actually fails the test from now on.
 add_compile_options(-UNDEBUG)
 
+if(WIN32)
+    # Same fix, same reasoning, as plugin/CMakeLists.txt's own
+    # WIN32_LEAN_AND_MEAN/NOMINMAX compile definitions (see that file's
+    # comment for the full explanation): any test target here that pulls
+    # in <windows.h> - directly (net/secure_random.cpp) or transitively
+    # (netcore/udp_socket.h's <winsock2.h> path) - needs NOMINMAX defined
+    # before the preprocessor opens ANY header in that translation unit,
+    # or windows.h's own min/max macros mangle every std::min/std::max
+    # call in that same file into invalid syntax (MSVC error C2589). A
+    # directory-scoped add_compile_definitions is the only way to
+    # guarantee "before any header" regardless of a given .cpp's own
+    # #include order, and applying it to every target here (not just the
+    # ones that need it today) means a future test gaining a windows.h
+    # dependency doesn't silently reintroduce this.
+    add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
+
 add_executable(remote_aircraft_test
     remote_aircraft_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
