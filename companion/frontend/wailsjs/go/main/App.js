@@ -14,8 +14,8 @@ export function ChooseXPlanePath() {
   return window['go']['main']['App']['ChooseXPlanePath']();
 }
 
-export function CreateSession(arg1) {
-  return window['go']['main']['App']['CreateSession'](arg1);
+export function CreateSession(arg1, arg2) {
+  return window['go']['main']['App']['CreateSession'](arg1, arg2);
 }
 
 export function DeleteSavedServer(arg1) {
@@ -28,6 +28,10 @@ export function DisconnectFormation() {
 
 export function DisconnectSharedCockpit() {
   return window['go']['main']['App']['DisconnectSharedCockpit']();
+}
+
+export function DiscoverLanPeers() {
+  return window['go']['main']['App']['DiscoverLanPeers']();
 }
 
 export function GetAvailablePluginVersion() {
@@ -54,8 +58,12 @@ export function InstallPlugin() {
   return window['go']['main']['App']['InstallPlugin']();
 }
 
-export function JoinSession(arg1, arg2) {
-  return window['go']['main']['App']['JoinSession'](arg1, arg2);
+export function JoinSession(arg1, arg2, arg3) {
+  return window['go']['main']['App']['JoinSession'](arg1, arg2, arg3);
+}
+
+export function LanConnectFormation(arg1, arg2) {
+  return window['go']['main']['App']['LanConnectFormation'](arg1, arg2);
 }
 
 export function RequestOwnership(arg1) {

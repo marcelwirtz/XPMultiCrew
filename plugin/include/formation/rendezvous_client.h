@@ -45,8 +45,16 @@ public:
     // falls back to that same 120s sweep, same as always.
     void Stop();
 
-    void CreateSession();
-    void JoinSession(const std::string& code);
+    // `asSpectator`: see server/protocol.go's ClientMessage.Role comment -
+    // never broadcasts its own position once StartRendezvous's caller
+    // (plugin_main.cpp) honors this by skipping SendOwnState/SendRelay
+    // for itself, but still sees/receives everyone else normally. Only
+    // meaningful for Formation - Shared Cockpit doesn't use this client
+    // method (it has its own StartSharedCockpitRendezvous flow, and
+    // spectating a Shared Cockpit session is out of scope for now, see
+    // docs/plan.md).
+    void CreateSession(bool asSpectator = false);
+    void JoinSession(const std::string& code, bool asSpectator = false);
     void SendRelay(const void* data, size_t len);
 
     // Drains all pending server messages, invoking the callbacks below, and

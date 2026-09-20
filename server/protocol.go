@@ -50,8 +50,17 @@ type ClientMessage struct {
 	// Sent with every message (not just create/join_session) for
 	// simplicity - the server only actually inspects it for those two,
 	// see handleCreateSession/handleJoinSession.
-	ClientVersion int    `json:"client_version"`
-	Payload       string `json:"payload,omitempty"` // relay, base64
+	ClientVersion int `json:"client_version"`
+	// Role is "" (the default - a normal Formation participant) or
+	// "spectator" - see docs/plan.md's spectator-mode section. The
+	// server's only job for this is remembering it per ClientState
+	// (session.go) and passing it along in peer_joined below; "never
+	// broadcast your own position" is entirely a client-side (plugin)
+	// behavior - this server never inspected AircraftStatePacket payloads
+	// to begin with (see this file's own top comment), so there's nothing
+	// for it to enforce either way.
+	Role    string `json:"role,omitempty"`    // create_session, join_session
+	Payload string `json:"payload,omitempty"` // relay, base64
 }
 
 // ServerMessage is anything the server sends to a client.
@@ -73,6 +82,12 @@ type ServerMessage struct {
 	// peer_joined / peer_left
 	PeerID   int    `json:"peer_id,omitempty"`
 	PeerAddr string `json:"peer_addr,omitempty"` // "ip:port" as seen by the server
+	// PeerIsSpectator (peer_joined only) - so a receiving client/companion
+	// UI can eventually tell "this peer is watching, not flying" apart
+	// from an ordinary pilot, without needing a separate lookup. No
+	// `omitempty`: `false` (the common case) must still be sent, not
+	// silently dropped and mistaken for "not included in this response".
+	PeerIsSpectator bool `json:"peer_is_spectator"`
 
 	// relay
 	FromPeerID int    `json:"from_peer_id,omitempty"`

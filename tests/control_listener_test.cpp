@@ -42,16 +42,22 @@ int main() {
     DatarefCategory responded_category = DatarefCategory::kSystems;
     bool responded_grant = false;
     bool ownership_responded = false;
+    bool create_as_spectator = false;
+    bool join_as_spectator = false;
+    std::string lan_host_port, lan_code;
+    bool lan_connect_called = false;
 
     ControlListener::Callbacks callbacks;
-    callbacks.on_create_session = [&](const std::string& hp) {
+    callbacks.on_create_session = [&](const std::string& hp, bool as_spectator) {
         create_called = true;
         created_host_port = hp;
+        create_as_spectator = as_spectator;
     };
-    callbacks.on_join_session = [&](const std::string& hp, const std::string& code) {
+    callbacks.on_join_session = [&](const std::string& hp, const std::string& code, bool as_spectator) {
         join_called = true;
         joined_host_port = hp;
         joined_code = code;
+        join_as_spectator = as_spectator;
     };
     callbacks.on_start_shared_cockpit = [&](bool is_master, const std::string& host_port,
                                              const std::string& code) {
@@ -59,6 +65,11 @@ int main() {
         sc_is_master = is_master;
         sc_host_port = host_port;
         sc_code = code;
+    };
+    callbacks.on_lan_connect_formation = [&](const std::string& hp, const std::string& code) {
+        lan_connect_called = true;
+        lan_host_port = hp;
+        lan_code = code;
     };
     callbacks.on_request_ownership = [&](DatarefCategory category) {
         ownership_requested = true;
@@ -95,6 +106,7 @@ int main() {
     PumpFor(listener, 200ms);
     assert(create_called);
     assert(created_host_port == "rendezvous.example.com:45000");
+    assert(!create_as_spectator);
     std::printf("CREATE_SESSION parsed correctly: %s\n", created_host_port.c_str());
 
     const std::string cmd2 = "JOIN_SESSION 1.2.3.4:9999 ABC123\n";
@@ -103,7 +115,24 @@ int main() {
     assert(join_called);
     assert(joined_host_port == "1.2.3.4:9999");
     assert(joined_code == "ABC123");
+    assert(!join_as_spectator);
     std::printf("JOIN_SESSION parsed correctly: %s / %s\n", joined_host_port.c_str(), joined_code.c_str());
+
+    create_called = false;
+    const std::string cmd1_spectator = "CREATE_SESSION rendezvous.example.com:45000 SPECTATOR\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd1_spectator.data(), cmd1_spectator.size());
+    PumpFor(listener, 200ms);
+    assert(create_called);
+    assert(create_as_spectator);
+    std::printf("CREATE_SESSION SPECTATOR parsed correctly\n");
+
+    join_called = false;
+    const std::string cmd2_spectator = "JOIN_SESSION 1.2.3.4:9999 ABC123 SPECTATOR\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd2_spectator.data(), cmd2_spectator.size());
+    PumpFor(listener, 200ms);
+    assert(join_called);
+    assert(join_as_spectator);
+    std::printf("JOIN_SESSION SPECTATOR parsed correctly\n");
 
     const std::string cmd3 = "START_SHARED_COCKPIT CLIENT rendezvous.example.com:45000 DEF456\n";
     companion.SendTo("127.0.0.1", kControlUdpPort, cmd3.data(), cmd3.size());
@@ -127,6 +156,14 @@ int main() {
     assert(sc_code.empty());
     std::printf("START_SHARED_COCKPIT (MASTER, no code) parsed correctly: %s, master=%d\n",
                 sc_host_port.c_str(), sc_is_master);
+
+    const std::string cmd_lan = "LAN_CONNECT_FORMATION 192.168.1.50:49002 LANCODE\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_lan.data(), cmd_lan.size());
+    PumpFor(listener, 200ms);
+    assert(lan_connect_called);
+    assert(lan_host_port == "192.168.1.50:49002");
+    assert(lan_code == "LANCODE");
+    std::printf("LAN_CONNECT_FORMATION parsed correctly: %s / %s\n", lan_host_port.c_str(), lan_code.c_str());
 
     const std::string cmd5 = "REQUEST_OWNERSHIP engine\n";
     companion.SendTo("127.0.0.1", kControlUdpPort, cmd5.data(), cmd5.size());

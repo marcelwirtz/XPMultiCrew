@@ -129,6 +129,20 @@
     color: var(--muted);
     margin: 12px 0 4px;
   }
+  label.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  label.checkbox-row input[type=checkbox] {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+  }
   input[type=text] {
     width: 100%;
     padding: 8px 10px;
@@ -374,6 +388,55 @@
   .link-quality .peer-loss {
     margin-left: 6px;
   }
+  .lan-discovery {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .lan-discovery-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .lan-discovery-header label {
+    margin: 0;
+  }
+  .lan-discovery-header button {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .lan-peer-list {
+    margin-top: 10px;
+    font-size: 13px;
+  }
+  .lan-peer-list .empty {
+    color: var(--muted);
+  }
+  .lan-peer-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .lan-peer-list li {
+    padding: 6px 10px;
+    background: #101317;
+    border-radius: 6px;
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .lan-peer-list li .addr {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .lan-peer-list li button {
+    flex: 0 0 auto;
+    padding: 5px 12px;
+    font-size: 12px;
+  }
   .mismatch-warning {
     display: none;
     margin-top: 10px;
@@ -474,6 +537,15 @@
             <label for="code">Session code (leave blank to create a new one)</label>
             <input type="text" id="code" placeholder="ABC123">
 
+            <!-- See control_listener.h's CREATE_SESSION/JOIN_SESSION
+                 SPECTATOR token - watches the session without occupying a
+                 slot in it (this side's own aircraft is never
+                 broadcast). -->
+            <label class="checkbox-row">
+              <input type="checkbox" id="formation-spectator">
+              <span>Join as spectator (don't broadcast my own aircraft)</span>
+            </label>
+
             <div class="row buttons">
               <button id="create-btn" disabled>Create Session</button>
               <button id="join-btn" class="secondary" disabled>Join Session</button>
@@ -492,6 +564,24 @@
                  LINK_QUALITY line) - hidden until there's at least one reading,
                  so an idle/not-connected panel doesn't show "?" everywhere. -->
             <div class="link-quality" id="formation-link-quality" style="display: none;"></div>
+
+            <!-- LAN-Auto-Discovery (docs/plan.md's Phase 4 #6): other
+                 XPMultiCrew instances mDNS-discovered on the same LAN,
+                 connecting directly and entirely bypassing the rendezvous
+                 server above - see app.go's LanConnectFormation. The code
+                 here is a separate, manually-agreed secret (never carried
+                 over mDNS - see companion/lan_discovery.go), not one of
+                 the rendezvous codes above. -->
+            <div class="lan-discovery">
+              <div class="lan-discovery-header">
+                <label>Nearby on LAN</label>
+                <button id="lan-refresh-btn" class="secondary" type="button">Refresh</button>
+              </div>
+              <input type="text" id="lan-code" placeholder="Session code (agree this with your LAN peer)">
+              <div class="lan-peer-list" id="lan-peer-list">
+                <div class="empty">no XPMultiCrew instances found nearby</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -438,6 +438,68 @@ func TestJoinWithMismatchedClientVersionIsRejected(t *testing.T) {
 	}
 }
 
+func TestSpectatorRoleIsRelayedToOtherMembersViaPeerJoined(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	pilot, spectator := addrFor(1), addrFor(2)
+
+	server.HandleMessage(pilot, ClientMessage{Type: MsgCreateSession, ClientVersion: ProtocolVersion})
+	code := sender.messagesTo(pilot)[0].Code
+
+	sender.sent = nil
+	server.HandleMessage(spectator, ClientMessage{
+		Type: MsgJoinSession, Code: code, ClientVersion: ProtocolVersion, Role: "spectator",
+	})
+
+	// The pilot is told the joiner is a spectator...
+	pilotMsgs := sender.messagesTo(pilot)
+	foundSpectatorNotice := false
+	for _, m := range pilotMsgs {
+		if m.Type == MsgPeerJoined && m.PeerID == 2 && m.PeerIsSpectator {
+			foundSpectatorNotice = true
+		}
+	}
+	if !foundSpectatorNotice {
+		t.Fatalf("expected the pilot to be told peer 2 is a spectator, got %+v", pilotMsgs)
+	}
+
+	// ...and the spectator itself is told the existing member is an
+	// ordinary pilot (PeerIsSpectator: false, not just absent).
+	spectatorMsgs := sender.messagesTo(spectator)
+	foundPilotNotice := false
+	for _, m := range spectatorMsgs {
+		if m.Type == MsgPeerJoined && m.PeerID == 1 && !m.PeerIsSpectator {
+			foundPilotNotice = true
+		}
+	}
+	if !foundPilotNotice {
+		t.Fatalf("expected the spectator to be told peer 1 is NOT a spectator, got %+v", spectatorMsgs)
+	}
+
+	server.mu.Lock()
+	isSpectator := server.sessions[code].Members[2].IsSpectator
+	server.mu.Unlock()
+	if !isSpectator {
+		t.Fatal("expected the joiner's own ClientState.IsSpectator to be true")
+	}
+}
+
+func TestDefaultRoleIsNotASpectator(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(1)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession, ClientVersion: ProtocolVersion})
+	code := sender.messagesTo(a)[0].Code
+
+	server.mu.Lock()
+	isSpectator := server.sessions[code].Members[1].IsSpectator
+	server.mu.Unlock()
+	if isSpectator {
+		t.Fatal("expected a plain create_session (no Role) to default to a non-spectator")
+	}
+}
+
 func TestKeepaliveFromUnknownClientIsHarmless(t *testing.T) {
 	sender := &mockSender{}
 	server := NewServer(sender)

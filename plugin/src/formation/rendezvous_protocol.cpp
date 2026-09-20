@@ -107,6 +107,9 @@ std::string EncodeClientMessage(const RendezvousClientMessage& msg) {
     // Always included (not just on create/join_session) - see
     // RendezvousClientMessage::client_version's comment.
     out += ",\"client_version\":" + std::to_string(msg.client_version);
+    if (msg.is_spectator) {
+        out += ",\"role\":\"spectator\"";
+    }
     if (!msg.payload.empty()) {
         out += ",\"payload\":\"" + JsonEscape(msg.payload) + "\"";
     }

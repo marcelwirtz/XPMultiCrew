@@ -24,6 +24,10 @@ struct RendezvousClientMessage {
     std::string type;             // "create_session" | "join_session" | "relay" | "keepalive" | "leave_session"
     std::string code;             // join_session
     int client_version = kRendezvousProtocolVersion;
+    // create_session/join_session only - encoded as "role":"spectator"
+    // when true, omitted (defaulting to an ordinary participant) when
+    // false - see server/protocol.go's ClientMessage.Role comment.
+    bool is_spectator = false;
     std::string payload; // relay, base64
 };
 

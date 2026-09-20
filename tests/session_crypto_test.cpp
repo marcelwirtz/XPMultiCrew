@@ -112,6 +112,37 @@ void TestTruncatedEnvelopeIsRejected() {
     std::printf("TestTruncatedEnvelopeIsRejected: OK\n");
 }
 
+void TestLanCodeOnlySealOpenRoundTrip() {
+    // LAN-direct mode: no salt at all, key derived from the code alone.
+    SessionCrypto sender("ABC123");
+    SessionCrypto receiver("ABC123");
+    const auto plaintext = ToBytes("lan direct message");
+    const auto opened = receiver.Open(sender.Seal(plaintext));
+    assert(opened.has_value());
+    assert(*opened == plaintext);
+    std::printf("TestLanCodeOnlySealOpenRoundTrip: OK\n");
+}
+
+void TestLanCodeOnlyDifferentCodeCannotDecrypt() {
+    SessionCrypto sender("ABC123");
+    SessionCrypto eavesdropper("WRONG1");
+    const auto envelope = sender.Seal(ToBytes("secret"));
+    assert(!eavesdropper.Open(envelope).has_value());
+    std::printf("TestLanCodeOnlyDifferentCodeCannotDecrypt: OK\n");
+}
+
+void TestLanCodeOnlyKeyDiffersFromSaltedKeyWithSameCode() {
+    // The domain-separation tag must make the LAN-only derivation produce
+    // a different key than the salted constructor with the same code and
+    // an all-zero-ish salt would - guards against the two code paths
+    // silently colliding for some salt value.
+    SessionCrypto lan_only("ABC123");
+    SessionCrypto salted("ABC123", MakeSalt(0x00));
+    const auto envelope = lan_only.Seal(ToBytes("secret"));
+    assert(!salted.Open(envelope).has_value());
+    std::printf("TestLanCodeOnlyKeyDiffersFromSaltedKeyWithSameCode: OK\n");
+}
+
 } // namespace
 
 int main() {
@@ -124,6 +155,9 @@ int main() {
     TestTamperedCiphertextIsRejected();
     TestTamperedMacIsRejected();
     TestTruncatedEnvelopeIsRejected();
+    TestLanCodeOnlySealOpenRoundTrip();
+    TestLanCodeOnlyDifferentCodeCannotDecrypt();
+    TestLanCodeOnlyKeyDiffersFromSaltedKeyWithSameCode();
     std::printf("All session_crypto tests passed.\n");
     return 0;
 }

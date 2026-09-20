@@ -51,6 +51,17 @@ void TestEncodeClientMessageShapes() {
            "{\"type\":\"join_session\",\"code\":\"2K2SYJ\",\"client_version\":" +
                std::to_string(kRendezvousProtocolVersion) + "}");
 
+    // is_spectator=false (the default) adds no "role" field at all -
+    // proof the server-side default ("" -> not a spectator) is reached
+    // the same way as before this field existed.
+    RendezvousClientMessage join_spectator;
+    join_spectator.type = "join_session";
+    join_spectator.code = "2K2SYJ";
+    join_spectator.is_spectator = true;
+    assert(EncodeClientMessage(join_spectator) ==
+           "{\"type\":\"join_session\",\"code\":\"2K2SYJ\",\"client_version\":" +
+               std::to_string(kRendezvousProtocolVersion) + ",\"role\":\"spectator\"}");
+
     RendezvousClientMessage relay;
     relay.type = "relay";
     relay.payload = "aGVsbG8=";

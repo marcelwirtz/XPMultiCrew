@@ -43,18 +43,28 @@ void ControlListener::HandleLine(const std::string& line) {
     ls >> cmd;
 
     if (cmd == "CREATE_SESSION") {
-        std::string host_port;
-        ls >> host_port;
-        if (callbacks_.on_create_session) callbacks_.on_create_session(host_port);
+        std::string host_port, spectator_token;
+        ls >> host_port >> spectator_token;
+        if (callbacks_.on_create_session) {
+            callbacks_.on_create_session(host_port, spectator_token == "SPECTATOR");
+        }
     } else if (cmd == "JOIN_SESSION") {
-        std::string host_port, code;
-        ls >> host_port >> code;
-        if (callbacks_.on_join_session) callbacks_.on_join_session(host_port, code);
+        std::string host_port, code, spectator_token;
+        ls >> host_port >> code >> spectator_token;
+        if (callbacks_.on_join_session) {
+            callbacks_.on_join_session(host_port, code, spectator_token == "SPECTATOR");
+        }
     } else if (cmd == "START_SHARED_COCKPIT") {
         std::string role, host_port, code;
         ls >> role >> host_port >> code;
         if (callbacks_.on_start_shared_cockpit) {
             callbacks_.on_start_shared_cockpit(role == "MASTER", host_port, code);
+        }
+    } else if (cmd == "LAN_CONNECT_FORMATION") {
+        std::string host_port, code;
+        ls >> host_port >> code;
+        if (callbacks_.on_lan_connect_formation) {
+            callbacks_.on_lan_connect_formation(host_port, code);
         }
     } else if (cmd == "REQUEST_OWNERSHIP") {
         std::string category_name;

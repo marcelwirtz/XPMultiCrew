@@ -8,6 +8,15 @@
 
 namespace flytogether {
 
+namespace {
+// Domain-separation tag for the LAN-direct (code-only) derivation path -
+// see SessionCrypto(const std::string&)'s header comment. Any fixed,
+// unique-to-this-purpose byte string works; it just has to differ from
+// whatever a server-minted salt could ever be, which a human-readable tag
+// like this trivially satisfies.
+constexpr char kLanDomainTag[] = "XPMultiCrew-LAN-v1";
+} // namespace
+
 SessionCrypto::SessionCrypto(const std::string& code, const std::array<uint8_t, kSaltSize>& salt) {
     // Keyed BLAKE2b as the KDF: `code` is the key, `salt` is the message -
     // see this class's header comment for exactly what security property
@@ -17,6 +26,12 @@ SessionCrypto::SessionCrypto(const std::string& code, const std::array<uint8_t, 
     crypto_blake2b_keyed(key_.data(), key_.size(),
                           reinterpret_cast<const uint8_t*>(code.data()), code.size(), salt.data(),
                           salt.size());
+}
+
+SessionCrypto::SessionCrypto(const std::string& code) {
+    crypto_blake2b_keyed(key_.data(), key_.size(),
+                          reinterpret_cast<const uint8_t*>(code.data()), code.size(),
+                          reinterpret_cast<const uint8_t*>(kLanDomainTag), sizeof(kLanDomainTag) - 1);
 }
 
 std::vector<uint8_t> SessionCrypto::Seal(const uint8_t* plaintext, size_t len) const {

@@ -14,6 +14,22 @@ export namespace main {
 	        this.warning = source["warning"];
 	    }
 	}
+	export class LanPeer {
+	    name: string;
+	    host: string;
+	    port: number;
+
+	    static createFrom(source: any = {}) {
+	        return new LanPeer(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	    }
+	}
 	export class LogLinesResult {
 	    lines: string[];
 	    offset: number;

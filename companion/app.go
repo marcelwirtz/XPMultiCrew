@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -38,6 +39,20 @@ type statusEvent struct {
 type App struct {
 	ctx    context.Context
 	plugin *PluginClient
+	lanAd  *lanAdvertiser // nil if LAN advertising failed to start - see startup
+
+	// Session-persistence bookkeeping (see maybePersistFormation/
+	// maybePersistSharedCockpit/maybeAutoRejoin) - guarded by mu since
+	// pollStatus's goroutine and the Create/Join/Start/Disconnect methods
+	// (called from the Wails/JS bridge) can race on these.
+	mu                         sync.Mutex
+	lastFormationServer        string // set by CreateSession/JoinSession
+	lastFormationIsSpectator   bool
+	lastSharedCockpitServer    string // set by StartSharedCockpit
+	lastSharedCockpitRole      string
+	persistedFormationCode     string // cache of what's currently on disk, to skip redundant writes
+	persistedSharedCockpitCode string
+	autoRejoinAttempted        bool
 }
 
 func NewApp() *App {
@@ -53,6 +68,25 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.plugin.ListenForStatus()
 	go a.pollStatus()
+
+	// LAN-Auto-Discovery: advertise this instance unconditionally, not
+	// gated on any session being active - see lan_discovery.go's package
+	// comment. A failure here (e.g. multicast blocked) only disables the
+	// "Nearby on LAN" list, same "log and carry on" spirit as the plugin's
+	// own UDP-port-busy failure modes - it must never block the rest of
+	// startup.
+	if ad, err := startLanAdvertise(); err == nil {
+		a.lanAd = ad
+	}
+}
+
+// shutdown stops LAN advertising when the window closes - see main.go's
+// OnShutdown. Not strictly required for correctness (the process exiting
+// closes the socket anyway), but Server.Shutdown() gets a chance to send a
+// goodbye packet, which keeps this instance from briefly lingering as a
+// stale, unreachable entry in other peers' "Nearby on LAN" lists.
+func (a *App) shutdown(ctx context.Context) {
+	a.lanAd.stop()
 }
 
 // pollStatus periodically asks the plugin for its current status (in case
@@ -66,6 +100,13 @@ func (a *App) pollStatus() {
 		_ = a.plugin.Send("GET_STATUS")
 		formation, sharedCockpit := a.plugin.Status()
 		formationCode, sharedCockpitCode := a.plugin.Codes()
+
+		a.maybePersistFormation(formation, formationCode)
+		a.maybePersistSharedCockpit(sharedCockpit, sharedCockpitCode)
+		if a.plugin.SimReady() {
+			a.maybeAutoRejoin()
+		}
+
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
 			Formation:              formation,
 			FormationCode:          formationCode,
@@ -81,25 +122,186 @@ func (a *App) pollStatus() {
 	}
 }
 
+// isIdleStatus mirrors frontend/src/main.js's isIdle() - the plugin's
+// exact idle-state strings (control_listener.h's formation_status_/
+// shared_cockpit_status_ defaults, and DISCONNECT_*'s reset) - anything
+// else means a session is active or in progress.
+func isIdleStatus(status string) bool {
+	if status == "not connected" || status == "not started" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(status), "plugin not seen yet")
+}
+
+// maybePersistFormation saves the current Formation session (server +
+// code) to disk once it's actually active, so a future SIM_READY (see
+// maybeAutoRejoin) can rejoin it automatically. Cheap to call every
+// pollStatus tick: a no-op once the current code is already the one on
+// disk, so an active session doesn't rewrite config.json every second.
+func (a *App) maybePersistFormation(status, code string) {
+	if isIdleStatus(status) || code == "" {
+		return
+	}
+	a.mu.Lock()
+	server := a.lastFormationServer
+	isSpectator := a.lastFormationIsSpectator
+	alreadySaved := a.persistedFormationCode == code
+	if !alreadySaved {
+		a.persistedFormationCode = code
+	}
+	a.mu.Unlock()
+	if alreadySaved || server == "" {
+		return
+	}
+	_ = persistLastFormation(&PersistedSession{Server: server, Code: code, IsSpectator: isSpectator})
+}
+
+// maybePersistSharedCockpit is maybePersistFormation's Shared Cockpit
+// equivalent - see PersistedSession.Role's comment for why a MASTER
+// session is still recorded here even though maybeAutoRejoin never acts
+// on one.
+func (a *App) maybePersistSharedCockpit(status, code string) {
+	if isIdleStatus(status) || code == "" {
+		return
+	}
+	a.mu.Lock()
+	server := a.lastSharedCockpitServer
+	role := a.lastSharedCockpitRole
+	alreadySaved := a.persistedSharedCockpitCode == code
+	if !alreadySaved {
+		a.persistedSharedCockpitCode = code
+	}
+	a.mu.Unlock()
+	if alreadySaved || server == "" {
+		return
+	}
+	_ = persistLastSharedCockpit(&PersistedSession{Server: server, Code: code, Role: role})
+}
+
+// maybeAutoRejoin fires once per app launch, the first time SIM_READY
+// becomes true, and re-sends whatever Create/Join/Start click the user
+// would otherwise have to make by hand - see PersistedSession's comment
+// for why this only ever acts on Formation and a persisted Shared-
+// Cockpit-CLIENT session, never a persisted MASTER one. Harmless if the
+// remembered session no longer exists server-side (120s clientTimeout,
+// see server/session.go's clientTimeout): JOIN_SESSION/
+// START_SHARED_COCKPIT just come back with an ordinary "no such session"
+// error, the same as a stale manual attempt would - this doesn't loop or
+// retry beyond that (the plugin's own ReconnectGate takes over from here
+// exactly as it would for a manually-triggered Join/Start).
+func (a *App) maybeAutoRejoin() {
+	a.mu.Lock()
+	if a.autoRejoinAttempted {
+		a.mu.Unlock()
+		return
+	}
+	a.autoRejoinAttempted = true
+	a.mu.Unlock()
+
+	cfg := loadConfig()
+	if cfg.LastFormation != nil {
+		a.mu.Lock()
+		a.lastFormationServer = cfg.LastFormation.Server
+		a.lastFormationIsSpectator = cfg.LastFormation.IsSpectator
+		a.persistedFormationCode = cfg.LastFormation.Code
+		a.mu.Unlock()
+		cmd := "JOIN_SESSION " + cfg.LastFormation.Server + " " + cfg.LastFormation.Code
+		if cfg.LastFormation.IsSpectator {
+			cmd += " SPECTATOR"
+		}
+		_ = a.plugin.Send(cmd)
+	}
+	if cfg.LastSharedCockpit != nil && cfg.LastSharedCockpit.Role == "CLIENT" {
+		a.mu.Lock()
+		a.lastSharedCockpitServer = cfg.LastSharedCockpit.Server
+		a.lastSharedCockpitRole = "CLIENT"
+		a.persistedSharedCockpitCode = cfg.LastSharedCockpit.Code
+		a.mu.Unlock()
+		_ = a.plugin.Send("START_SHARED_COCKPIT CLIENT " + cfg.LastSharedCockpit.Server + " " +
+			cfg.LastSharedCockpit.Code)
+	}
+}
+
 // CreateSession asks the plugin to open a new Formation/rendezvous session
-// on the given server. Bound to the frontend's "Create Session" button.
-func (a *App) CreateSession(server string) error {
+// on the given server. `asSpectator` - see control_listener.h's
+// CREATE_SESSION SPECTATOR token - watches the session without
+// broadcasting this side's own aircraft. Bound to the frontend's "Create
+// Session" button.
+func (a *App) CreateSession(server string, asSpectator bool) error {
 	server = strings.TrimSpace(server)
 	if server == "" {
 		return errors.New("server address is required")
 	}
-	return a.plugin.Send("CREATE_SESSION " + server)
+	a.mu.Lock()
+	a.lastFormationServer = server
+	a.lastFormationIsSpectator = asSpectator
+	a.mu.Unlock()
+	cmd := "CREATE_SESSION " + server
+	if asSpectator {
+		cmd += " SPECTATOR"
+	}
+	return a.plugin.Send(cmd)
 }
 
 // JoinSession asks the plugin to join an existing Formation/rendezvous
-// session. Bound to the frontend's "Join Session" button.
-func (a *App) JoinSession(server, code string) error {
+// session. `asSpectator` - see CreateSession's comment. Bound to the
+// frontend's "Join Session" button.
+func (a *App) JoinSession(server, code string, asSpectator bool) error {
 	server = strings.TrimSpace(server)
 	code = strings.TrimSpace(code)
 	if server == "" || code == "" {
 		return errors.New("server address and session code are required")
 	}
-	return a.plugin.Send("JOIN_SESSION " + server + " " + code)
+	a.mu.Lock()
+	a.lastFormationServer = server
+	a.lastFormationIsSpectator = asSpectator
+	a.mu.Unlock()
+	cmd := "JOIN_SESSION " + server + " " + code
+	if asSpectator {
+		cmd += " SPECTATOR"
+	}
+	return a.plugin.Send(cmd)
+}
+
+// DiscoverLanPeers browses the LAN for a few seconds for other XPMultiCrew
+// instances (see lan_discovery.go) and returns what it found, for the
+// frontend's "Nearby on LAN" list. Never nil (an empty slice when there's
+// nothing nearby, or LAN advertising itself failed to start earlier), so
+// it marshals to JSON `[]` rather than `null`. Bound to the frontend's
+// "Refresh" action in the Formation panel's LAN section - a one-shot call
+// rather than a live-streaming list, since a Wails-bound method can't push
+// a channel to JS - the frontend re-calls this itself on a timer/click,
+// same polling pattern pollStatus already uses for plugin status.
+func (a *App) DiscoverLanPeers() ([]LanPeer, error) {
+	ownName := ""
+	if a.lanAd != nil {
+		ownName = a.lanAd.instanceName
+	}
+	peers, err := discoverLanPeers(2*time.Second, ownName)
+	if peers == nil {
+		peers = []LanPeer{}
+	}
+	return peers, err
+}
+
+// LanConnectFormation asks the plugin to connect directly to a peer
+// discovered via DiscoverLanPeers, bypassing the rendezvous server
+// entirely - see control_listener.h's LAN_CONNECT_FORMATION. `code` is a
+// session code the user manually agreed with the peer out of band (never
+// carried over mDNS - see lan_discovery.go's package comment); it does NOT
+// come from GetSavedServers/CreateSession's rendezvous-server codes, which
+// are a different namespace. Bound to the frontend's "Connect" action on
+// each "Nearby on LAN" list entry.
+func (a *App) LanConnectFormation(hostPort, code string) error {
+	hostPort = strings.TrimSpace(hostPort)
+	code = strings.TrimSpace(code)
+	if hostPort == "" {
+		return errors.New("peer address is required")
+	}
+	if code == "" {
+		return errors.New("enter the session code you agreed with your peer")
+	}
+	return a.plugin.Send("LAN_CONNECT_FORMATION " + hostPort + " " + code)
 }
 
 // StartSharedCockpit asks the plugin to start Shared Cockpit with the given
@@ -122,6 +324,10 @@ func (a *App) StartSharedCockpit(role, server, code string) error {
 			return errors.New("session code is required to join as CLIENT")
 		}
 	}
+	a.mu.Lock()
+	a.lastSharedCockpitServer = server
+	a.lastSharedCockpitRole = role
+	a.mu.Unlock()
 	return a.plugin.Send("START_SHARED_COCKPIT " + role + " " + server + " " + code)
 }
 
@@ -155,6 +361,13 @@ func (a *App) RespondOwnership(category string, grant bool) error {
 // DISCONNECT_FORMATION and RendezvousClient::on_disconnected's comment.
 // Bound to the frontend's "Disconnect" button in the Formation panel.
 func (a *App) DisconnectFormation() error {
+	a.mu.Lock()
+	a.persistedFormationCode = ""
+	a.mu.Unlock()
+	// An explicit Disconnect means the user does NOT want this resumed on
+	// the next launch - clear it rather than leaving maybeAutoRejoin to
+	// rejoin a session they just deliberately left.
+	_ = persistLastFormation(nil)
 	return a.plugin.Send("DISCONNECT_FORMATION")
 }
 
@@ -162,6 +375,10 @@ func (a *App) DisconnectFormation() error {
 // equivalent. Bound to the frontend's "Disconnect" button in the Shared
 // Cockpit panel.
 func (a *App) DisconnectSharedCockpit() error {
+	a.mu.Lock()
+	a.persistedSharedCockpitCode = ""
+	a.mu.Unlock()
+	_ = persistLastSharedCockpit(nil)
 	return a.plugin.Send("DISCONNECT_SHARED_COCKPIT")
 }
 

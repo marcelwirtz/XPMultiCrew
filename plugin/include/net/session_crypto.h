@@ -53,6 +53,24 @@ public:
 
     SessionCrypto(const std::string& code, const std::array<uint8_t, kSaltSize>& salt);
 
+    // LAN-direct mode: no rendezvous server is involved, so there's no
+    // salt-minting party either - the key is derived from `code` alone
+    // (BLAKE2b_keyed(key=code, message=<fixed domain tag>), see .cpp). The
+    // domain tag keeps this path's derivation distinct from the salted
+    // constructor above (same code would otherwise never produce the same
+    // key by coincidence, but this makes it structurally impossible rather
+    // than incidental). Explicit trade-off, accepted for the LAN scenario:
+    // without a per-session salt, an attacker CAN precompute a "code -> key"
+    // dictionary once and reuse it against every future LAN session
+    // instantly, rather than having to redo the ~31-bit search each time
+    // (see the salted constructor's comment above for that contrast). Given
+    // this is direct-LAN traffic - already a much smaller exposure window
+    // than public-internet relay traffic - this is judged an acceptable
+    // trade-off for the simplicity of not needing any out-of-band salt
+    // exchange (e.g. via mDNS). Never describe this to a user as account-
+    // level authentication - it isn't one, same caveat as above.
+    explicit SessionCrypto(const std::string& code);
+
     // Encrypts+authenticates `plaintext`, returning a self-contained
     // envelope: nonce(24) || mac(16) || ciphertext(len(plaintext)). A
     // fresh, unpredictable nonce is drawn from the OS CSPRNG (see

@@ -26,14 +26,24 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //
 // Protocol: plain-text, one command per line, sent as a UDP datagram to
 // kControlUdpPort:
-//   CREATE_SESSION <host:port>
-//   JOIN_SESSION <host:port> <code>
+//   CREATE_SESSION <host:port> [SPECTATOR]
+//   JOIN_SESSION <host:port> <code> [SPECTATOR]
 //   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
+//   LAN_CONNECT_FORMATION <host:port> <code>
 //   REQUEST_OWNERSHIP <engine|avionics|systems>
 //   RESPOND_OWNERSHIP <engine|avionics|systems> <grant|deny>
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   GET_STATUS
+// The optional trailing SPECTATOR token on CREATE_SESSION/JOIN_SESSION
+// (Formation only - Shared Cockpit has no spectator mode, see
+// docs/plan.md) means this side never broadcasts its own aircraft state
+// into the session (see plugin_main.cpp's g_formation_is_spectator), but
+// still sees and renders every other peer normally - a way to watch a
+// formation flight without occupying a slot in it. Preserved across an
+// auto-reconnect (see g_formation_reconnect_is_spectator) so a dropped-
+// and-restored connection doesn't silently start broadcasting a spectator
+// again.
 // REQUEST_OWNERSHIP asks to take over a Shared Cockpit "systems" dataref
 // category from whichever side currently holds it - see
 // shared_cockpit/ownership_tracker.h's request/grant/deny handshake. Not
@@ -45,6 +55,21 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // answered, or the requester's own timeout already passed). Both silently
 // ignore an unrecognized category name (same "don't hard-fail on the
 // unknown" spirit as this listener's other parsing).
+// LAN_CONNECT_FORMATION bypasses the rendezvous server entirely - it's the
+// companion app's mDNS "Nearby on LAN" list (discovery itself happens
+// companion-side, see companion/lan_discovery.go) handing the plugin a
+// peer's address directly, plus a manually-shared code both sides type in
+// (mDNS never carries the code - see net/session_crypto.h's code-only
+// constructor for why, and its accepted trade-off vs. the salted,
+// rendezvous-minted key). Calling it a second time with a different
+// address just adds another direct peer to the same LAN group (all LAN
+// peers share one code, same as one rendezvous session's code covers
+// everyone in it); calling it with a DIFFERENT code while LAN peers from
+// an earlier call are still connected is rejected (see plugin_main.cpp's
+// LanConnectFormation) - disconnect first to switch codes. Mutually
+// exclusive with an active rendezvous Formation session (one Formation
+// link uses either the rendezvous server or direct LAN peers, not both at
+// once); DISCONNECT_FORMATION tears down either kind the same way.
 // DISCONNECT_FORMATION/DISCONNECT_SHARED_COCKPIT are the explicit opt-out
 // for RendezvousClient::on_disconnected's auto-reconnect (see its
 // comment): plugin_main.cpp keeps retrying a lost connection on its own
@@ -119,10 +144,12 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 class ControlListener {
 public:
     struct Callbacks {
-        std::function<void(const std::string& hostPort)> on_create_session;
-        std::function<void(const std::string& hostPort, const std::string& code)> on_join_session;
+        std::function<void(const std::string& hostPort, bool asSpectator)> on_create_session;
+        std::function<void(const std::string& hostPort, const std::string& code, bool asSpectator)>
+            on_join_session;
         std::function<void(bool isMaster, const std::string& serverHostPort, const std::string& code)>
             on_start_shared_cockpit;
+        std::function<void(const std::string& hostPort, const std::string& code)> on_lan_connect_formation;
         std::function<void()> on_disconnect_formation;
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_request_ownership;

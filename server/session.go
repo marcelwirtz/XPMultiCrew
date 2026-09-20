@@ -65,6 +65,13 @@ type ClientState struct {
 	MemberID    int
 	Addr        *net.UDPAddr
 	LastSeen    time.Time
+	// IsSpectator - see protocol.go's ClientMessage.Role comment. Purely
+	// informational from the server's point of view (included in
+	// peer_joined for others to see); it doesn't change any server-side
+	// behavior - a spectator still gets/sends relay traffic like any
+	// other member, and there's no session capacity limit to exempt it
+	// from.
+	IsSpectator bool
 }
 
 // Session is a group of clients that see each other's peer_joined/relay
@@ -149,9 +156,9 @@ func randomSessionCode() (string, error) {
 func (s *Server) HandleMessage(addr *net.UDPAddr, msg ClientMessage) {
 	switch msg.Type {
 	case MsgCreateSession:
-		s.handleCreateSession(addr, msg.ClientVersion)
+		s.handleCreateSession(addr, msg.ClientVersion, msg.Role == "spectator")
 	case MsgJoinSession:
-		s.handleJoinSession(addr, msg.Code, msg.ClientVersion)
+		s.handleJoinSession(addr, msg.Code, msg.ClientVersion, msg.Role == "spectator")
 	case MsgRelay:
 		s.handleRelay(addr, msg.Payload)
 	case MsgKeepalive:
@@ -163,7 +170,7 @@ func (s *Server) HandleMessage(addr *net.UDPAddr, msg ClientMessage) {
 	}
 }
 
-func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int) {
+func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int, isSpectator bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -185,7 +192,7 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int) {
 		return
 	}
 
-	member := &ClientState{SessionCode: code, MemberID: 1, Addr: addr, LastSeen: time.Now()}
+	member := &ClientState{SessionCode: code, MemberID: 1, Addr: addr, LastSeen: time.Now(), IsSpectator: isSpectator}
 	session := &Session{
 		Code: code, Members: map[int]*ClientState{1: member}, nextID: 2,
 		Salt: salt, ClientVersion: clientVersion,
@@ -199,7 +206,7 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int) {
 	})
 }
 
-func (s *Server) handleJoinSession(addr *net.UDPAddr, code string, clientVersion int) {
+func (s *Server) handleJoinSession(addr *net.UDPAddr, code string, clientVersion int, isSpectator bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -227,16 +234,22 @@ func (s *Server) handleJoinSession(addr *net.UDPAddr, code string, clientVersion
 
 	newID := session.nextID
 	session.nextID++
-	member := &ClientState{SessionCode: code, MemberID: newID, Addr: addr, LastSeen: time.Now()}
+	member := &ClientState{SessionCode: code, MemberID: newID, Addr: addr, LastSeen: time.Now(), IsSpectator: isSpectator}
 
 	// Tell the joiner about everyone already in the session (their address,
 	// so the joiner's client can start UDP hole-punching towards them)...
 	for _, existing := range session.Members {
-		s.sender.SendTo(addr, ServerMessage{Type: MsgPeerJoined, PeerID: existing.MemberID, PeerAddr: existing.Addr.String()})
+		s.sender.SendTo(addr, ServerMessage{
+			Type: MsgPeerJoined, PeerID: existing.MemberID, PeerAddr: existing.Addr.String(),
+			PeerIsSpectator: existing.IsSpectator,
+		})
 	}
 	// ...and tell everyone already there about the joiner, same reason.
 	for _, existing := range session.Members {
-		s.sender.SendTo(existing.Addr, ServerMessage{Type: MsgPeerJoined, PeerID: newID, PeerAddr: addr.String()})
+		s.sender.SendTo(existing.Addr, ServerMessage{
+			Type: MsgPeerJoined, PeerID: newID, PeerAddr: addr.String(),
+			PeerIsSpectator: isSpectator,
+		})
 	}
 
 	session.Members[newID] = member

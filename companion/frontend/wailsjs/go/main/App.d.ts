@@ -8,13 +8,15 @@ export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function ChooseXPlanePath():Promise<main.ChooseXPlaneResult>;
 
-export function CreateSession(arg1:string):Promise<void>;
+export function CreateSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
 
 export function DisconnectFormation():Promise<void>;
 
 export function DisconnectSharedCockpit():Promise<void>;
+
+export function DiscoverLanPeers():Promise<Array<main.LanPeer>>;
 
 export function GetAvailablePluginVersion():Promise<string>;
 
@@ -28,7 +30,9 @@ export function GetXPlanePath():Promise<string>;
 
 export function InstallPlugin():Promise<void>;
 
-export function JoinSession(arg1:string,arg2:string):Promise<void>;
+export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function LanConnectFormation(arg1:string,arg2:string):Promise<void>;
 
 export function RequestOwnership(arg1:string):Promise<void>;
 

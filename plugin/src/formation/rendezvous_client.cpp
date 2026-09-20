@@ -41,16 +41,18 @@ void RendezvousClient::Send(const RendezvousClientMessage& msg) {
     }
 }
 
-void RendezvousClient::CreateSession() {
+void RendezvousClient::CreateSession(bool asSpectator) {
     RendezvousClientMessage msg;
     msg.type = "create_session";
+    msg.is_spectator = asSpectator;
     Send(msg);
 }
 
-void RendezvousClient::JoinSession(const std::string& code) {
+void RendezvousClient::JoinSession(const std::string& code, bool asSpectator) {
     RendezvousClientMessage msg;
     msg.type = "join_session";
     msg.code = code;
+    msg.is_spectator = asSpectator;
     Send(msg);
 }
 

@@ -169,6 +169,18 @@ int g_formation_own_peer_id = 0;
 // comment for why relay isn't handled inside that class itself.
 std::optional<flytogether::SessionCrypto> g_formation_crypto;
 
+// LAN-direct Formation (docs/plan.md's LAN-Auto-Discovery): companion-side
+// mDNS discovery hands the plugin a peer's address directly via
+// LAN_CONNECT_FORMATION, entirely bypassing g_rendezvous_client. Shares
+// g_formation_crypto/g_formation_sync above with the rendezvous path (one
+// Formation link is either rendezvous-based or LAN-direct, never both at
+// once - see LanConnectFormation's comment); these three only track
+// enough LAN-specific state to know which mode g_formation_crypto is
+// currently in and which peers to RemovePeer() on disconnect.
+bool g_lan_formation_active = false;
+std::string g_lan_formation_code;
+std::vector<flytogether::Peer> g_lan_formation_peers;
+
 constexpr std::chrono::seconds kReconnectMinRetryInterval{5};
 // Caps the backoff below - a co-pilot mid-flight shouldn't have to wait
 // much longer than this between attempts even during a prolonged outage,
@@ -239,6 +251,13 @@ uint16_t g_formation_reconnect_port = 0;
 // reconnect.
 bool g_formation_reconnect_create = false;
 std::string g_formation_reconnect_code;
+// Whether the current/most-recently-requested Formation session is
+// spectating (see control_listener.h's CREATE_SESSION/JOIN_SESSION
+// SPECTATOR token) - checked by SendFormationStateCallback to skip
+// broadcasting this side's own position, and carried through
+// MaybeReconnectFormation()'s rejoin so a dropped-and-restored connection
+// doesn't silently start broadcasting a spectator again.
+bool g_formation_is_spectator = false;
 
 // Rebuilds and pushes the Formation status text, including how many
 // peers are currently in the session - called from on_peer_joined and
@@ -394,14 +413,38 @@ void SetupRendezvousCallbacksOnce() {
 // connection's keepalive) was even active, which is exactly the
 // loading-screen keepalive-timing bug server/session.go's clientTimeout
 // comment describes; a button click always happens well after that.
-void StartRendezvous(const std::string& host, uint16_t port, bool create, const std::string& code) {
+// Tears down LAN-direct Formation state (see LanConnectFormation below) -
+// shared by DisconnectFormation() and StartRendezvous(), since starting a
+// rendezvous session while LAN peers are active would otherwise silently
+// reassign g_formation_crypto out from under them (same
+// use-after-free-shaped hazard SetCrypto(nullptr)-before-reset already
+// guards against for the rendezvous path - see DisconnectFormation's
+// comment).
+void ClearLanFormation() {
+    if (!g_lan_formation_active) {
+        return;
+    }
+    for (const auto& peer : g_lan_formation_peers) {
+        g_formation_sync.RemovePeer(peer.host, peer.port);
+    }
+    g_lan_formation_peers.clear();
+    g_lan_formation_active = false;
+    g_lan_formation_code.clear();
+    g_formation_sync.SetCrypto(nullptr);
+    g_formation_crypto.reset();
+}
+
+void StartRendezvous(const std::string& host, uint16_t port, bool create, const std::string& code,
+                      bool asSpectator) {
     SetupRendezvousCallbacksOnce();
+    ClearLanFormation(); // a rendezvous session always takes over the Formation link, see its comment
 
     g_formation_reconnect.wanted = true;
     g_formation_reconnect_host = host;
     g_formation_reconnect_port = port;
     g_formation_reconnect_create = create;
     g_formation_reconnect_code = code;
+    g_formation_is_spectator = asSpectator;
     // Resets the retry clock and backoff so UpdateFormationCallback's
     // scheduler waits a full kReconnectMinRetryInterval before its first
     // attempt, instead of potentially firing a redundant duplicate
@@ -431,9 +474,9 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
     g_control_listener.SetFormationCode(""); // clear any stale code from a previous session
     g_control_listener.SetFormationStatus("connecting to " + host + ":" + std::to_string(port) + "...");
     if (create) {
-        g_rendezvous_client.CreateSession();
+        g_rendezvous_client.CreateSession(asSpectator);
     } else {
-        g_rendezvous_client.JoinSession(code);
+        g_rendezvous_client.JoinSession(code, asSpectator);
     }
 }
 
@@ -462,9 +505,61 @@ void DisconnectFormation() {
     // use-after-free, not just a logic bug).
     g_formation_sync.SetCrypto(nullptr);
     g_formation_crypto.reset();
+    ClearLanFormation(); // no-op if the current/previous Formation link wasn't LAN-direct
     g_control_listener.SetFormationCode("");
     g_control_listener.SetFormationPeers("");
     g_control_listener.SetFormationStatus("not connected");
+}
+
+// LAN_CONNECT_FORMATION's handler - see control_listener.h's wire-format
+// comment. Unlike StartRendezvous(), this never touches
+// g_rendezvous_client/g_formation_reconnect at all: there's no session to
+// (re)join, just a peer address to start sending direct UDP to. That also
+// means a LAN peer going quiet is NOT auto-retried (MaybeReconnectFormation
+// only ever drives the rendezvous path) - accepted v1 scope, see
+// docs/plan.md's LAN-Auto-Discovery open items; re-issuing
+// LAN_CONNECT_FORMATION (e.g. the companion app noticing the peer
+// reappeared via mDNS) is the way back in.
+void LanConnectFormation(const std::string& hostPort, const std::string& code) {
+    if (g_rendezvous_active) {
+        g_control_listener.SetFormationStatus(
+            "formation already connected via a rendezvous server - disconnect first");
+        return;
+    }
+    if (code.empty()) {
+        g_control_listener.SetFormationStatus("LAN connect needs a session code");
+        return;
+    }
+    std::string host;
+    uint16_t port = 0;
+    if (!flytogether::SplitHostPort(hostPort, host, port)) {
+        g_control_listener.SetFormationStatus("invalid LAN peer address (need host:port)");
+        return;
+    }
+    if (g_lan_formation_active && g_lan_formation_code != code) {
+        g_control_listener.SetFormationStatus(
+            "LAN formation already active with a different code - disconnect first");
+        return;
+    }
+    if (!g_lan_formation_active) {
+        g_formation_crypto.emplace(code); // code-only derivation - see SessionCrypto's LAN constructor
+        g_formation_sync.SetCrypto(&*g_formation_crypto);
+        g_lan_formation_active = true;
+        g_lan_formation_code = code;
+        g_control_listener.SetFormationCode(code);
+    }
+    // Adding the same peer twice is a harmless no-op (FormationSync::AddPeer),
+    // but only track it once here too so ClearLanFormation() doesn't issue a
+    // redundant RemovePeer.
+    const bool already_tracked = std::any_of(
+        g_lan_formation_peers.begin(), g_lan_formation_peers.end(),
+        [&](const flytogether::Peer& p) { return p.host == host && p.port == port; });
+    if (!already_tracked) {
+        g_lan_formation_peers.push_back(flytogether::Peer{host, port});
+    }
+    g_formation_sync.AddPeer(host, port);
+    g_control_listener.SetFormationStatus("connected (LAN), " + std::to_string(g_lan_formation_peers.size()) +
+                                           " peer(s)");
 }
 
 // Reconnect scheduler for both rendezvous sessions - if the user wants to
@@ -488,9 +583,9 @@ void MaybeReconnectFormation() {
     // on_session_ready) rather than re-running create_session, which
     // would hand back a different code our co-pilot doesn't know.
     if (g_formation_reconnect_create && g_formation_reconnect_code.empty()) {
-        g_rendezvous_client.CreateSession();
+        g_rendezvous_client.CreateSession(g_formation_is_spectator);
     } else {
-        g_rendezvous_client.JoinSession(g_formation_reconnect_code);
+        g_rendezvous_client.JoinSession(g_formation_reconnect_code, g_formation_is_spectator);
     }
 }
 
@@ -612,7 +707,12 @@ float SendFormationStateCallback(float /*elapsedSinceLastCall*/,
                                   float /*elapsedTimeSinceLastFlightLoop*/,
                                   int /*counter*/,
                                   void* /*refcon*/) {
-    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+    // A spectator (see control_listener.h's CREATE_SESSION/JOIN_SESSION
+    // SPECTATOR token) never broadcasts its own position - it's here to
+    // watch, not to be watched - but PollIncoming/CSL rendering
+    // (UpdateFormationCallback) are untouched, so it still sees and draws
+    // everyone else normally.
+    if (g_latitude_ref && g_longitude_ref && g_elevation_ref && !g_formation_is_spectator) {
         const flytogether::AircraftStatePacket packet =
             BuildOwnAircraftStatePacket(g_sender_id, g_formation_sequence++);
 
@@ -1538,16 +1638,17 @@ PLUGIN_API void XPluginStop() {
 
 PLUGIN_API int XPluginEnable() {
     flytogether::ControlListener::Callbacks control_callbacks;
-    control_callbacks.on_create_session = [](const std::string& host_port) {
+    control_callbacks.on_create_session = [](const std::string& host_port, bool as_spectator) {
         std::string host;
         uint16_t port = 0;
         if (!flytogether::SplitHostPort(host_port, host, port)) {
             g_control_listener.SetFormationStatus("invalid server address (need host:port)");
             return;
         }
-        StartRendezvous(host, port, /*create=*/true, "");
+        StartRendezvous(host, port, /*create=*/true, "", as_spectator);
     };
-    control_callbacks.on_join_session = [](const std::string& host_port, const std::string& code) {
+    control_callbacks.on_join_session = [](const std::string& host_port, const std::string& code,
+                                            bool as_spectator) {
         std::string host;
         uint16_t port = 0;
         if (!flytogether::SplitHostPort(host_port, host, port)) {
@@ -1558,7 +1659,7 @@ PLUGIN_API int XPluginEnable() {
             g_control_listener.SetFormationStatus("enter a session code to join");
             return;
         }
-        StartRendezvous(host, port, /*create=*/false, code);
+        StartRendezvous(host, port, /*create=*/false, code, as_spectator);
     };
     control_callbacks.on_start_shared_cockpit = [](bool is_master, const std::string& server_host_port,
                                                      const std::string& code) {
@@ -1584,6 +1685,9 @@ PLUGIN_API int XPluginEnable() {
         const auto file_config = flytogether::LoadSharedCockpitConfig(flytogether::ResolveSharedCockpitConfigPath(
             "XPMultiCrew_shared_cockpit.txt", icao, GetPluginResourcesPath()));
         StartSharedCockpitRendezvous(host, port, role, code, file_config.datarefs);
+    };
+    control_callbacks.on_lan_connect_formation = [](const std::string& host_port, const std::string& code) {
+        LanConnectFormation(host_port, code);
     };
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
