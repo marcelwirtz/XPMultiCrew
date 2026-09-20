@@ -6,15 +6,33 @@ import (
 	"path/filepath"
 )
 
-// companionConfig persists small local settings across app restarts -
-// currently just the chosen X-Plane installation path, so the user only
-// has to pick it once (see app.go's ChooseXPlanePath).
+// companionConfig persists small local settings across app restarts - the
+// chosen X-Plane installation path (so the user only has to pick it once,
+// see app.go's ChooseXPlanePath) and a small address book of previously-
+// used rendezvous server addresses (see app.go's GetSavedServers/
+// SaveServer/DeleteSavedServer).
 type companionConfig struct {
-	XPlanePath string `json:"xplanePath"`
+	XPlanePath   string        `json:"xplanePath"`
+	SavedServers []SavedServer `json:"savedServers"`
 }
 
+// SavedServer is one address-book entry - just the rendezvous server
+// address (host:port). Session *codes* are deliberately not part of this:
+// they're one-time/per-session, generated fresh by whoever creates a
+// session, so there's nothing recurring about them worth saving - unlike
+// the server address, which is typically the same VPS/host every time.
+type SavedServer struct {
+	Label    string `json:"label"`
+	HostPort string `json:"hostPort"`
+}
+
+// userConfigDir is a var (not called directly as os.UserConfigDir) so
+// config_test.go can point it at a t.TempDir() instead of the real
+// per-user config directory.
+var userConfigDir = os.UserConfigDir
+
 func configFilePath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}

@@ -35,19 +35,28 @@ void TestBase64KnownVector() {
 }
 
 void TestEncodeClientMessageShapes() {
+    // client_version defaults to kRendezvousProtocolVersion and is always
+    // included (see RendezvousClientMessage's comment) - every shape
+    // below carries it, not just create/join_session.
     RendezvousClientMessage create;
     create.type = "create_session";
-    assert(EncodeClientMessage(create) == "{\"type\":\"create_session\"}");
+    assert(EncodeClientMessage(create) ==
+           "{\"type\":\"create_session\",\"client_version\":" +
+               std::to_string(kRendezvousProtocolVersion) + "}");
 
     RendezvousClientMessage join;
     join.type = "join_session";
     join.code = "2K2SYJ";
-    assert(EncodeClientMessage(join) == "{\"type\":\"join_session\",\"code\":\"2K2SYJ\"}");
+    assert(EncodeClientMessage(join) ==
+           "{\"type\":\"join_session\",\"code\":\"2K2SYJ\",\"client_version\":" +
+               std::to_string(kRendezvousProtocolVersion) + "}");
 
     RendezvousClientMessage relay;
     relay.type = "relay";
     relay.payload = "aGVsbG8=";
-    assert(EncodeClientMessage(relay) == "{\"type\":\"relay\",\"payload\":\"aGVsbG8=\"}");
+    assert(EncodeClientMessage(relay) ==
+           "{\"type\":\"relay\",\"client_version\":" + std::to_string(kRendezvousProtocolVersion) +
+               ",\"payload\":\"aGVsbG8=\"}");
 
     std::printf("TestEncodeClientMessageShapes: OK\n");
 }
@@ -60,7 +69,9 @@ void TestEncodeClientMessageEscapesCode() {
     RendezvousClientMessage join;
     join.type = "join_session";
     join.code = "AB\"CD";
-    assert(EncodeClientMessage(join) == R"({"type":"join_session","code":"AB\"CD"})");
+    assert(EncodeClientMessage(join) ==
+           R"({"type":"join_session","code":"AB\"CD","client_version":)" +
+               std::to_string(kRendezvousProtocolVersion) + "}");
 
     RendezvousServerMessage decoded;
     assert(DecodeServerMessage(EncodeClientMessage(join), decoded));
@@ -91,11 +102,12 @@ void TestDecodeServerMessageShapes() {
     {
         RendezvousServerMessage msg;
         const bool ok = DecodeServerMessage(
-            R"({"type":"session_created","code":"2K2SYJ","your_id":1})", msg);
+            R"({"type":"session_created","code":"2K2SYJ","your_id":1,"salt":"AQIDBA=="})", msg);
         assert(ok);
         assert(msg.type == "session_created");
         assert(msg.code == "2K2SYJ");
         assert(msg.your_id == 1);
+        assert(msg.salt == "AQIDBA==");
     }
     {
         RendezvousServerMessage msg;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "flytogether/udp_socket.h"
+#include "shared_cockpit/shared_cockpit_config.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -27,9 +29,22 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   CREATE_SESSION <host:port>
 //   JOIN_SESSION <host:port> <code>
 //   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
+//   REQUEST_OWNERSHIP <engine|avionics|systems>
+//   RESPOND_OWNERSHIP <engine|avionics|systems> <grant|deny>
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   GET_STATUS
+// REQUEST_OWNERSHIP asks to take over a Shared Cockpit "systems" dataref
+// category from whichever side currently holds it - see
+// shared_cockpit/ownership_tracker.h's request/grant/deny handshake. Not
+// an instant claim: the peer has to Grant or Deny it (or simply not
+// respond within OwnershipTracker::kRequestTimeoutS, which reads the same
+// as a Deny). RESPOND_OWNERSHIP is that Grant/Deny, for a category this
+// side currently owns and the peer has an outstanding request for - a
+// no-op if there's no live incoming request for it any more (already
+// answered, or the requester's own timeout already passed). Both silently
+// ignore an unrecognized category name (same "don't hard-fail on the
+// unknown" spirit as this listener's other parsing).
 // DISCONNECT_FORMATION/DISCONNECT_SHARED_COCKPIT are the explicit opt-out
 // for RendezvousClient::on_disconnected's auto-reconnect (see its
 // comment): plugin_main.cpp keeps retrying a lost connection on its own
@@ -49,9 +64,26 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   FORMATION_CODE <code, empty if none yet>
 //   SHARED_COCKPIT <status text>
 //   SHARED_COCKPIT_CODE <code, empty if none yet (CLIENT never has one)>
+//   SHARED_COCKPIT_OWNERSHIP <engine>:<state> <avionics>:<state> <systems>:<state>
+//     <state> is one of:
+//       me        - this side owns it, no outstanding request from the peer
+//       peer      - the peer owns it, this side has no outstanding request
+//       pending   - the peer owns it, AND this side is waiting on a
+//                   response to its own request for it
+//       requested - this side owns it, AND the peer has an outstanding
+//                   request for it awaiting a local Grant/Deny (via
+//                   RESPOND_OWNERSHIP)
 //   PEERS <sender_id>:<icao>;<sender_id>:<icao>;... (Formation only, empty if none)
+//   LINK_QUALITY formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
+//                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?>
+//   SHARED_COCKPIT_AIRCRAFT_MISMATCH <own icao>:<master icao> (empty if matching/unknown)
 //   SIM_READY <0|1>
 //   PLUGIN_VERSION <version>
+// SHARED_COCKPIT_OWNERSHIP reflects DatarefSync::Owns() for each category
+// from this side's point of view (empty string before Shared Cockpit's
+// dataref sync has actually started) - plugin_main.cpp pushes it whenever
+// it changes, whether from this side's own REQUEST_OWNERSHIP or from the
+// peer claiming a category over the network.
 // PLUGIN_VERSION is the actually-running plugin's version (set once at
 // startup, see plugin_main.cpp's XPMULTICREW_VERSION - derived from git at
 // build time). The companion app also reads this off disk (a version.txt
@@ -93,6 +125,8 @@ public:
             on_start_shared_cockpit;
         std::function<void()> on_disconnect_formation;
         std::function<void()> on_disconnect_shared_cockpit;
+        std::function<void(DatarefCategory)> on_request_ownership;
+        std::function<void(DatarefCategory, bool grant)> on_respond_ownership;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -107,7 +141,26 @@ public:
     void SetFormationCode(const std::string& code);
     void SetSharedCockpitStatus(const std::string& text);
     void SetSharedCockpitCode(const std::string& code);
+
+    // The four states a category's ownership can be in from this side's
+    // point of view - see the SHARED_COCKPIT_OWNERSHIP wire-format comment
+    // above for what each one means to the companion app.
+    enum class OwnershipUiState : uint8_t { kMe, kPeer, kPending, kRequested };
+
+    // `state[i]` = this side's OwnershipUiState for DatarefCategory(i).
+    // Pass all three every time (cheap, and avoids a partial-update
+    // ordering question) rather than one at a time.
+    void SetSharedCockpitOwnership(const std::array<OwnershipUiState, kDatarefCategoryCount>& state);
     void SetFormationPeers(const std::string& encodedPeers);
+    // `encoded` is pre-built by the caller (plugin_main.cpp) - same
+    // pattern as SetFormationPeers above - since building it needs data
+    // from several independent sources (both RendezvousClients' RTT,
+    // FormationSync's per-peer loss, SharedCockpitSync's master-link
+    // loss) that this listener has no access to on its own.
+    void SetLinkQuality(const std::string& encoded);
+    // `encoded` is "" when there's no mismatch (or nothing to compare yet)
+    // - see the wire-format comment above.
+    void SetSharedCockpitAircraftMismatch(const std::string& encoded);
     void SetSimReady(bool ready);
     bool IsSimReady() const { return sim_ready_; }
     void SetPluginVersion(const std::string& version);
@@ -122,7 +175,10 @@ private:
     std::string formation_code_;
     std::string shared_cockpit_status_ = "not started";
     std::string shared_cockpit_code_;
+    std::string shared_cockpit_ownership_; // empty until SetSharedCockpitOwnership is called
     std::string formation_peers_;
+    std::string link_quality_;
+    std::string shared_cockpit_aircraft_mismatch_;
     bool sim_ready_ = false;
     std::string plugin_version_ = "unknown";
 };

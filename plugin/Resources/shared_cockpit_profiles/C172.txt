@@ -22,61 +22,91 @@
 # in Formation mode - shared_cockpit_sync.h's ApplyMasterPoseToOwnAircraft
 # only ever touches position/heading/pitch/roll on your own aircraft), so
 # they're listed here explicitly too.
+#
+# Every DATAREF line below also carries a CATEGORY tag (engine/avionics/
+# systems - "systems" is the default, so it's only spelled out here for
+# clarity). MASTER and CLIENT can each own a category's datarefs
+# independently, swapped via the companion app's ownership buttons - a
+# locally-detected change to a dataref whose category this side doesn't
+# own gets reverted instead of applied/broadcast, which is what actually
+# fixes a hardware switch fighting the network instead of just narrowing
+# the window it can happen in (see shared_cockpit/ownership_tracker.h).
+# MASTER owns every category by default when a session starts.
 
 # Radios - active and standby, so a flip/flop swap either pilot makes
 # shows up correctly on both sides, not just the currently-active side
-DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/com1_standby_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/com2_standby_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/nav1_standby_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz
-DATAREF sim/cockpit2/radios/actuators/nav2_standby_frequency_hz
-DATAREF sim/cockpit/radios/adf1_freq_hz
-DATAREF sim/cockpit/radios/adf1_stdby_freq_hz
-DATAREF sim/cockpit/radios/dme_freq_hz
-DATAREF sim/cockpit/radios/transponder_code
-DATAREF sim/cockpit/radios/transponder_mode
+DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_stdby_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/dme_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_code CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_mode CATEGORY avionics
 
 # Course/OBS selectors and audio panel selection
-DATAREF sim/cockpit2/radios/actuators/nav1_obs_deg_mag_pilot
-DATAREF sim/cockpit2/radios/actuators/nav2_obs_deg_mag_pilot
-DATAREF sim/cockpit2/radios/actuators/audio_com_selection
-DATAREF sim/cockpit2/radios/actuators/audio_nav_selection
+DATAREF sim/cockpit2/radios/actuators/nav1_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_com_selection CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_nav_selection CATEGORY avionics
 
 # Autopilot bugs/targets (see the note above re: engagement modes)
-DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot
-DATAREF sim/cockpit2/autopilot/altitude_dial_ft
-DATAREF sim/cockpit2/autopilot/vvi_dial_fpm
-DATAREF sim/cockpit2/autopilot/airspeed_dial_kts
+DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/altitude_dial_ft CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/vvi_dial_fpm CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/airspeed_dial_kts CATEGORY avionics
 
 # Flight control trim
-DATAREF sim/cockpit2/controls/elevator_trim
-DATAREF sim/cockpit2/controls/aileron_trim
-DATAREF sim/cockpit2/controls/rudder_trim
+DATAREF sim/cockpit2/controls/elevator_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/aileron_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/rudder_trim CATEGORY systems
 
 # Flaps and parking brake
-DATAREF sim/flightmodel/controls/flaprqst
-DATAREF sim/flightmodel/controls/parkbrake
+DATAREF sim/flightmodel/controls/flaprqst CATEGORY systems
+DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
 
 # Engine / fuel / start procedure
-DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all
-DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio
-DATAREF sim/cockpit2/engine/actuators/primer_on
-DATAREF sim/cockpit2/engine/actuators/ignition_key
-DATAREF sim/cockpit/engine/fuel_pump_on
-DATAREF sim/cockpit/engine/fuel_tank_selector
+#
+# throttle_ratio_all and ignition_key were missing/undersynced here and
+# were the actual cause of a live-tested bug: the master's running engine
+# didn't show as running on the client, and the client couldn't start it
+# either.
+#   - throttle_ratio_all: simply wasn't in this list at all, so the two
+#     sides' independent engine physics had no way to agree once either
+#     pilot moved the throttle.
+#   - ignition_key's own X-Plane doc string says it's "spring-loaded for
+#     starter - you have to keep setting it to start in order to keep
+#     cranking." DatarefSync only broadcasts on value *change* by default,
+#     so the receiving side got exactly one "start" write instead of a
+#     sustained crank signal. STREAM makes DatarefSync resend it every
+#     tick regardless of change, like AircraftPosition already is.
+# ENGN_running is force-synced too, as a belt-and-suspenders measure so the
+# client's engine visually/audibly matches the master even if the
+# reconstructed start sequence doesn't perfectly reproduce X-Plane's
+# internal start timing.
+DATAREF sim/cockpit2/engine/actuators/throttle_ratio_all CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/primer_on CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
+DATAREF sim/cockpit/engine/fuel_tank_selector CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
 
 # Electrical / avionics / pitot-static
-DATAREF sim/cockpit2/electrical/battery_on
-DATAREF sim/cockpit2/electrical/generator_on
-DATAREF sim/cockpit2/switches/avionics_power_on
-DATAREF sim/cockpit/switches/pitot_heat_on
-DATAREF sim/cockpit2/switches/alternate_static_air_ratio
+DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
+DATAREF sim/cockpit2/electrical/generator_on CATEGORY systems
+DATAREF sim/cockpit2/switches/avionics_power_on CATEGORY systems
+DATAREF sim/cockpit/switches/pitot_heat_on CATEGORY systems
+DATAREF sim/cockpit2/switches/alternate_static_air_ratio CATEGORY systems
 
 # Exterior lights
-DATAREF sim/cockpit/electrical/beacon_lights_on
-DATAREF sim/cockpit/electrical/landing_lights_on
-DATAREF sim/cockpit/electrical/nav_lights_on
-DATAREF sim/cockpit/electrical/strobe_lights_on
+DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems

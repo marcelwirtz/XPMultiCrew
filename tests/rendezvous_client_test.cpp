@@ -101,6 +101,45 @@ int main() {
         std::printf("Stop() while in a session correctly sends leave_session: %s\n", leave_msg.c_str());
     }
 
+    // --- on_session_ready decodes the base64 salt into raw bytes ---
+    {
+        RendezvousClient client;
+        std::vector<uint8_t> received_salt;
+        bool ready = false;
+        client.on_session_ready = [&](const std::string&, int, const std::vector<uint8_t>& salt) {
+            ready = true;
+            received_salt = salt;
+        };
+        assert(client.Start("127.0.0.1", kFakeServerPort));
+        client.CreateSession();
+
+        std::string client_host;
+        uint16_t client_port = 0;
+        const std::string create_msg = RecvOne(fake_server, 500ms, &client_host, &client_port);
+        // client_version is sent on every message, including create_session
+        // - see server/protocol.go's ProtocolVersion comment.
+        assert(create_msg.find("\"client_version\":" + std::to_string(kRendezvousProtocolVersion)) !=
+               std::string::npos);
+
+        // "AQIDBA==" is the base64 of bytes {1, 2, 3, 4} - a real server
+        // would send SessionCrypto::kSaltSize (16) bytes, but this only
+        // needs to prove the base64 decode itself happens correctly.
+        const std::string reply =
+            R"({"type":"session_created","code":"SALT01","your_id":1,"salt":"AQIDBA=="})";
+        assert(fake_server.SendTo(client_host, client_port, reply.data(), reply.size()));
+        PumpFor(client, 500ms);
+        assert(ready);
+        const std::vector<uint8_t> expected = {1, 2, 3, 4};
+        assert(received_salt == expected);
+        std::printf("on_session_ready decodes the salt correctly: OK\n");
+
+        // Deliberately no client.Stop() here: it would send leave_session
+        // to the shared fake_server socket, which the NEXT test block's
+        // RecvOne() could then read instead of that block's own
+        // create_session - see the other blocks' identical pattern of
+        // just letting `client` go out of scope instead.
+    }
+
     // --- Silence past the timeout fires on_disconnected exactly once ---
     {
         RendezvousClient client;

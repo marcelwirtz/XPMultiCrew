@@ -1,6 +1,22 @@
 # "Systems" DATAREF list for Shared Cockpit - which switches/radios/AP
 # settings to mirror between both cockpits, per docs/plan.md section 6.
 # One DATAREF line per dataref, # comments and blank lines ignored.
+# Optional trailing tokens on a DATAREF line (either order):
+#   STREAM             broadcast this dataref every tick regardless of
+#                       change instead of only on change. Only needed for
+#                       the rare "spring-loaded" dataref that must be
+#                       continuously reasserted to keep having an effect
+#                       (e.g. an engine's ignition_key while cranking the
+#                       starter - see plugin/Resources/shared_cockpit_profiles/
+#                       C172.txt for a worked example). Leave it off for
+#                       everything else.
+#   CATEGORY <name>     which ownership bucket this dataref belongs to:
+#                       engine, avionics, or systems (the default if
+#                       omitted). MASTER and CLIENT can each own a
+#                       category independently via the companion app - a
+#                       local change to a dataref whose category this
+#                       side doesn't own gets reverted instead of applied.
+#                       See shared_cockpit/ownership_tracker.h.
 #
 # ROLE (MASTER/CLIENT) and peer discovery are NOT set here - Shared
 # Cockpit always starts through the companion app, which handles that via

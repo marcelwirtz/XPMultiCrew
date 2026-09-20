@@ -248,6 +248,20 @@ jobs:
         with:
           path: artifacts
 
+      # Companion app self-updater (companion/updater.go) verifies a
+      # downloaded release zip against this before applying it - the one
+      # place this project downloads and then executes something fetched
+      # over the network, so it gets checked before selfupdate.Apply ever
+      # touches the running binary. Only the companion zips need this
+      # (what the updater actually fetches); the plugin/server artifacts
+      # aren't part of that flow.
+      - name: Compute checksums
+        run: |
+          cd artifacts
+          sha256sum xpmulticrew-linux/xpmulticrew-linux.zip xpmulticrew-windows/xpmulticrew-windows.zip \
+            | sed 's#.*/##' > ../SHA256SUMS
+          cat ../SHA256SUMS
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -256,4 +270,5 @@ jobs:
             artifacts/xpmulticrew-windows/xpmulticrew-windows.zip
             artifacts/xpmulticrew-rendezvous/xpmulticrew-rendezvous-linux-amd64
             artifacts/xpmulticrew-rendezvous/xpmulticrew-rendezvous-windows-amd64.exe
+            SHA256SUMS
           generate_release_notes: true

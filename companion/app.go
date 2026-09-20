@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -19,13 +21,16 @@ type ChooseXPlaneResult struct {
 // frontend/src/main.js's runtime.EventsOn("status", ...)). Replaces the old
 // HTTP-server version's polling GET /api/status.
 type statusEvent struct {
-	Formation         string          `json:"formation"`
-	FormationCode     string          `json:"formationCode"`
-	SharedCockpit     string          `json:"sharedCockpit"`
-	SharedCockpitCode string          `json:"sharedCockpitCode"`
-	Peers             []FormationPeer `json:"peers"`
-	SimReady          bool            `json:"simReady"`
-	RunningVersion    string          `json:"runningVersion"`
+	Formation              string            `json:"formation"`
+	FormationCode          string            `json:"formationCode"`
+	SharedCockpit          string            `json:"sharedCockpit"`
+	SharedCockpitCode      string            `json:"sharedCockpitCode"`
+	SharedCockpitOwnership map[string]string `json:"sharedCockpitOwnership"`
+	Peers                  []FormationPeer   `json:"peers"`
+	LinkQuality            LinkQuality       `json:"linkQuality"`
+	SharedCockpitMismatch  string            `json:"sharedCockpitMismatch"`
+	SimReady               bool              `json:"simReady"`
+	RunningVersion         string            `json:"runningVersion"`
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -62,13 +67,16 @@ func (a *App) pollStatus() {
 		formation, sharedCockpit := a.plugin.Status()
 		formationCode, sharedCockpitCode := a.plugin.Codes()
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
-			Formation:         formation,
-			FormationCode:     formationCode,
-			SharedCockpit:     sharedCockpit,
-			SharedCockpitCode: sharedCockpitCode,
-			Peers:             a.plugin.FormationPeers(),
-			SimReady:          a.plugin.SimReady(),
-			RunningVersion:    a.plugin.RunningVersion(),
+			Formation:              formation,
+			FormationCode:          formationCode,
+			SharedCockpit:          sharedCockpit,
+			SharedCockpitCode:      sharedCockpitCode,
+			SharedCockpitOwnership: a.plugin.SharedCockpitOwnership(),
+			Peers:                  a.plugin.FormationPeers(),
+			LinkQuality:            a.plugin.LinkQuality(),
+			SharedCockpitMismatch:  a.plugin.SharedCockpitAircraftMismatch(),
+			SimReady:               a.plugin.SimReady(),
+			RunningVersion:         a.plugin.RunningVersion(),
 		})
 	}
 }
@@ -117,6 +125,31 @@ func (a *App) StartSharedCockpit(role, server, code string) error {
 	return a.plugin.Send("START_SHARED_COCKPIT " + role + " " + server + " " + code)
 }
 
+// RequestOwnership asks the plugin to claim a Shared Cockpit "systems"
+// dataref category (engine/avionics/systems) for this side - see
+// control_listener.h's REQUEST_OWNERSHIP and
+// shared_cockpit/ownership_tracker.h. Bound to the frontend's ownership
+// buttons. Unlike StartSharedCockpit's role validation, an unrecognized
+// category is the plugin's problem to ignore (see
+// ControlListener::HandleLine), not this method's - the frontend only
+// ever sends the three fixed category names its buttons carry.
+func (a *App) RequestOwnership(category string) error {
+	return a.plugin.Send("REQUEST_OWNERSHIP " + strings.TrimSpace(category))
+}
+
+// RespondOwnership answers a pending incoming ownership request (see
+// control_listener.h's SHARED_COCKPIT_OWNERSHIP "requested" state) for
+// category with Grant (grant=true) or Deny (grant=false) - see
+// control_listener.h's RESPOND_OWNERSHIP. Bound to the frontend's
+// Grant/Deny prompt buttons.
+func (a *App) RespondOwnership(category string, grant bool) error {
+	decision := "deny"
+	if grant {
+		decision = "grant"
+	}
+	return a.plugin.Send("RESPOND_OWNERSHIP " + strings.TrimSpace(category) + " " + decision)
+}
+
 // DisconnectFormation asks the plugin to leave its current Formation
 // session (if any) and stop auto-reconnecting - see control_listener.h's
 // DISCONNECT_FORMATION and RendezvousClient::on_disconnected's comment.
@@ -130,6 +163,63 @@ func (a *App) DisconnectFormation() error {
 // Cockpit panel.
 func (a *App) DisconnectSharedCockpit() error {
 	return a.plugin.Send("DISCONNECT_SHARED_COCKPIT")
+}
+
+// GetSavedServers returns the address book - previously-saved rendezvous
+// server addresses (see config.go's SavedServer) - so reconnecting to a
+// server used before doesn't mean retyping it. Never nil, so it marshals
+// to JSON `[]` rather than `null`.
+func (a *App) GetSavedServers() []SavedServer {
+	servers := loadConfig().SavedServers
+	if servers == nil {
+		servers = []SavedServer{}
+	}
+	return servers
+}
+
+// SaveServer adds a server to the address book, or updates its address if
+// a saved entry with the same label already exists (label is the dedup
+// key - saving under a label you've already used just updates that
+// entry's address rather than creating a duplicate). Bound to the
+// frontend's "save this address" action.
+func (a *App) SaveServer(label, hostPort string) error {
+	label = strings.TrimSpace(label)
+	hostPort = strings.TrimSpace(hostPort)
+	if label == "" || hostPort == "" {
+		return errors.New("a label and a server address are both required")
+	}
+	cfg := loadConfig()
+	for i, s := range cfg.SavedServers {
+		if s.Label == label {
+			cfg.SavedServers[i].HostPort = hostPort
+			return saveConfig(cfg)
+		}
+	}
+	cfg.SavedServers = append(cfg.SavedServers, SavedServer{Label: label, HostPort: hostPort})
+	return saveConfig(cfg)
+}
+
+// DeleteSavedServer removes a server from the address book by label. A
+// no-op (not an error) if no saved server has that label - deleting
+// something already gone isn't a failure. Bound to the frontend's address
+// book entries' delete action.
+func (a *App) DeleteSavedServer(label string) error {
+	cfg := loadConfig()
+	for i, s := range cfg.SavedServers {
+		if s.Label == label {
+			cfg.SavedServers = append(cfg.SavedServers[:i], cfg.SavedServers[i+1:]...)
+			return saveConfig(cfg)
+		}
+	}
+	return nil
+}
+
+// GetRecentLogLines returns the plugin's own new lines from X-Plane's
+// Log.txt since sinceOffset (see diagnostics.go's GetRecentLogLines) -
+// bound to the frontend's Diagnostics panel, polled every second the same
+// way pollStatus() already polls plugin status.
+func (a *App) GetRecentLogLines(sinceOffset int64) (LogLinesResult, error) {
+	return GetRecentLogLines(loadConfig().XPlanePath, sinceOffset)
 }
 
 // GetXPlanePath returns the previously chosen X-Plane installation path,
@@ -183,6 +273,42 @@ func (a *App) InstallPlugin() error {
 // this companion build - i.e. what Install/Update Plugin would give you.
 func (a *App) GetAvailablePluginVersion() string {
 	return AvailablePluginVersion()
+}
+
+// CheckForUpdate asks GitHub for the latest companion app release and
+// compares it against this build's own version (see updater.go's
+// CheckForUpdate) - called once from the frontend on load, the same way
+// refreshVersions() checks the plugin's own Installed/Available versions,
+// not on the 1s status-poll ticker (an API call that often would be
+// wasteful and risks GitHub's unauthenticated rate limit for no benefit -
+// a new release doesn't appear more than a few times a year). Returns nil
+// (no error) if already up to date or this is a local dev build.
+func (a *App) CheckForUpdate() (*UpdateInfo, error) {
+	return CheckForUpdate()
+}
+
+// ApplyUpdate downloads, verifies and applies the latest release (see
+// updater.go's applyUpdate), then relaunches the freshly-updated
+// executable as a new, detached process and quits this one - bound to
+// the frontend's "Update & Restart" button. The relaunch is what
+// actually starts running the new code: applyUpdate only swaps the file
+// on disk out from under this still-running (old-code) process, it
+// doesn't change what's already loaded into memory.
+func (a *App) ApplyUpdate() error {
+	if err := applyUpdate(); err != nil {
+		return err
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		// The update was applied successfully - only the automatic
+		// relaunch failed. Don't report this as an update failure; the
+		// user can just start the (now updated) app again themselves.
+		return nil
+	}
+	_ = exec.Command(exe).Start()
+	runtime.Quit(a.ctx)
+	return nil
 }
 
 // GetInstalledPluginVersion returns the version of whatever plugin is

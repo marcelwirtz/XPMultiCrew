@@ -3,6 +3,8 @@
 #include "flytogether/aircraft_state.h"
 #include "flytogether/udp_socket.h"
 #include "formation/peer_list.h"
+#include "net/link_quality.h"
+#include "net/session_crypto.h"
 #include "sync/remote_aircraft.h"
 
 #include <cstdint>
@@ -75,6 +77,31 @@ public:
         return master_state_.IsStale(now_s, timeout_s);
     }
 
+    // Client only: the master's own icao_type, straight off the last
+    // received AircraftStatePacket (already carried for free - see
+    // plugin_main.cpp's BuildOwnAircraftStatePacket) - "" before any
+    // packet has arrived yet. Lets the client detect it's flying a
+    // different aircraft type than the master, whose per-ICAO Shared
+    // Cockpit profile (shared_cockpit_config.h) the client is also using -
+    // see plugin_main.cpp's aircraft-mismatch check.
+    std::string MasterIcaoType() const;
+
+    // Client only: the master link's smoothed packet-loss estimate (see
+    // net/link_quality.h) - meaningless (returns 0.0) before HasMasterLinkQualityData().
+    bool HasMasterLinkQualityData() const { return master_link_quality_.HasData(); }
+    double MasterLinkLossRatio() const { return master_link_quality_.LossRatio(); }
+
+    // Encrypts every SEND (direct-UDP and relay alike - SendOwnState
+    // seals one envelope and hands it to both) from here on - see
+    // net/session_crypto.h. On the RECEIVE side, only direct-UDP
+    // (PollIncoming) decrypts here; a relayed message arrives via
+    // IngestRelayedPacket already decrypted by plugin_main.cpp's relay
+    // dispatcher (it has to decrypt before it can even peek the magic
+    // byte to route between position/dataref/ownership/weather messages
+    // sharing one relay stream - see that dispatcher's comment), so
+    // IngestRelayedPacket must NOT decrypt a second time.
+    void SetCrypto(const SessionCrypto* crypto) { crypto_ = crypto; }
+
 private:
     void ProcessIncomingPacket(const AircraftStatePacket& packet, double now_s);
 
@@ -82,7 +109,9 @@ private:
     UdpSocket socket_;
     std::vector<Peer> peers_; // master's clients
     RemoteAircraft master_state_; // client's dead-reckoned view of the master
+    LinkQualityTracker master_link_quality_;
     std::function<void(const void*, size_t)> relay_sender_;
+    const SessionCrypto* crypto_ = nullptr;
 };
 
 } // namespace flytogether

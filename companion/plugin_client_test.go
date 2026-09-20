@@ -161,6 +161,95 @@ func TestApplyStatusMessageParsesRunningVersion(t *testing.T) {
 	}
 }
 
+func TestSharedCockpitOwnershipDefaultsToEmptyNotNil(t *testing.T) {
+	c := NewPluginClient()
+	ownership := c.SharedCockpitOwnership()
+	if ownership == nil {
+		t.Fatal("SharedCockpitOwnership() should never return nil (marshals to JSON null, not {})")
+	}
+	if len(ownership) != 0 {
+		t.Fatalf("expected no ownership entries before the plugin is seen, got %+v", ownership)
+	}
+}
+
+func TestApplyStatusMessageParsesSharedCockpitOwnership(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("SHARED_COCKPIT_OWNERSHIP systems:me engine:peer avionics:me\n")
+	got := c.SharedCockpitOwnership()
+	want := map[string]string{"systems": "me", "engine": "peer", "avionics": "me"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected ownership: got %+v, want %+v", got, want)
+	}
+}
+
+func TestParseSharedCockpitOwnershipSkipsMalformedEntries(t *testing.T) {
+	got := parseSharedCockpitOwnership("engine:me garbage avionics:peer")
+	want := map[string]string{"engine": "me", "avionics": "peer"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected ownership: got %+v, want %+v", got, want)
+	}
+}
+
+func TestParseSharedCockpitOwnershipEmptyStringGivesEmptyMap(t *testing.T) {
+	got := parseSharedCockpitOwnership("")
+	if len(got) != 0 {
+		t.Fatalf("expected empty map for empty input, got %+v", got)
+	}
+}
+
+func int64Ptr(v int64) *int64 { return &v }
+func intPtr(v int) *int       { return &v }
+
+func TestParseLinkQualityAllFieldsPresent(t *testing.T) {
+	got := parseLinkQuality("formation_server_rtt_ms:42 formation_peer_loss_pct:111:3;222:10 " +
+		"sc_server_rtt_ms:17 sc_master_loss_pct:0")
+	want := LinkQuality{
+		FormationServerRttMs:       int64Ptr(42),
+		FormationPeerLossPct:       map[uint32]int{111: 3, 222: 10},
+		SharedCockpitServerRttMs:   int64Ptr(17),
+		SharedCockpitMasterLossPct: intPtr(0),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected link quality: got %+v, want %+v", got, want)
+	}
+}
+
+func TestParseLinkQualityUnknownFieldsAreNil(t *testing.T) {
+	got := parseLinkQuality("formation_server_rtt_ms:? formation_peer_loss_pct: sc_server_rtt_ms:? sc_master_loss_pct:?")
+	if got.FormationServerRttMs != nil || got.SharedCockpitServerRttMs != nil || got.SharedCockpitMasterLossPct != nil {
+		t.Fatalf("expected nil for '?' fields, got %+v", got)
+	}
+	if got.FormationPeerLossPct != nil {
+		t.Fatalf("expected nil map for empty peer loss list, got %+v", got.FormationPeerLossPct)
+	}
+}
+
+func TestParseLinkQualitySkipsMalformedEntries(t *testing.T) {
+	got := parseLinkQuality("formation_server_rtt_ms:garbage sc_server_rtt_ms:17")
+	if got.FormationServerRttMs != nil {
+		t.Fatalf("expected nil for unparseable rtt, got %+v", got.FormationServerRttMs)
+	}
+	if got.SharedCockpitServerRttMs == nil || *got.SharedCockpitServerRttMs != 17 {
+		t.Fatalf("expected sc_server_rtt_ms to still parse, got %+v", got.SharedCockpitServerRttMs)
+	}
+}
+
+func TestApplyStatusMessageParsesLinkQualityAndAircraftMismatch(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("LINK_QUALITY formation_server_rtt_ms:42 sc_server_rtt_ms:?\n" +
+		"SHARED_COCKPIT_AIRCRAFT_MISMATCH C172:B738\n")
+	lq := c.LinkQuality()
+	if lq.FormationServerRttMs == nil || *lq.FormationServerRttMs != 42 {
+		t.Fatalf("unexpected formation server RTT: %+v", lq.FormationServerRttMs)
+	}
+	if lq.SharedCockpitServerRttMs != nil {
+		t.Fatalf("expected nil sc server RTT for '?', got %+v", lq.SharedCockpitServerRttMs)
+	}
+	if got := c.SharedCockpitAircraftMismatch(); got != "C172:B738" {
+		t.Fatalf("unexpected aircraft mismatch: got %q", got)
+	}
+}
+
 func sortedByID(peers []FormationPeer) []FormationPeer {
 	out := make([]FormationPeer, len(peers))
 	copy(out, peers)

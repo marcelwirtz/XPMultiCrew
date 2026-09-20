@@ -30,11 +30,28 @@ const (
 	MsgKeepaliveAck MessageType = "keepalive_ack"
 )
 
+// ProtocolVersion is this build's own wire-protocol version, sent as
+// ClientVersion on every create_session/join_session. Session-Auth/
+// Verschlüsselung (docs/plan.md Phase 4) is a hard, incompatible cutover
+// by design (the user's own call, not a gradual migration): a joiner
+// whose ClientVersion doesn't match the session creator's is rejected
+// with a clear error (see handleJoinSession) instead of the two sides
+// silently failing to understand each other's encrypted-vs-plaintext (or
+// differently-keyed) payloads. Bump this only for a genuinely incompatible
+// wire change - see aircraft_state.h's kAircraftStateMinProtocolVersion
+// for the same "only bump for a real break" discipline on a different
+// protocol in this project.
+const ProtocolVersion = 2
+
 // ClientMessage is anything a client sends to the server.
 type ClientMessage struct {
-	Type    MessageType `json:"type"`
-	Code    string      `json:"code,omitempty"`    // join_session
-	Payload string      `json:"payload,omitempty"` // relay, base64
+	Type MessageType `json:"type"`
+	Code string      `json:"code,omitempty"` // join_session
+	// Sent with every message (not just create/join_session) for
+	// simplicity - the server only actually inspects it for those two,
+	// see handleCreateSession/handleJoinSession.
+	ClientVersion int    `json:"client_version"`
+	Payload       string `json:"payload,omitempty"` // relay, base64
 }
 
 // ServerMessage is anything the server sends to a client.
@@ -42,9 +59,16 @@ type ServerMessage struct {
 	Type MessageType `json:"type"`
 
 	// session_created (sent both on create and on join, so both flows
-	// converge on "you are now member YourID of session Code")
+	// converge on "you are now member YourID of session Code"). Salt is
+	// this session's server-minted random value (base64), the same one
+	// on both the creator's and every joiner's session_created - both
+	// sides derive their shared SessionCrypto key from it plus the
+	// session code they already both know (see net/session_crypto.h).
+	// The server itself never sees or needs the derived key - it only
+	// hands out the salt and otherwise keeps relaying opaque bytes.
 	Code   string `json:"code,omitempty"`
 	YourID int    `json:"your_id,omitempty"`
+	Salt   string `json:"salt,omitempty"`
 
 	// peer_joined / peer_left
 	PeerID   int    `json:"peer_id,omitempty"`

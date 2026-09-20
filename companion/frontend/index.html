@@ -23,7 +23,6 @@
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    padding: 24px;
     user-select: none;
   }
   h1 {
@@ -34,15 +33,84 @@
   .subtitle {
     color: var(--muted);
     font-size: 13px;
-    margin-bottom: 24px;
+  }
+  .app-header {
+    padding: 20px 24px 0;
+  }
+  /* The nav/content split below - a wide fixed sidebar plus a scrolling
+     content area, rather than everything (Setup, Formation, Shared
+     Cockpit, Diagnostics) stacked on one ever-growing page. Each section
+     is its own .page, shown one at a time (see main.js's showPage()) -
+     this scales as later phases add more sections (LAN discovery,
+     preflight health check, flight log) without the window growing
+     unboundedly tall. */
+  .app-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    padding: 16px 24px 24px;
+    min-height: calc(100vh - 70px);
+  }
+  @media (max-width: 640px) {
+    .app-layout { flex-direction: column; }
+    .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); padding: 0 0 12px; margin-bottom: 16px; }
+    .sidebar button { flex: 1 1 auto; }
+  }
+  .sidebar {
+    width: 168px;
+    flex: 0 0 168px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid var(--border);
+    padding-right: 14px;
+    position: sticky;
+    top: 16px;
+  }
+  .sidebar button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 9px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .sidebar button:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+  .sidebar button.active { background: var(--panel); color: var(--text); }
+  .sidebar button .nav-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    visibility: hidden;
+  }
+  .sidebar button .nav-dot.shown { visibility: visible; }
+  .sidebar button .nav-dot.ok { background: var(--ok); }
+  .sidebar button .nav-dot.err { background: var(--err); }
+  .content {
+    flex: 1;
+    min-width: 0;
+    padding-left: 22px;
+  }
+  .page {
+    display: none;
+  }
+  .page.active {
+    display: block;
   }
   .grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 20px;
-  }
-  @media (max-width: 720px) {
-    .grid { grid-template-columns: 1fr; }
   }
   .panel {
     background: var(--panel);
@@ -114,6 +182,56 @@
     color: #05070a;
     border-color: var(--accent);
   }
+  .ownership-toggle {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .ownership-toggle button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+  .ownership-toggle button.owned {
+    background: var(--ok);
+    color: #05070a;
+    border-color: var(--ok);
+  }
+  .ownership-toggle button.pending {
+    color: var(--accent);
+    border-color: var(--accent);
+    font-style: italic;
+  }
+  .ownership-requests {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ownership-request {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    background: rgba(77, 163, 255, 0.1);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .ownership-request .actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .ownership-request button {
+    flex: 0 0 auto;
+    padding: 5px 12px;
+    font-size: 12px;
+  }
   .status {
     margin-top: 16px;
     padding: 10px 12px;
@@ -175,92 +293,287 @@
   .version-info .update-available b {
     color: var(--accent);
   }
+  #update-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #update-banner button {
+    flex-shrink: 0;
+  }
+  .address-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .address-row select {
+    flex: 0 0 110px;
+    background: #101317;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 4px;
+  }
+  .address-row input[type=text] {
+    flex: 1;
+  }
+  .address-row button {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+  }
+  .address-row .delete-saved-btn {
+    display: none;
+    background: transparent;
+    color: var(--err);
+    font-weight: 700;
+  }
+  .address-row .delete-saved-btn.visible {
+    display: block;
+  }
+  .diagnostics-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .diagnostics-header h2 {
+    margin: 0;
+  }
+  .diagnostics-header .row {
+    margin: 0;
+    gap: 8px;
+  }
+  .diagnostics-header button {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .diagnostics-log {
+    max-height: 240px;
+    overflow-y: auto;
+    background: #101317;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .diagnostics-log.collapsed {
+    display: none;
+  }
+  .link-quality {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .link-quality .peer-loss {
+    margin-left: 6px;
+  }
+  .mismatch-warning {
+    display: none;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: rgba(255, 107, 107, 0.12);
+    border: 1px solid var(--err);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--err);
+  }
+  .mismatch-warning.visible {
+    display: block;
+  }
 </style>
 </head>
 <body>
-  <h1>XPMultiCrew</h1>
-  <div class="subtitle">Companion app — talks to the X-Plane plugin on this machine only.</div>
-
-  <!-- Shown (not display:none) by default, and Create/Join/Start below
-       start disabled: until the first "status" push/poll actually arrives
-       (main.js's EventsOn('status', ...)), we don't yet know whether
-       SIM_READY is true - assuming "not ready" until told otherwise is
-       the safe default, instead of briefly (or, if that first event is
-       ever delayed/lost, indefinitely) showing every button as usable. -->
-  <div class="status" id="loading-banner" style="margin-bottom: 20px;">
-    <span class="dot"></span><span>X-Plane is still loading — Create/Join/Start are disabled until it's done.</span>
+  <div class="app-header">
+    <h1>XPMultiCrew</h1>
+    <div class="subtitle">Companion app — talks to the X-Plane plugin on this machine only.</div>
   </div>
 
-  <div class="panel" style="margin-bottom: 20px;">
-    <h2>Setup</h2>
+  <div class="app-layout">
+    <!-- Formation/Shared Cockpit first - the two you actually use every
+         session. Setup/Diagnostics last - one-time config and
+         occasional troubleshooting, not something you need front and
+         center. Every button gets a .nav-dot (even where it's always
+         empty/hidden) purely so its text lines up with the two that do
+         show one - a button without the dot's reserved space would sit
+         a few pixels further left than the others. -->
+    <nav class="sidebar" id="sidebar">
+      <button type="button" data-page="formation"><span class="nav-dot" id="nav-dot-formation"></span>Formation</button>
+      <button type="button" data-page="shared-cockpit"><span class="nav-dot" id="nav-dot-shared-cockpit"></span>Shared Cockpit</button>
+      <button type="button" data-page="setup"><span class="nav-dot"></span>Setup</button>
+      <button type="button" data-page="diagnostics"><span class="nav-dot"></span>Diagnostics</button>
+    </nav>
 
-    <label>X-Plane installation folder</label>
-    <div class="row">
-      <input type="text" id="xplane-path" placeholder="Not set — choose your X-Plane folder" readonly>
-      <button id="choose-xplane-btn" class="secondary" style="flex: 0 0 auto;">Choose…</button>
-    </div>
-
-    <div class="row buttons">
-      <button id="install-plugin-btn">Install / Update Plugin</button>
-    </div>
-
-    <div class="status" id="setup-status"><span class="dot"></span><span id="setup-status-text">choose your X-Plane folder, then install the plugin</span></div>
-
-    <div class="version-info" id="version-info">
-      <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
-      <span>Available (bundled with this app): <b id="available-version">—</b></span>
-      <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="panel">
-      <h2>Formation / Internet play</h2>
-
-      <label for="server">Server (host:port)</label>
-      <input type="text" id="server" placeholder="rendezvous.example.com:45000">
-
-      <label for="code">Session code (leave blank to create a new one)</label>
-      <input type="text" id="code" placeholder="ABC123">
-
-      <div class="row buttons">
-        <button id="create-btn" disabled>Create Session</button>
-        <button id="join-btn" class="secondary" disabled>Join Session</button>
-      </div>
-      <div class="row buttons">
-        <button id="disconnect-formation-btn" class="secondary" disabled>Disconnect</button>
+    <div class="content">
+      <!-- Shown (not display:none) by default, and Create/Join/Start below
+           start disabled: until the first "status" push/poll actually arrives
+           (main.js's EventsOn('status', ...)), we don't yet know whether
+           SIM_READY is true - assuming "not ready" until told otherwise is
+           the safe default, instead of briefly (or, if that first event is
+           ever delayed/lost, indefinitely) showing every button as usable.
+           Shown above every page, not inside one, since it's relevant
+           regardless of which section is currently open. -->
+      <div class="status" id="loading-banner" style="margin-bottom: 20px;">
+        <span class="dot"></span><span>X-Plane is still loading — Create/Join/Start are disabled until it's done.</span>
       </div>
 
-      <div class="status" id="formation-status"><span class="dot"></span><span id="formation-status-text">loading…</span></div>
-
-      <div class="peer-list" id="peer-list">
-        <div class="empty">no peers connected</div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Shared Cockpit</h2>
-
-      <label>Role</label>
-      <div class="role-toggle">
-        <button id="role-master" class="active">MASTER</button>
-        <button id="role-client">CLIENT</button>
+      <!-- Hidden until CheckForUpdate() (main.js, called once on load) finds
+           a newer release than this build's own version - see
+           companion/updater.go. Manual click, not automatic, matching the
+           plugin's own Install/Update Plugin flow below. Also shown above
+           every page - an available update matters regardless of which
+           section you're looking at. -->
+      <div class="status ok" id="update-banner" style="display: none; margin-bottom: 20px;">
+        <span><span class="dot"></span><span id="update-banner-text"></span></span>
+        <button id="update-btn">Update &amp; Restart</button>
       </div>
 
-      <label for="sc-server">Server (host:port)</label>
-      <input type="text" id="sc-server" placeholder="rendezvous.example.com:45000">
+      <div class="page" id="page-setup">
+        <div class="panel">
+          <h2>Setup</h2>
 
-      <label for="sc-code">Session code (MASTER: leave blank to create one)</label>
-      <input type="text" id="sc-code" placeholder="ABC123">
+          <label>X-Plane installation folder</label>
+          <div class="row">
+            <input type="text" id="xplane-path" placeholder="Not set — choose your X-Plane folder" readonly>
+            <button id="choose-xplane-btn" class="secondary" style="flex: 0 0 auto;">Choose…</button>
+          </div>
 
-      <div class="row buttons">
-        <button id="start-sc-btn" disabled>Start Shared Cockpit</button>
+          <div class="row buttons">
+            <button id="install-plugin-btn">Install / Update Plugin</button>
+          </div>
+
+          <div class="status" id="setup-status"><span class="dot"></span><span id="setup-status-text">choose your X-Plane folder, then install the plugin</span></div>
+
+          <div class="version-info" id="version-info">
+            <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
+            <span>Available (bundled with this app): <b id="available-version">—</b></span>
+            <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
+          </div>
+        </div>
       </div>
-      <div class="row buttons">
-        <button id="disconnect-sc-btn" class="secondary" disabled>Disconnect</button>
+
+      <div class="page" id="page-formation">
+        <div class="grid">
+          <div class="panel">
+            <h2>Formation / Internet play</h2>
+
+            <label for="server">Server (host:port)</label>
+            <div class="address-row">
+              <select id="server-saved"><option value="">Saved…</option></select>
+              <input type="text" id="server" placeholder="rendezvous.example.com:45000">
+              <button id="server-save-btn" class="secondary" title="Save this address">Save</button>
+              <button id="server-delete-btn" class="delete-saved-btn" title="Delete the selected saved address">✕</button>
+            </div>
+
+            <label for="code">Session code (leave blank to create a new one)</label>
+            <input type="text" id="code" placeholder="ABC123">
+
+            <div class="row buttons">
+              <button id="create-btn" disabled>Create Session</button>
+              <button id="join-btn" class="secondary" disabled>Join Session</button>
+            </div>
+            <div class="row buttons">
+              <button id="disconnect-formation-btn" class="secondary" disabled>Disconnect</button>
+            </div>
+
+            <div class="status" id="formation-status"><span class="dot"></span><span id="formation-status-text">loading…</span></div>
+
+            <div class="peer-list" id="peer-list">
+              <div class="empty">no peers connected</div>
+            </div>
+
+            <!-- Server RTT + per-peer packet loss (see control_listener.h's
+                 LINK_QUALITY line) - hidden until there's at least one reading,
+                 so an idle/not-connected panel doesn't show "?" everywhere. -->
+            <div class="link-quality" id="formation-link-quality" style="display: none;"></div>
+          </div>
+        </div>
       </div>
 
-      <div class="status" id="sc-status"><span class="dot"></span><span id="sc-status-text">loading…</span></div>
+      <div class="page" id="page-shared-cockpit">
+        <div class="grid">
+          <div class="panel">
+            <h2>Shared Cockpit</h2>
+
+            <label>Role</label>
+            <div class="role-toggle">
+              <button id="role-master" class="active">MASTER</button>
+              <button id="role-client">CLIENT</button>
+            </div>
+
+            <label for="sc-server">Server (host:port)</label>
+            <div class="address-row">
+              <select id="sc-server-saved"><option value="">Saved…</option></select>
+              <input type="text" id="sc-server" placeholder="rendezvous.example.com:45000">
+              <button id="sc-server-save-btn" class="secondary" title="Save this address">Save</button>
+              <button id="sc-server-delete-btn" class="delete-saved-btn" title="Delete the selected saved address">✕</button>
+            </div>
+
+            <label for="sc-code">Session code (MASTER: leave blank to create one)</label>
+            <input type="text" id="sc-code" placeholder="ABC123">
+
+            <div class="row buttons">
+              <button id="start-sc-btn" disabled>Start Shared Cockpit</button>
+            </div>
+            <div class="row buttons">
+              <button id="disconnect-sc-btn" class="secondary" disabled>Disconnect</button>
+            </div>
+
+            <label>Who controls what (click to take it)</label>
+            <div class="ownership-toggle">
+              <button id="own-engine" data-category="engine" disabled>Engine</button>
+              <button id="own-avionics" data-category="avionics" disabled>Avionics</button>
+              <button id="own-systems" data-category="systems" disabled>Systems</button>
+            </div>
+
+            <!-- Grant/Deny prompt(s) for a category the co-pilot is
+                 currently requesting from this side (control_listener.h's
+                 SHARED_COCKPIT_OWNERSHIP "requested" state) - see
+                 main.js's renderOwnershipRequests(). Empty/hidden when
+                 nothing's pending. -->
+            <div class="ownership-requests" id="ownership-requests"></div>
+
+            <div class="status" id="sc-status"><span class="dot"></span><span id="sc-status-text">loading…</span></div>
+
+            <!-- See control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH -
+                 the client-side check for "I'm not flying the same aircraft
+                 type as the master", whose per-ICAO dataref profile is only
+                 correct for the master's own type. -->
+            <div class="mismatch-warning" id="sc-aircraft-mismatch"></div>
+
+            <!-- Server RTT + master-link packet loss - same reasoning as
+                 #formation-link-quality above. -->
+            <div class="link-quality" id="sc-link-quality" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page" id="page-diagnostics">
+        <!-- The plugin's own lines from X-Plane's Log.txt (filtered by prefix -
+             see companion/diagnostics.go), so troubleshooting a connection
+             problem doesn't mean finding and opening that file by hand.
+             Its own page now (used to be a collapsed-by-default panel at the
+             bottom of one long page) - moving here is what "collapsed by
+             default" was standing in for, so the log itself no longer needs
+             to start collapsed. -->
+        <div class="panel">
+          <div class="diagnostics-header">
+            <h2>Diagnostics</h2>
+            <div class="row">
+              <button id="diagnostics-copy-btn" class="secondary">Copy</button>
+            </div>
+          </div>
+          <div class="diagnostics-log" id="diagnostics-log">
+            <span class="empty">No plugin log lines yet.</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

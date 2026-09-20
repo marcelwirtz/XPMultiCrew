@@ -15,6 +15,7 @@ add_compile_options(-UNDEBUG)
 add_executable(remote_aircraft_test
     remote_aircraft_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/quaternion.cpp
 )
 
 target_include_directories(remote_aircraft_test PRIVATE
@@ -66,11 +67,37 @@ target_compile_features(dataref_sync_protocol_test PRIVATE cxx_std_17)
 
 add_test(NAME dataref_sync_protocol_test COMMAND dataref_sync_protocol_test)
 
+add_executable(weather_sync_protocol_test
+    weather_sync_protocol_test.cpp
+)
+
+target_include_directories(weather_sync_protocol_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+)
+
+target_compile_features(weather_sync_protocol_test PRIVATE cxx_std_17)
+
+add_test(NAME weather_sync_protocol_test COMMAND weather_sync_protocol_test)
+
+add_executable(ownership_tracker_test
+    ownership_tracker_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/ownership_tracker.cpp
+)
+
+target_include_directories(ownership_tracker_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+)
+
+target_compile_features(ownership_tracker_test PRIVATE cxx_std_17)
+
+add_test(NAME ownership_tracker_test COMMAND ownership_tracker_test)
+
 find_package(Threads REQUIRED)
 
 add_executable(control_listener_test
     control_listener_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/control/control_listener.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/shared_cockpit_config.cpp
 )
 
 target_include_directories(control_listener_test PRIVATE
@@ -119,6 +146,18 @@ target_include_directories(shared_cockpit_config_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
 )
 
+# So the test can load-and-validate the REAL bundled profile files (not
+# just fixtures written to a temp dir) without hardcoding a path relative
+# to whatever directory ctest happens to run from - see
+# TestBundledProfilesParseCleanly in shared_cockpit_config_test.cpp. This
+# is this project's "lint the profile before shipping it" check (see
+# docs/plan.md's Shared Cockpit profile authoring phase): a typo'd
+# DATAREF/CATEGORY line here fails a build instead of only being noticed
+# during a live two-instance flight test.
+target_compile_definitions(shared_cockpit_config_test PRIVATE
+    "SHARED_COCKPIT_PROFILES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../plugin/Resources/shared_cockpit_profiles\""
+)
+
 target_compile_features(shared_cockpit_config_test PRIVATE cxx_std_17)
 
 add_test(NAME shared_cockpit_config_test COMMAND shared_cockpit_config_test)
@@ -142,35 +181,80 @@ add_executable(formation_sync_test
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/formation_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/peer_list.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/quaternion.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/link_quality.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/session_crypto.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/secure_random.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher/monocypher.c
 )
 
 target_include_directories(formation_sync_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher
 )
 
 target_link_libraries(formation_sync_test PRIVATE Threads::Threads)
 if(WIN32)
-    target_link_libraries(formation_sync_test PRIVATE ws2_32)
+    target_link_libraries(formation_sync_test PRIVATE ws2_32 bcrypt)
 endif()
 target_compile_features(formation_sync_test PRIVATE cxx_std_17)
 
 add_test(NAME formation_sync_test COMMAND formation_sync_test)
 
+add_executable(session_crypto_test
+    session_crypto_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/session_crypto.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/secure_random.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher/monocypher.c
+)
+
+target_include_directories(session_crypto_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher
+)
+
+if(WIN32)
+    target_link_libraries(session_crypto_test PRIVATE bcrypt)
+endif()
+
+target_compile_features(session_crypto_test PRIVATE cxx_std_17)
+
+add_test(NAME session_crypto_test COMMAND session_crypto_test)
+
+add_executable(link_quality_test
+    link_quality_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/link_quality.cpp
+)
+
+target_include_directories(link_quality_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
+)
+
+target_compile_features(link_quality_test PRIVATE cxx_std_17)
+
+add_test(NAME link_quality_test COMMAND link_quality_test)
+
 add_executable(shared_cockpit_sync_test
     shared_cockpit_sync_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/shared_cockpit_sync.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/remote_aircraft.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/quaternion.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/link_quality.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/session_crypto.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/net/secure_random.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher/monocypher.c
 )
 
 target_include_directories(shared_cockpit_sync_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher
 )
 
 target_link_libraries(shared_cockpit_sync_test PRIVATE Threads::Threads)
 if(WIN32)
-    target_link_libraries(shared_cockpit_sync_test PRIVATE ws2_32)
+    target_link_libraries(shared_cockpit_sync_test PRIVATE ws2_32 bcrypt)
 endif()
 target_compile_features(shared_cockpit_sync_test PRIVATE cxx_std_17)
 

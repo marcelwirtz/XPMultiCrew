@@ -101,7 +101,7 @@ void RendezvousClient::PollIncoming(std::chrono::steady_clock::duration timeout)
         if (msg.type == "session_created") {
             in_session_ = true;
             last_keepalive_sent_ = last_received_;
-            if (on_session_ready) on_session_ready(msg.code, msg.your_id);
+            if (on_session_ready) on_session_ready(msg.code, msg.your_id, Base64Decode(msg.salt));
         } else if (msg.type == "peer_joined") {
             std::string host;
             uint16_t port = 0;
@@ -121,9 +121,13 @@ void RendezvousClient::PollIncoming(std::chrono::steady_clock::duration timeout)
             // keepalive above go quiet instead of retrying into nothing.
             in_session_ = false;
             if (on_error) on_error(msg.message);
+        } else if (msg.type == "keepalive_ack") {
+            // See HasRtt()/Rtt()'s comment for why this is an
+            // approximation, not a precise per-message round trip.
+            has_rtt_ = true;
+            last_rtt_ = std::chrono::duration_cast<std::chrono::milliseconds>(last_received_ -
+                                                                                last_keepalive_sent_);
         }
-        // "keepalive_ack" itself needs no handling beyond the
-        // last_received_ update above.
     }
 
     if (in_session_) {

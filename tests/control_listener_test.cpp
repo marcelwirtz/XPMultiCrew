@@ -37,6 +37,11 @@ int main() {
     bool sc_is_master = false;
     std::string sc_host_port, sc_code;
     bool sc_called = false;
+    DatarefCategory requested_category = DatarefCategory::kSystems;
+    bool ownership_requested = false;
+    DatarefCategory responded_category = DatarefCategory::kSystems;
+    bool responded_grant = false;
+    bool ownership_responded = false;
 
     ControlListener::Callbacks callbacks;
     callbacks.on_create_session = [&](const std::string& hp) {
@@ -54,6 +59,15 @@ int main() {
         sc_is_master = is_master;
         sc_host_port = host_port;
         sc_code = code;
+    };
+    callbacks.on_request_ownership = [&](DatarefCategory category) {
+        ownership_requested = true;
+        requested_category = category;
+    };
+    callbacks.on_respond_ownership = [&](DatarefCategory category, bool grant) {
+        ownership_responded = true;
+        responded_category = category;
+        responded_grant = grant;
     };
 
     assert(listener.Start(callbacks));
@@ -113,6 +127,53 @@ int main() {
     assert(sc_code.empty());
     std::printf("START_SHARED_COCKPIT (MASTER, no code) parsed correctly: %s, master=%d\n",
                 sc_host_port.c_str(), sc_is_master);
+
+    const std::string cmd5 = "REQUEST_OWNERSHIP engine\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd5.data(), cmd5.size());
+    PumpFor(listener, 200ms);
+    assert(ownership_requested);
+    assert(requested_category == DatarefCategory::kEngine);
+    std::printf("REQUEST_OWNERSHIP parsed correctly: category=%d\n", static_cast<int>(requested_category));
+
+    // An unrecognized category name is silently ignored, same as any
+    // other unrecognized token elsewhere in this parser - the callback
+    // must not fire.
+    ownership_requested = false;
+    const std::string cmd6 = "REQUEST_OWNERSHIP bogus\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd6.data(), cmd6.size());
+    PumpFor(listener, 200ms);
+    assert(!ownership_requested);
+    std::printf("REQUEST_OWNERSHIP with an unknown category is ignored: OK\n");
+
+    const std::string cmd7 = "RESPOND_OWNERSHIP avionics grant\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd7.data(), cmd7.size());
+    PumpFor(listener, 200ms);
+    assert(ownership_responded);
+    assert(responded_category == DatarefCategory::kAvionics);
+    assert(responded_grant == true);
+    std::printf("RESPOND_OWNERSHIP grant parsed correctly\n");
+
+    ownership_responded = false;
+    const std::string cmd8 = "RESPOND_OWNERSHIP avionics deny\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd8.data(), cmd8.size());
+    PumpFor(listener, 200ms);
+    assert(ownership_responded);
+    assert(responded_grant == false);
+    std::printf("RESPOND_OWNERSHIP deny parsed correctly\n");
+
+    // Neither an unknown category nor a garbage decision word should fire
+    // the callback - same "don't hard-fail on the unknown" parsing spirit
+    // as REQUEST_OWNERSHIP's own malformed-input check above.
+    ownership_responded = false;
+    const std::string cmd9 = "RESPOND_OWNERSHIP bogus grant\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd9.data(), cmd9.size());
+    PumpFor(listener, 200ms);
+    assert(!ownership_responded);
+    const std::string cmd10 = "RESPOND_OWNERSHIP avionics maybe\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd10.data(), cmd10.size());
+    PumpFor(listener, 200ms);
+    assert(!ownership_responded);
+    std::printf("RESPOND_OWNERSHIP with unknown category/decision is ignored: OK\n");
 
     // Status push: SetFormationStatus should immediately send a decodable
     // message to the companion's port.
@@ -175,6 +236,69 @@ int main() {
     }
     assert(got_new_fields);
     std::printf("FORMATION_CODE/SHARED_COCKPIT_CODE/PEERS correctly pushed\n");
+
+    // SetSharedCockpitOwnership - per-category state the companion app
+    // renders as the ownership buttons'/Grant-Deny prompt's state. All
+    // four OwnershipUiState values in one push, to cover each one.
+    listener.SetSharedCockpitOwnership({/*systems=*/ControlListener::OwnershipUiState::kMe,
+                                         /*engine=*/ControlListener::OwnershipUiState::kPeer,
+                                         /*avionics=*/ControlListener::OwnershipUiState::kPending});
+    bool got_ownership = false;
+    for (int i = 0; i < 50 && !got_ownership; ++i) {
+        const int received = companion.ReceiveFrom(buf, sizeof(buf) - 1);
+        if (received > 0) {
+            buf[received] = '\0';
+            std::string msg(buf, static_cast<size_t>(received));
+            if (msg.find("SHARED_COCKPIT_OWNERSHIP systems:me engine:peer avionics:pending") !=
+                std::string::npos) {
+                got_ownership = true;
+            }
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    assert(got_ownership);
+    std::printf("SHARED_COCKPIT_OWNERSHIP correctly pushed (me/peer/pending)\n");
+
+    // "requested" is the fourth state, exercised separately so every
+    // OwnershipUiState value gets its own explicit coverage.
+    listener.SetSharedCockpitOwnership({ControlListener::OwnershipUiState::kRequested,
+                                         ControlListener::OwnershipUiState::kPeer,
+                                         ControlListener::OwnershipUiState::kPeer});
+    bool got_requested = false;
+    for (int i = 0; i < 50 && !got_requested; ++i) {
+        const int received = companion.ReceiveFrom(buf, sizeof(buf) - 1);
+        if (received > 0) {
+            buf[received] = '\0';
+            std::string msg(buf, static_cast<size_t>(received));
+            if (msg.find("SHARED_COCKPIT_OWNERSHIP systems:requested") != std::string::npos) {
+                got_requested = true;
+            }
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    assert(got_requested);
+    std::printf("SHARED_COCKPIT_OWNERSHIP correctly pushed (requested)\n");
+
+    // SetLinkQuality/SetSharedCockpitAircraftMismatch - both take an
+    // already-encoded string from the caller (plugin_main.cpp), same
+    // pattern as SetFormationPeers above.
+    listener.SetLinkQuality("formation_server_rtt_ms:42 sc_server_rtt_ms:?");
+    listener.SetSharedCockpitAircraftMismatch("C172:B738");
+    bool got_link_quality_fields = false;
+    for (int i = 0; i < 50 && !got_link_quality_fields; ++i) {
+        const int received = companion.ReceiveFrom(buf, sizeof(buf) - 1);
+        if (received > 0) {
+            buf[received] = '\0';
+            std::string msg(buf, static_cast<size_t>(received));
+            if (msg.find("LINK_QUALITY formation_server_rtt_ms:42 sc_server_rtt_ms:?") != std::string::npos &&
+                msg.find("SHARED_COCKPIT_AIRCRAFT_MISMATCH C172:B738") != std::string::npos) {
+                got_link_quality_fields = true;
+            }
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    assert(got_link_quality_fields);
+    std::printf("LINK_QUALITY/SHARED_COCKPIT_AIRCRAFT_MISMATCH correctly pushed\n");
 
     std::printf("\nALL CONTROL LISTENER CHECKS PASSED\n");
     return 0;

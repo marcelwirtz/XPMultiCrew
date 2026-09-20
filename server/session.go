@@ -2,11 +2,18 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 )
+
+// sessionSaltSize matches SessionCrypto::kSaltSize (plugin/include/net/
+// session_crypto.h) - the two are never actually compared byte-for-byte
+// by anything, but keeping the constant name/value pair documented in
+// both places avoids the two silently drifting apart.
+const sessionSaltSize = 16
 
 // Excludes visually-confusing characters (0/O, 1/I), matching the plan's
 // "short, human-typeable code, like SmartCopilot's Connection-ID" (section 7).
@@ -68,6 +75,21 @@ type Session struct {
 	Code    string
 	Members map[int]*ClientState
 	nextID  int
+	// Salt is minted once, at creation, and handed out unchanged in every
+	// session_created for this session (both the creator's and every
+	// later joiner's) - see protocol.go's ServerMessage.Salt comment.
+	Salt []byte
+	// ClientVersion is the creator's ProtocolVersion (protocol.go) - every
+	// joiner must match it exactly, see handleJoinSession.
+	ClientVersion int
+}
+
+func randomSalt() ([]byte, error) {
+	salt := make([]byte, sessionSaltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	return salt, nil
 }
 
 // Sender abstracts "send this message to this address" so Server's logic
@@ -127,9 +149,9 @@ func randomSessionCode() (string, error) {
 func (s *Server) HandleMessage(addr *net.UDPAddr, msg ClientMessage) {
 	switch msg.Type {
 	case MsgCreateSession:
-		s.handleCreateSession(addr)
+		s.handleCreateSession(addr, msg.ClientVersion)
 	case MsgJoinSession:
-		s.handleJoinSession(addr, msg.Code)
+		s.handleJoinSession(addr, msg.Code, msg.ClientVersion)
 	case MsgRelay:
 		s.handleRelay(addr, msg.Payload)
 	case MsgKeepalive:
@@ -141,7 +163,7 @@ func (s *Server) HandleMessage(addr *net.UDPAddr, msg ClientMessage) {
 	}
 }
 
-func (s *Server) handleCreateSession(addr *net.UDPAddr) {
+func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -157,16 +179,27 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr) {
 			break
 		}
 	}
+	salt, err := randomSalt()
+	if err != nil {
+		s.sender.SendTo(addr, ServerMessage{Type: MsgError, Message: "internal error generating session salt"})
+		return
+	}
 
 	member := &ClientState{SessionCode: code, MemberID: 1, Addr: addr, LastSeen: time.Now()}
-	session := &Session{Code: code, Members: map[int]*ClientState{1: member}, nextID: 2}
+	session := &Session{
+		Code: code, Members: map[int]*ClientState{1: member}, nextID: 2,
+		Salt: salt, ClientVersion: clientVersion,
+	}
 	s.sessions[code] = session
 	s.clientsByAddr[addr.String()] = member
 
-	s.sender.SendTo(addr, ServerMessage{Type: MsgSessionCreated, Code: code, YourID: 1})
+	s.sender.SendTo(addr, ServerMessage{
+		Type: MsgSessionCreated, Code: code, YourID: 1,
+		Salt: base64.StdEncoding.EncodeToString(salt),
+	})
 }
 
-func (s *Server) handleJoinSession(addr *net.UDPAddr, code string) {
+func (s *Server) handleJoinSession(addr *net.UDPAddr, code string, clientVersion int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -178,6 +211,17 @@ func (s *Server) handleJoinSession(addr *net.UDPAddr, code string) {
 	session, ok := s.sessions[code]
 	if !ok {
 		s.sender.SendTo(addr, ServerMessage{Type: MsgError, Message: fmt.Sprintf("no such session: %s", code)})
+		return
+	}
+	if clientVersion != session.ClientVersion {
+		// A clear, actionable rejection instead of letting the two sides
+		// silently fail to understand each other's payloads (differently
+		// keyed/shaped envelopes) once they start exchanging position/
+		// dataref traffic - see protocol.go's ProtocolVersion comment.
+		s.sender.SendTo(addr, ServerMessage{
+			Type:    MsgError,
+			Message: "incompatible client version - update both sides to the same XPMultiCrew build",
+		})
 		return
 	}
 
@@ -198,7 +242,10 @@ func (s *Server) handleJoinSession(addr *net.UDPAddr, code string) {
 	session.Members[newID] = member
 	s.clientsByAddr[addr.String()] = member
 
-	s.sender.SendTo(addr, ServerMessage{Type: MsgSessionCreated, Code: code, YourID: newID})
+	s.sender.SendTo(addr, ServerMessage{
+		Type: MsgSessionCreated, Code: code, YourID: newID,
+		Salt: base64.StdEncoding.EncodeToString(session.Salt),
+	})
 }
 
 func (s *Server) handleRelay(addr *net.UDPAddr, payload string) {

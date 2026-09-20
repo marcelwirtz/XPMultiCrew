@@ -1,0 +1,94 @@
+# Shared Cockpit "systems" dataref list for the default X-Plane 12
+# Beechcraft Baron 58 (ICAO type "BE58", twin piston, constant-speed props,
+# retractable gear) - see shared_cockpit/shared_cockpit_config.h's
+# ResolveSharedCockpitConfigPath: this file is picked up automatically
+# whenever the current aircraft's ICAO type matches this filename.
+#
+# Every dataref below was checked against a real X-Plane 12
+# Resources/plugins/DataRefs.txt, not guessed - see plugin/Resources/
+# shared_cockpit_profiles/C172.txt's header comment for the general
+# ground rules this follows (writable-only, no autopilot-mode-engagement
+# datarefs, etc.), all still true here.
+#
+# Twin-specific difference from C172.txt worth calling out explicitly:
+# the per-engine handle datarefs below (throttle_ratio, prop_ratio,
+# mixture_ratio, ...) are deliberately NOT the "_all" variants C172.txt
+# uses (throttle_ratio_all etc.) - those move every engine's handle
+# together as one, which is exactly wrong for a twin: the 3D cockpit's two
+# separate throttle/prop/mixture levers are bound to these per-engine
+# array datarefs, and syncing the "_all" scalar instead would fight
+# independent per-engine handle positions (e.g. a deliberately asymmetric
+# power setting) instead of reproducing them. For a single-engine
+# aircraft like the C172 the distinction is moot (only one engine to
+# move), which is why that profile could get away with the simpler "_all"
+# form.
+
+# Radios - active and standby, so a flip/flop swap either pilot makes
+# shows up correctly on both sides, not just the currently-active side
+DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_stdby_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/dme_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_code CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_mode CATEGORY avionics
+
+# Course/OBS selectors and audio panel selection
+DATAREF sim/cockpit2/radios/actuators/nav1_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_com_selection CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_nav_selection CATEGORY avionics
+
+# Autopilot bugs/targets (see C172.txt's note re: engagement modes -
+# still out of scope here for the same reason)
+DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/altitude_dial_ft CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/vvi_dial_fpm CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/airspeed_dial_kts CATEGORY avionics
+
+# Flight control trim (aircraft-wide, not per-engine)
+DATAREF sim/cockpit2/controls/elevator_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/aileron_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/rudder_trim CATEGORY systems
+
+# Flaps, gear and parking brake - gear is new vs. C172 (fixed gear, no
+# handle to sync); flaprqst/parkbrake are the same generic, aircraft-wide
+# datarefs C172.txt already uses.
+DATAREF sim/flightmodel/controls/flaprqst CATEGORY systems
+DATAREF sim/cockpit2/controls/gear_handle_down CATEGORY systems
+DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
+
+# Engine / prop / fuel / start procedure - per-engine arrays throughout
+# (see this file's header comment for why _all would be wrong here).
+# ignition_key is STREAM for the same spring-loaded-starter reason
+# documented in C172.txt.
+DATAREF sim/cockpit2/engine/actuators/throttle_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/prop_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/mixture_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/cowl_flap_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/primer_on CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_left CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_right CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
+
+# Electrical / avionics / pitot-static
+DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
+DATAREF sim/cockpit2/electrical/generator_on CATEGORY systems
+DATAREF sim/cockpit2/switches/avionics_power_on CATEGORY systems
+DATAREF sim/cockpit/switches/pitot_heat_on CATEGORY systems
+DATAREF sim/cockpit2/switches/alternate_static_air_ratio CATEGORY systems
+
+# Exterior lights
+DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems

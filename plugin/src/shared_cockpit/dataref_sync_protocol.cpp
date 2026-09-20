@@ -38,6 +38,15 @@ void Append(std::vector<uint8_t>& out, const void* p, size_t n) {
 }
 } // namespace
 
+uint32_t PeekDatarefSyncChannelMagic(const uint8_t* data, size_t len) {
+    if (len < sizeof(uint32_t)) {
+        return 0;
+    }
+    uint32_t magic = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+    return magic;
+}
+
 std::vector<uint8_t> EncodeDatarefSyncMessage(const DatarefSyncMessage& msg) {
     if (msg.name.size() > 0xFFFF) {
         return {};
@@ -145,6 +154,69 @@ bool DecodeDatarefSyncMessage(const uint8_t* data, size_t len, DatarefSyncMessag
         }
     }
 
+    return true;
+}
+
+std::vector<uint8_t> EncodeOwnershipRequestMessage(const OwnershipRequestMessage& msg) {
+    std::vector<uint8_t> out;
+    const uint32_t magic = kOwnershipRequestMagic;
+    const uint8_t category = static_cast<uint8_t>(msg.category);
+    Append(out, &magic, sizeof(magic));
+    Append(out, &category, sizeof(category));
+    Append(out, &msg.nonce, sizeof(msg.nonce));
+    return out;
+}
+
+bool DecodeOwnershipRequestMessage(const uint8_t* data, size_t len, OwnershipRequestMessage& out) {
+    constexpr size_t kExpectedLen = sizeof(uint32_t) + 1 + sizeof(uint32_t);
+    if (len < kExpectedLen) {
+        return false;
+    }
+    uint32_t magic = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+    if (magic != kOwnershipRequestMagic) {
+        return false;
+    }
+    const uint8_t category_byte = data[sizeof(magic)];
+    if (category_byte >= kDatarefCategoryCount) {
+        return false;
+    }
+    out.category = static_cast<DatarefCategory>(category_byte);
+    std::memcpy(&out.nonce, data + sizeof(magic) + 1, sizeof(out.nonce));
+    return true;
+}
+
+std::vector<uint8_t> EncodeOwnershipResponseMessage(const OwnershipResponseMessage& msg) {
+    std::vector<uint8_t> out;
+    const uint32_t magic = kOwnershipResponseMagic;
+    const uint8_t category = static_cast<uint8_t>(msg.category);
+    const uint8_t grant = msg.grant ? 1 : 0;
+    Append(out, &magic, sizeof(magic));
+    Append(out, &category, sizeof(category));
+    Append(out, &msg.nonce, sizeof(msg.nonce));
+    Append(out, &grant, sizeof(grant));
+    return out;
+}
+
+bool DecodeOwnershipResponseMessage(const uint8_t* data, size_t len, OwnershipResponseMessage& out) {
+    constexpr size_t kExpectedLen = sizeof(uint32_t) + 1 + sizeof(uint32_t) + 1;
+    if (len < kExpectedLen) {
+        return false;
+    }
+    uint32_t magic = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+    if (magic != kOwnershipResponseMagic) {
+        return false;
+    }
+    const uint8_t category_byte = data[sizeof(magic)];
+    if (category_byte >= kDatarefCategoryCount) {
+        return false;
+    }
+    out.category = static_cast<DatarefCategory>(category_byte);
+    uint32_t nonce = 0;
+    std::memcpy(&nonce, data + sizeof(magic) + 1, sizeof(nonce));
+    out.nonce = nonce;
+    out.grant = data[sizeof(magic) + 1 + sizeof(nonce)] != 0;
     return true;
 }
 

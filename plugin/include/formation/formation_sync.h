@@ -3,6 +3,8 @@
 #include "flytogether/aircraft_state.h"
 #include "flytogether/udp_socket.h"
 #include "formation/peer_list.h"
+#include "net/link_quality.h"
+#include "net/session_crypto.h"
 #include "sync/remote_aircraft.h"
 
 #include <cstdint>
@@ -55,10 +57,34 @@ public:
     size_t peer_count() const { return peers_.size(); }
     size_t tracked_aircraft_count() const { return remote_aircraft_.size(); }
 
+    using LinkQualityVisitor = std::function<void(uint32_t sender_id, double loss_ratio)>;
+    // Visits every currently-tracked sender's LinkQualityTracker that
+    // already has a measurement (see LinkQualityTracker::HasData()) - fed
+    // from the exact same IngestPacket() call site as remote_aircraft_, so
+    // it always covers the same set of senders. Used by plugin_main.cpp to
+    // build the LINK_QUALITY status line.
+    void ForEachLinkQuality(const LinkQualityVisitor& visitor) const;
+
+    // Encrypts every direct-UDP send and decrypts every direct-UDP
+    // receive with `crypto` from here on - see net/session_crypto.h and
+    // docs/plan.md's Session-Auth/Verschlüsselung (Phase 4). `crypto` must
+    // outlive this object (plugin_main.cpp owns it for the session's
+    // lifetime); pass nullptr to go back to plaintext (only meaningful
+    // before a session exists - there's no "downgrade mid-session" path).
+    // The RELAY path (formation traffic through the rendezvous server) is
+    // NOT handled here: unlike SharedCockpitSync/DatarefSync, Formation's
+    // relay send/receive is driven directly by plugin_main.cpp rather
+    // than through a SetRelaySender callback owned by this class, so
+    // plugin_main.cpp seals/opens that path itself, reusing the exact
+    // same SessionCrypto instance it hands to this method.
+    void SetCrypto(const SessionCrypto* crypto) { crypto_ = crypto; }
+
 private:
     UdpSocket socket_;
     std::vector<Peer> peers_;
     std::unordered_map<uint32_t, RemoteAircraft> remote_aircraft_;
+    std::unordered_map<uint32_t, LinkQualityTracker> link_quality_;
+    const SessionCrypto* crypto_ = nullptr;
 };
 
 } // namespace flytogether

@@ -66,10 +66,26 @@ endif()
 set(XPlaneSDK_DIR "${XPSDK_ROOT}" CACHE PATH "" FORCE)
 add_subdirectory("${XPMP2_ROOT}" "${CMAKE_BINARY_DIR}/XPMP2")
 
+# --- Monocypher (XChaCha20-Poly1305 AEAD + BLAKE2b, for net/session_crypto) --
+# Public-domain/CC0 (dual BSD-2-Clause), https://github.com/LoupVaillant/Monocypher.
+# Vendored (2 files: monocypher.c/.h) rather than fetched at configure time -
+# same reasoning as XPMP2 being a full checkout instead: a security-relevant
+# dependency's exact, reviewed source should be committed, not re-downloaded
+# on every fresh clone.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher/monocypher.h")
+    message(FATAL_ERROR
+        "Monocypher not found at third_party/monocypher.\n"
+        "This should be committed to the repo - if it's missing, your checkout is incomplete.")
+endif()
+
 # --- Target ------------------------------------------------------------------
 add_library(XPMultiCrew SHARED
     src/core/plugin_main.cpp
     src/sync/remote_aircraft.cpp
+    src/net/link_quality.cpp
+    src/net/secure_random.cpp
+    src/net/session_crypto.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher/monocypher.c"
     src/formation/peer_list.cpp
     src/formation/formation_sync.cpp
     src/formation/csl_aircraft.cpp
@@ -80,6 +96,8 @@ add_library(XPMultiCrew SHARED
     src/shared_cockpit/shared_cockpit_config.cpp
     src/shared_cockpit/dataref_sync_protocol.cpp
     src/shared_cockpit/dataref_sync.cpp
+    src/shared_cockpit/ownership_tracker.cpp
+    src/shared_cockpit/weather_sync.cpp
     src/control/control_listener.cpp
 )
 
@@ -87,7 +105,13 @@ target_include_directories(XPMultiCrew PRIVATE
     "${XPSDK_ROOT}/CHeaders/XPLM"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../netcore/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/monocypher"
 )
+
+if(WIN32)
+    # net/secure_random.cpp's Windows path (BCryptGenRandom).
+    target_link_libraries(XPMultiCrew PRIVATE bcrypt)
+endif()
 
 # XPLM API revision and IBM/APL/LIN platform macros come from XPMP2's PUBLIC
 # compile definitions (see third_party/XPMP2/CMakeLists.txt) via the
@@ -138,6 +162,18 @@ target_compile_options(XPMultiCrew PRIVATE
 )
 
 target_compile_definitions(XPMultiCrew PRIVATE XPMULTICREW_VERSION="${XPMULTICREW_VERSION}")
+
+# Needed for XPLMWeather.h's XPLMGetWeatherAtLocation/XPLMSetWeatherAtLocation
+# (Shared Cockpit weather sync, shared_cockpit/weather_sync.h) - requires
+# X-Plane 12.1+. XPMP2's own CMakeLists (third_party/XPMP2) already defines
+# XPLM200/210/300/301/303/400 as PUBLIC, which propagate here via linking
+# against it; XPLM420 isn't in that list, so it's set explicitly for just
+# this target rather than patching the vendored XPMP2 build. This raises
+# the plugin's minimum X-Plane version to 12.1 - not just for weather sync,
+# since it's one binary - confirmed to still load correctly against a real
+# X-Plane 12 install before this shipped (see the version bump this
+# accompanies).
+target_compile_definitions(XPMultiCrew PRIVATE XPLM420=1)
 
 # Place the built .xpl in a layout matching X-Plane's plugin directory
 # (<X-Plane>/Resources/plugins/XPMultiCrew/<lin|mac|win>.xpl) for easy testing.

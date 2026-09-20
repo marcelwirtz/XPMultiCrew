@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"net"
 	"testing"
 	"time"
@@ -360,6 +361,80 @@ func TestJoinSessionIsRateLimitedPerSourceIP(t *testing.T) {
 	}
 	if !otherJoined {
 		t.Fatalf("a different source IP should not be affected by another IP's throttling, got %+v", otherMsgs)
+	}
+}
+
+func TestCreateSessionReturnsANonEmptySalt(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(1)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession, ClientVersion: ProtocolVersion})
+
+	msg := sender.messagesTo(a)[0]
+	if msg.Salt == "" {
+		t.Fatal("expected a non-empty salt on session_created")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(msg.Salt)
+	if err != nil || len(decoded) != sessionSaltSize {
+		t.Fatalf("salt should be %d base64-decoded bytes, got %q (err=%v)", sessionSaltSize, msg.Salt, err)
+	}
+}
+
+func TestJoinerGetsTheSameSaltAsTheCreator(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a, b := addrFor(1), addrFor(2)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession, ClientVersion: ProtocolVersion})
+	created := sender.messagesTo(a)[0]
+
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: created.Code, ClientVersion: ProtocolVersion})
+	bMsgs := sender.messagesTo(b)
+	var joined ServerMessage
+	for _, m := range bMsgs {
+		if m.Type == MsgSessionCreated {
+			joined = m
+		}
+	}
+	if joined.Salt == "" {
+		t.Fatal("expected a non-empty salt on the joiner's session_created too")
+	}
+	if joined.Salt != created.Salt {
+		t.Fatalf("joiner's salt (%q) should match the creator's (%q) - both derive the same key from it",
+			joined.Salt, created.Salt)
+	}
+}
+
+func TestJoinWithMismatchedClientVersionIsRejected(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a, b := addrFor(1), addrFor(2)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession, ClientVersion: ProtocolVersion})
+	code := sender.messagesTo(a)[0].Code
+
+	sender.sent = nil
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: code, ClientVersion: ProtocolVersion + 1})
+
+	bMsgs := sender.messagesTo(b)
+	if len(bMsgs) != 1 || bMsgs[0].Type != MsgError {
+		t.Fatalf("expected a single rejection error for a version mismatch, got %+v", bMsgs)
+	}
+
+	// The mismatched joiner must not actually end up in the session.
+	server.mu.Lock()
+	_, joined := server.sessions[code].Members[2]
+	server.mu.Unlock()
+	if joined {
+		t.Fatal("a version-mismatched joiner must not be added to the session")
+	}
+
+	// The existing member must not have been told about a joiner that was
+	// actually rejected.
+	aMsgs := sender.messagesTo(a)
+	if len(aMsgs) != 0 {
+		t.Fatalf("creator should not be notified of a rejected join attempt, got %+v", aMsgs)
 	}
 }
 

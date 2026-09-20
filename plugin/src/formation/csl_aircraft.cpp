@@ -13,6 +13,15 @@ XPMPPlaneID ToModeS(uint32_t senderId) {
 RemoteAircraftXPMP::RemoteAircraftXPMP(const std::string& icaoType, uint32_t senderId)
     : XPMP2::Aircraft(icaoType.empty() ? "GENR" : icaoType, "", "", ToModeS(senderId))
 {
+    // Without this, a peer's aircraft has zero protection against
+    // appearing to sink into or float above terrain/scenery when the two
+    // sides' local elevation data disagrees (different scenery packs,
+    // network-position jitter, etc.) - XPMP2's own ClampToGround() probes
+    // X-Plane's actual rendered scenery collision mesh via
+    // XPLMProbeTerrainXYZ, so unlike a flat terrain-heightmap read it
+    // already accounts for objects like helipads/ship decks. It's just
+    // off by default (XPMP2::Aircraft::bClampToGround).
+    bClampToGround = true;
 }
 
 void RemoteAircraftXPMP::SetPose(const AircraftPose& pose) {

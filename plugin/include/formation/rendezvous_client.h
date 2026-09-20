@@ -21,7 +21,14 @@ namespace flytogether {
 // sequence-number dedup to make the redundancy harmless.
 class RendezvousClient {
 public:
-    using SessionReadyFn = std::function<void(const std::string& code, int yourId)>;
+    // `salt` is the raw (already base64-decoded) per-session value the
+    // server minted - see server/session.go's Session.Salt and
+    // net/session_crypto.h. Always exactly SessionCrypto::kSaltSize bytes
+    // for a server running this protocol version; a caller talking to a
+    // future, larger-salt server should treat any other size as unusable
+    // rather than truncating/padding it into looking valid.
+    using SessionReadyFn =
+        std::function<void(const std::string& code, int yourId, const std::vector<uint8_t>& salt)>;
     using PeerJoinedFn = std::function<void(int peerId, const std::string& host, uint16_t port)>;
     using PeerLeftFn = std::function<void(int peerId)>;
     using RelayReceivedFn = std::function<void(int fromPeerId, const std::vector<uint8_t>& bytes)>;
@@ -73,6 +80,20 @@ public:
 
     bool InSession() const { return in_session_; }
 
+    // Round-trip time to the rendezvous server, measured from the last
+    // keepalive we sent to the "keepalive_ack" the server sends back for
+    // it (see PollIncoming's comment on why that ack exists at all) - the
+    // cheapest possible RTT probe, since it reuses a message already sent
+    // every ~10s rather than adding a dedicated ping. An approximation,
+    // not an exact per-message round trip: if unrelated server traffic
+    // (peer_joined, relay, ...) arrives between sending a keepalive and
+    // its ack, this doesn't try to disambiguate which received message
+    // was "the" ack - fine for a once-per-10s health indicator, not
+    // precise enough for anything time-critical. HasRtt() is false until
+    // at least one full keepalive/ack round trip has completed.
+    bool HasRtt() const { return has_rtt_; }
+    std::chrono::milliseconds Rtt() const { return last_rtt_; }
+
     SessionReadyFn on_session_ready;
     PeerJoinedFn on_peer_joined;
     PeerLeftFn on_peer_left;
@@ -91,6 +112,8 @@ private:
     bool in_session_ = false;
     std::chrono::steady_clock::time_point last_keepalive_sent_{};
     std::chrono::steady_clock::time_point last_received_{};
+    bool has_rtt_ = false;
+    std::chrono::milliseconds last_rtt_{0};
 
     // Comfortably more than 3 missed 10s keepalive/ack round-trips, to
     // absorb jitter/packet loss without false-triggering, but well under

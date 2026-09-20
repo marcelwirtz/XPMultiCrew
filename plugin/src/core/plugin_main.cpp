@@ -43,17 +43,23 @@
 #include "formation/peer_list.h"
 #include "formation/rendezvous_client.h"
 #include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
+#include "net/session_crypto.h"
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
 #include "shared_cockpit/shared_cockpit_config.h"
 #include "shared_cockpit/shared_cockpit_sync.h"
+#include "shared_cockpit/weather_sync.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -150,7 +156,25 @@ bool g_rendezvous_active = false;
 std::string g_formation_session_code;
 int g_formation_own_peer_id = 0;
 
-constexpr std::chrono::seconds kReconnectRetryInterval{5};
+// The Formation session's encryption key, derived once from the session
+// code + server-minted salt as soon as on_session_ready fires (both a
+// fresh Create/Join and a reconnect rejoining the same session code/salt -
+// see net/session_crypto.h's class comment for what the salt does and
+// doesn't buy). Empty until then; std::optional rather than a nullable
+// pointer to something heap-allocated, since a copy/move is cheap and
+// this only ever needs one live instance at a time. Wired into
+// g_formation_sync via SetCrypto() and used directly for Formation's
+// relay path (see g_rendezvous_client.on_relay_received/
+// SendFormationStateCallback below) - see FormationSync::SetCrypto's
+// comment for why relay isn't handled inside that class itself.
+std::optional<flytogether::SessionCrypto> g_formation_crypto;
+
+constexpr std::chrono::seconds kReconnectMinRetryInterval{5};
+// Caps the backoff below - a co-pilot mid-flight shouldn't have to wait
+// much longer than this between attempts even during a prolonged outage,
+// but also shouldn't have this plugin hammering the rendezvous server
+// every 5s for the whole duration of, say, a 20-minute server restart.
+constexpr std::chrono::seconds kReconnectMaxRetryInterval{60};
 
 // Wall-clock auto-reconnect gate, shared by Formation's and Shared
 // Cockpit's independent rendezvous sessions (each gets its own instance -
@@ -165,26 +189,40 @@ constexpr std::chrono::seconds kReconnectRetryInterval{5};
 struct ReconnectGate {
     bool wanted = false;
     std::chrono::steady_clock::time_point last_attempt{};
+    // Doubles after every consecutive failed attempt (Due() firing again
+    // without an intervening Reset()), capped at
+    // kReconnectMaxRetryInterval - a short outage still gets a prompt
+    // first retry at kReconnectMinRetryInterval, while a long one backs
+    // off instead of retrying at a fixed 5s cadence indefinitely.
+    std::chrono::seconds current_interval = kReconnectMinRetryInterval;
 
-    // Resets the retry clock so the next Due() call waits a full
-    // kReconnectRetryInterval - called whenever a fresh attempt is made
-    // explicitly (Create/Join), so it doesn't fire a redundant duplicate
-    // attempt moments later while still waiting on that first one's reply.
-    void Reset() { last_attempt = std::chrono::steady_clock::now(); }
+    // Resets the retry clock AND the backoff interval back down to
+    // kReconnectMinRetryInterval - called whenever a fresh attempt is made
+    // explicitly (Create/Join) or a session becomes ready again, so a
+    // *future* disconnect starts backing off from the short interval
+    // again instead of carrying over a long one from a previous, unrelated
+    // outage.
+    void Reset() {
+        last_attempt = std::chrono::steady_clock::now();
+        current_interval = kReconnectMinRetryInterval;
+    }
 
     // True if a retry is due right now, in which case the retry clock is
-    // also reset as a side effect (same as Reset()) so the caller's own
-    // retry counts as this interval's attempt. False if not wanted,
-    // already in session, or simply not time yet.
+    // reset (same as Reset(), but WITHOUT resetting current_interval -
+    // this is what makes the backoff persist across consecutive misses)
+    // and the interval is doubled for the next call, as a side effect, so
+    // the caller's own retry counts as this interval's attempt. False if
+    // not wanted, already in session, or simply not time yet.
     bool Due(bool in_session) {
         if (!wanted || in_session) {
             return false;
         }
         const auto now = std::chrono::steady_clock::now();
-        if (now - last_attempt < kReconnectRetryInterval) {
+        if (now - last_attempt < current_interval) {
             return false;
         }
         last_attempt = now;
+        current_interval = std::min(current_interval * 2, kReconnectMaxRetryInterval);
         return true;
     }
 };
@@ -226,7 +264,32 @@ void SetupRendezvousCallbacksOnce() {
     }
     done = true;
 
-    g_rendezvous_client.on_session_ready = [](const std::string& code, int your_id) {
+    g_rendezvous_client.on_session_ready = [](const std::string& code, int your_id,
+                                               const std::vector<uint8_t>& salt) {
+        // Derive (or re-derive, on a reconnect - see net/session_crypto.h)
+        // this session's encryption key before anything else below, since
+        // Formation traffic must never go out unencrypted once a session
+        // exists - see docs/plan.md's Session-Auth/Verschlüsselung. A
+        // wrong-sized salt means the server isn't speaking this protocol
+        // version correctly despite the client_version check having
+        // already passed (a server bug, not something a retry fixes) -
+        // fail loudly and don't proceed, rather than silently falling
+        // back to plaintext.
+        if (salt.size() != flytogether::SessionCrypto::kSaltSize) {
+            char err_buf[160];
+            std::snprintf(err_buf, sizeof(err_buf),
+                          "XPMultiCrew: rendezvous server sent a malformed session salt (%zu "
+                          "bytes, expected %zu) - refusing to proceed insecurely\n",
+                          salt.size(), flytogether::SessionCrypto::kSaltSize);
+            XPLMDebugString(err_buf);
+            g_control_listener.SetFormationStatus("error: server sent an invalid session salt");
+            return;
+        }
+        std::array<uint8_t, flytogether::SessionCrypto::kSaltSize> salt_array{};
+        std::copy(salt.begin(), salt.end(), salt_array.begin());
+        g_formation_crypto.emplace(code, salt_array);
+        g_formation_sync.SetCrypto(&*g_formation_crypto);
+
         char buf[256];
         std::snprintf(buf, sizeof(buf),
                       "XPMultiCrew: rendezvous session ready - code '%s', you are peer "
@@ -234,6 +297,14 @@ void SetupRendezvousCallbacksOnce() {
                       code.c_str(), your_id);
         XPLMDebugString(buf);
 
+        // A successful (re)connect - whether this is the very first one or
+        // an auto-reconnect after an outage - means the link is healthy
+        // again, so any backoff MaybeReconnectFormation() built up during
+        // that outage no longer applies to whatever happens next. Without
+        // this, a short second outage shortly after a long first one would
+        // start retrying at the first outage's stretched-out interval
+        // instead of ReconnectGate's normal quick first retry.
+        g_formation_reconnect.Reset();
         g_formation_session_code = code;
         g_formation_own_peer_id = your_id;
         // Remember the server-assigned code so a future reconnect (see
@@ -269,11 +340,28 @@ void SetupRendezvousCallbacksOnce() {
     };
     g_rendezvous_client.on_relay_received = [](int /*from_peer_id*/,
                                                  const std::vector<uint8_t>& bytes) {
-        if (bytes.size() != sizeof(flytogether::AircraftStatePacket)) {
+        // Decrypted first (see FormationSync::SetCrypto's comment for why
+        // Formation's relay path is handled here rather than inside that
+        // class) - dropped silently on failure, same as a malformed/
+        // wrong-magic direct-UDP packet. Not yet in a session at all
+        // (crypto unset) is itself impossible here: on_relay_received can
+        // only ever fire after on_session_ready already set it.
+        if (!g_formation_crypto) {
+            return;
+        }
+        const auto opened = g_formation_crypto->Open(bytes);
+        if (!opened) {
+            return;
+        }
+        // `<` against the frozen size floor, not exact-match, and copy
+        // only min(opened->size(), sizeof(packet)) - same forward-
+        // compatibility reasoning as FormationSync::PollIncoming's direct-
+        // UDP receive.
+        if (opened->size() < flytogether::kAircraftStateMinSize) {
             return;
         }
         flytogether::AircraftStatePacket packet;
-        std::memcpy(&packet, bytes.data(), sizeof(packet));
+        std::memcpy(&packet, opened->data(), std::min(opened->size(), sizeof(packet)));
         g_formation_sync.IngestPacket(packet, XPLMGetElapsedTime());
     };
     g_rendezvous_client.on_error = [](const std::string& message) {
@@ -314,10 +402,11 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
     g_formation_reconnect_port = port;
     g_formation_reconnect_create = create;
     g_formation_reconnect_code = code;
-    // Resets the retry clock so UpdateFormationCallback's scheduler waits
-    // a full kReconnectRetryInterval before its first attempt, instead of
-    // potentially firing a redundant duplicate CreateSession/JoinSession
-    // moments after this one while still waiting on session_ready.
+    // Resets the retry clock and backoff so UpdateFormationCallback's
+    // scheduler waits a full kReconnectMinRetryInterval before its first
+    // attempt, instead of potentially firing a redundant duplicate
+    // CreateSession/JoinSession moments after this one while still waiting
+    // on session_ready.
     g_formation_reconnect.Reset();
 
     if (g_rendezvous_active) {
@@ -363,6 +452,16 @@ void DisconnectFormation() {
     g_rendezvous_active = false;
     g_formation_session_code.clear();
     g_formation_own_peer_id = 0;
+    // Clear FormationSync's pointer BEFORE destroying what it points to -
+    // g_formation_crypto.reset() below would otherwise leave it dangling
+    // until the next session's on_session_ready overwrites it (harmless
+    // in practice, since peers_ is also empty by now so SendOwnState's
+    // loop body never runs, but Seal() is still called unconditionally
+    // ahead of that loop - see FormationSync::SendOwnState - so a stray
+    // send between here and a future SetCrypto() call would be a real
+    // use-after-free, not just a logic bug).
+    g_formation_sync.SetCrypto(nullptr);
+    g_formation_crypto.reset();
     g_control_listener.SetFormationCode("");
     g_control_listener.SetFormationPeers("");
     g_control_listener.SetFormationStatus("not connected");
@@ -371,9 +470,12 @@ void DisconnectFormation() {
 // Reconnect scheduler for both rendezvous sessions - if the user wants to
 // be connected (g_formation_reconnect.wanted/g_shared_cockpit_reconnect.wanted)
 // but currently isn't (RendezvousClient::InSession() false, e.g. right
-// after on_disconnected fired), retry roughly every kReconnectRetryInterval
-// using a wall-clock timer for the same reason MaybeSendKeepalive() does -
-// so a long sim pause/loading screen doesn't desync the retry cadence.
+// after on_disconnected fired), retry using a wall-clock timer for the
+// same reason MaybeSendKeepalive() does (so a long sim pause/loading
+// screen doesn't desync the retry cadence), starting at
+// kReconnectMinRetryInterval and backing off toward
+// kReconnectMaxRetryInterval the longer the outage lasts - see
+// ReconnectGate's comment.
 // Called from both UpdateFormationCallback and
 // PollSharedCockpitRendezvousCallback, which already run every frame
 // unconditionally.
@@ -521,8 +623,16 @@ float SendFormationStateCallback(float /*elapsedSinceLastCall*/,
         // failure per peer (docs/plan.md section 7): RemoteAircraft's
         // sequence-number dedup (sync/remote_aircraft.cpp) already makes
         // receiving the same state twice harmless, and the bandwidth cost
-        // at this packet size/rate is negligible.
-        g_rendezvous_client.SendRelay(&packet, sizeof(packet));
+        // at this packet size/rate is negligible. Sealed with the same
+        // key as the direct sends above (FormationSync::SendOwnState) -
+        // see FormationSync::SetCrypto's comment for why the relay path
+        // is encrypted here rather than inside that class. No-op (nothing
+        // to relay) if we're not actually in a session yet.
+        if (g_formation_crypto) {
+            const auto envelope =
+                g_formation_crypto->Seal(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
+            g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
+        }
     }
 
     // 20 Hz, the upper end of the plan's recommended 10-20 Hz position rate.
@@ -640,9 +750,55 @@ XPLMDataRef g_local_vz_ref = nullptr;
 
 flytogether::SharedCockpitSync g_shared_cockpit;
 flytogether::DatarefSync g_dataref_sync;
+flytogether::WeatherSync g_weather_sync;
 uint32_t g_shared_cockpit_sequence = 0;
 bool g_physics_override_active = false;
 bool g_shared_cockpit_active = false;
+
+// Last ownership state actually pushed to the companion app via
+// SetSharedCockpitOwnership, so PushSharedCockpitOwnershipIfChanged() (see
+// below) only sends an update when something actually changed - keeps the
+// common "nothing changed this tick" case a cheap no-op instead of an
+// unconditional UDP send every 100ms from PollDatarefSyncCallback.
+std::array<flytogether::ControlListener::OwnershipUiState, flytogether::kDatarefCategoryCount>
+    g_last_pushed_ownership{};
+bool g_has_pushed_ownership = false;
+
+// Last SHARED_COCKPIT_AIRCRAFT_MISMATCH value actually pushed, same
+// change-detection reasoning as g_last_pushed_ownership above - see
+// PushAircraftMismatchIfChanged() in UpdateSharedCockpitCallback.
+std::string g_last_pushed_aircraft_mismatch;
+
+// Called right after a local RequestOwnership()/RespondOwnership() (so the
+// companion app's buttons/prompt reflect the change immediately) and every
+// PollDatarefSyncCallback tick (so it also reflects the peer requesting/
+// granting/denying a category over the network, or a locally-pending
+// request quietly timing out - neither has any other local trigger point).
+// `now_s` should be XPLMGetElapsedTime() - needed to read
+// IsOwnershipRequestPending/HasIncomingOwnershipRequest's live-vs-expired
+// state (see ownership_tracker.h).
+void PushSharedCockpitOwnershipIfChanged(double now_s) {
+    using flytogether::ControlListener;
+    std::array<ControlListener::OwnershipUiState, flytogether::kDatarefCategoryCount> current{};
+    for (int i = 0; i < flytogether::kDatarefCategoryCount; ++i) {
+        const auto category = static_cast<flytogether::DatarefCategory>(i);
+        if (g_dataref_sync.Owns(category)) {
+            current[i] = g_dataref_sync.HasIncomingOwnershipRequest(category, now_s)
+                             ? ControlListener::OwnershipUiState::kRequested
+                             : ControlListener::OwnershipUiState::kMe;
+        } else {
+            current[i] = g_dataref_sync.IsOwnershipRequestPending(category, now_s)
+                             ? ControlListener::OwnershipUiState::kPending
+                             : ControlListener::OwnershipUiState::kPeer;
+        }
+    }
+    if (g_has_pushed_ownership && current == g_last_pushed_ownership) {
+        return;
+    }
+    g_last_pushed_ownership = current;
+    g_has_pushed_ownership = true;
+    g_control_listener.SetSharedCockpitOwnership(current);
+}
 
 // Shared Cockpit's own rendezvous session, separate from Formation's
 // g_rendezvous_client above (see control_listener.h's updated protocol
@@ -655,6 +811,12 @@ bool g_shared_cockpit_active = false;
 flytogether::RendezvousClient g_shared_cockpit_rendezvous;
 bool g_shared_cockpit_rendezvous_active = false;
 
+// Shared Cockpit's own encryption key - same idea as g_formation_crypto
+// above, separate session/key. Wired into g_shared_cockpit and
+// g_dataref_sync via SetCrypto() once derived (see
+// SetupSharedCockpitRendezvousCallbacksOnce's on_session_ready below).
+std::optional<flytogether::SessionCrypto> g_shared_cockpit_crypto;
+
 // Auto-reconnect, mirroring g_formation_reconnect's comment above - same
 // idea, separate session.
 ReconnectGate g_shared_cockpit_reconnect;
@@ -663,7 +825,7 @@ uint16_t g_shared_cockpit_reconnect_port = 0;
 flytogether::SharedCockpitRole g_shared_cockpit_reconnect_role = flytogether::SharedCockpitRole::kNone;
 std::string g_shared_cockpit_reconnect_code; // updated on_session_ready, same reasoning as Formation's
 flytogether::SharedCockpitRole g_pending_shared_cockpit_role = flytogether::SharedCockpitRole::kNone;
-std::vector<std::string> g_pending_shared_cockpit_datarefs;
+std::vector<flytogether::DatarefSyncSpec> g_pending_shared_cockpit_datarefs;
 
 // Client only: take over the user's own aircraft physics
 // (sim/operation/override/override_planepath[0]) so it can be positioned
@@ -776,6 +938,25 @@ float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
             // the client's aircraft in place indefinitely.
             ReleasePhysicsOverride();
         }
+
+        // Client-side aircraft-type mismatch check: the master's ICAO
+        // comes along for free on every AircraftStatePacket it already
+        // sends (see BuildOwnAircraftStatePacket), so this is pure
+        // comparison, no extra wire traffic. Only the client detects this
+        // direction today - the master can't yet, since a client
+        // deliberately never sends anything on its own direct socket (see
+        // SharedCockpitSync::IngestRelayedPacket's comment on why, to
+        // avoid opening an unwanted NAT hole) and there's no relay-path
+        // announcement wired up for it yet.
+        const std::string master_icao = g_shared_cockpit.MasterIcaoType();
+        std::string mismatch;
+        if (!master_icao.empty() && g_icao_type[0] != '\0' && master_icao != g_icao_type) {
+            mismatch = std::string(g_icao_type) + ":" + master_icao;
+        }
+        if (mismatch != g_last_pushed_aircraft_mismatch) {
+            g_last_pushed_aircraft_mismatch = mismatch;
+            g_control_listener.SetSharedCockpitAircraftMismatch(mismatch);
+        }
     }
 
     return -1.0f; // every frame, same reasoning as UpdateFormationCallback
@@ -785,8 +966,33 @@ float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
                                float /*elapsedTimeSinceLastFlightLoop*/,
                                int /*counter*/,
                                void* /*refcon*/) {
-    g_dataref_sync.Poll();
+    const double now = XPLMGetElapsedTime();
+    g_dataref_sync.Poll(now);
+    // Catches the peer requesting/granting/denying a category over the
+    // network, which (unlike a local RequestOwnership()/RespondOwnership()
+    // call) has no other point in this plugin that would notice and push
+    // an update - see the function's comment. Also needed to notice a
+    // locally-pending request timing out (see ownership_tracker.h), which
+    // isn't triggered by any network event at all.
+    PushSharedCockpitOwnershipIfChanged(now);
     return 1.0f / 10.0f; // 10 Hz - switches don't need Formation's 20 Hz
+}
+
+// WeatherSync self-throttles its actual XPLMWeather.h calls internally
+// (kWeatherApplyIntervalS, weather_sync.cpp) - this only needs to run
+// often enough to drain the socket and let that internal timer fire
+// promptly, nowhere near DatarefSync's 10 Hz.
+float PollWeatherSyncCallback(float /*elapsedSinceLastCall*/,
+                               float /*elapsedTimeSinceLastFlightLoop*/,
+                               int /*counter*/,
+                               void* /*refcon*/) {
+    const double now = XPLMGetElapsedTime();
+    const double latitude = g_latitude_ref ? XPLMGetDatad(g_latitude_ref) : 0.0;
+    const double longitude = g_longitude_ref ? XPLMGetDatad(g_longitude_ref) : 0.0;
+    const double elevation_m = g_elevation_ref ? XPLMGetDatad(g_elevation_ref) : 0.0;
+    g_weather_sync.MaybeBroadcast(latitude, longitude, elevation_m, now); // no-op unless MASTER
+    g_weather_sync.PollIncoming(latitude, longitude, elevation_m, now);   // no-op unless CLIENT
+    return 1.0f; // 1 Hz - plenty to service a 30s internal interval
 }
 
 // Tears down the direct-UDP sync engines (SharedCockpitSync/DatarefSync)
@@ -803,19 +1009,41 @@ void StopSharedCockpit() {
     XPLMUnregisterFlightLoopCallback(SendSharedCockpitStateCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(UpdateSharedCockpitCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(PollDatarefSyncCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(PollWeatherSyncCallback, nullptr);
     ReleasePhysicsOverride();
     g_shared_cockpit.Stop();
     g_dataref_sync.Stop();
+    g_weather_sync.Stop();
     g_shared_cockpit_active = false;
+
+    // A stopped session has no master to compare against - clear any
+    // mismatch warning left over from it rather than leaving a stale one
+    // showing in the companion app through a fresh, unrelated session.
+    if (!g_last_pushed_aircraft_mismatch.empty()) {
+        g_last_pushed_aircraft_mismatch.clear();
+        g_control_listener.SetSharedCockpitAircraftMismatch("");
+    }
 }
 
-// Callable from either XPMultiCrew_shared_cockpit.txt's auto-start
-// (XPluginEnable, with a manually-configured peer list - still supported
-// for LAN/scripted setups) or, once Shared Cockpit's dedicated rendezvous
-// session has discovered the other side's address, from
-// SetupSharedCockpitRendezvousCallbacksOnce()'s on_peer_joined below.
+// Callable once Shared Cockpit's dedicated rendezvous session has
+// discovered the other side's address, from
+// SetupSharedCockpitRendezvousCallbacksOnce()'s on_peer_joined below (the
+// only caller - the companion app is the only way into Shared Cockpit now,
+// see this file's ROLE/PEER auto-start removal).
 void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<flytogether::Peer>& peers,
-                         const std::vector<std::string>& datarefs) {
+                         const std::vector<flytogether::DatarefSyncSpec>& datarefs) {
+    // Only ever called from on_peer_joined below, which itself can only
+    // fire after on_session_ready has already derived
+    // g_shared_cockpit_crypto - this should be unreachable, but refusing
+    // to proceed insecurely if it somehow isn't is cheap insurance (see
+    // g_rendezvous_client.on_session_ready's identical reasoning for
+    // Formation).
+    if (!g_shared_cockpit_crypto) {
+        XPLMDebugString("XPMultiCrew: shared cockpit has no session key yet - refusing to start\n");
+        g_control_listener.SetSharedCockpitStatus("error: no session key (internal error)");
+        return;
+    }
+
     if (g_shared_cockpit_active) {
         // Same reasoning as StartRendezvous(): always allow a fresh
         // attempt instead of getting stuck if the first one didn't
@@ -841,6 +1069,7 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     g_shared_cockpit.SetRelaySender([](const void* data, size_t len) {
         g_shared_cockpit_rendezvous.SendRelay(data, len);
     });
+    g_shared_cockpit.SetCrypto(&*g_shared_cockpit_crypto);
 
     char buf[256];
     std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit ready as %s, %zu peer(s)\n",
@@ -860,17 +1089,39 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     // sole, deterministic source of the newly-joined CLIENT's initial
     // full state, instead of a race between both sides' cold-start dumps.
     const bool seed_from_current_values = role == flytogether::SharedCockpitRole::kClient;
-    if (g_dataref_sync.Start(datarefs, peers, seed_from_current_values)) {
+    // MASTER starts owning every category by default (Shared Cockpit's
+    // existing "master is authoritative unless told otherwise" posture);
+    // CLIENT starts owning none until it claims one via the companion
+    // app - see DatarefSync::Start's comment and ownership_tracker.h.
+    const bool starts_owning_all_categories = role == flytogether::SharedCockpitRole::kMaster;
+    if (g_dataref_sync.Start(datarefs, peers, seed_from_current_values, starts_owning_all_categories)) {
         g_dataref_sync.SetRelaySender([](const void* data, size_t len) {
             g_shared_cockpit_rendezvous.SendRelay(data, len);
         });
+        g_dataref_sync.SetCrypto(&*g_shared_cockpit_crypto);
         char dr_buf[160];
         std::snprintf(dr_buf, sizeof(dr_buf), "XPMultiCrew: dataref sync watching %zu dataref(s)\n",
                       g_dataref_sync.watched_count());
         XPLMDebugString(dr_buf);
         XPLMRegisterFlightLoopCallback(PollDatarefSyncCallback, 1.0f / 10.0f, nullptr);
+        // Push the fresh session's starting ownership immediately, rather
+        // than waiting up to 100ms for the first PollDatarefSyncCallback
+        // tick - g_has_pushed_ownership is reset so this doesn't get
+        // skipped as "unchanged from last session" if the previous role
+        // happened to end in the same state.
+        g_has_pushed_ownership = false;
+        PushSharedCockpitOwnershipIfChanged(XPLMGetElapsedTime());
     } else {
         XPLMDebugString("XPMultiCrew: failed to start dataref sync (UDP port busy?)\n");
+    }
+
+    if (g_weather_sync.Start(role, peers)) {
+        g_weather_sync.SetRelaySender([](const void* data, size_t len) {
+            g_shared_cockpit_rendezvous.SendRelay(data, len);
+        });
+        XPLMRegisterFlightLoopCallback(PollWeatherSyncCallback, 1.0f, nullptr);
+    } else {
+        XPLMDebugString("XPMultiCrew: failed to start weather sync (UDP port busy?)\n");
     }
 }
 
@@ -887,7 +1138,33 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
     }
     done = true;
 
-    g_shared_cockpit_rendezvous.on_session_ready = [](const std::string& code, int /*your_id*/) {
+    g_shared_cockpit_rendezvous.on_session_ready = [](const std::string& code, int /*your_id*/,
+                                                        const std::vector<uint8_t>& salt) {
+        // See Formation's on_session_ready for the full reasoning - same
+        // salt-size fail-closed check, same derive-and-wire-up pattern,
+        // just for Shared Cockpit's own separate session/key.
+        if (salt.size() != flytogether::SessionCrypto::kSaltSize) {
+            char err_buf[160];
+            std::snprintf(err_buf, sizeof(err_buf),
+                          "XPMultiCrew: shared cockpit rendezvous server sent a malformed session "
+                          "salt (%zu bytes, expected %zu) - refusing to proceed insecurely\n",
+                          salt.size(), flytogether::SessionCrypto::kSaltSize);
+            XPLMDebugString(err_buf);
+            g_control_listener.SetSharedCockpitStatus("error: server sent an invalid session salt");
+            return;
+        }
+        std::array<uint8_t, flytogether::SessionCrypto::kSaltSize> salt_array{};
+        std::copy(salt.begin(), salt.end(), salt_array.begin());
+        // Re-derives the SAME key on a reconnect (unchanged code/salt for
+        // the same session) - harmless to just overwrite; the sync
+        // engines' SetCrypto pointers (set in StartSharedCockpit) still
+        // point at this same std::optional's storage either way, not at
+        // a moved-from/reallocated one.
+        g_shared_cockpit_crypto.emplace(code, salt_array);
+
+        // See Formation's on_session_ready for why a successful (re)connect
+        // resets the backoff, not just the retry clock.
+        g_shared_cockpit_reconnect.Reset();
         if (g_pending_shared_cockpit_role == flytogether::SharedCockpitRole::kMaster) {
             char buf[256];
             std::snprintf(buf, sizeof(buf),
@@ -922,22 +1199,72 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
     g_shared_cockpit_rendezvous.on_relay_received = [](int /*from_peer_id*/,
                                                          const std::vector<uint8_t>& bytes) {
         const double now = XPLMGetElapsedTime();
-        // Disambiguate by the leading magic value, not by size: both
-        // AircraftStatePacket and an encoded DatarefSyncMessage start with a
-        // uint32 magic, and relying on size alone (the two happen to be
-        // exactly equal for some plausible dataref-name lengths) risked
-        // routing a dataref-sync message through the position-packet path
-        // or vice versa. Each Ingest* call re-validates its own magic on
-        // top of this, so a corrupted/foreign payload is still rejected
-        // either way.
+
+        // Weather is deliberately NOT encrypted (see WeatherSync's own
+        // Start()/SendOwnState, which never had a SetCrypto wired up -
+        // low-stakes to leave out of this rollout, no position/flight-
+        // control/ownership data), but shares this same relay stream with
+        // the three message shapes that ARE. Peek the RAW (pre-decrypt)
+        // magic first and handle weather straight away if it matches - an
+        // encrypted envelope's first 4 bytes are effectively random
+        // nonce bytes, so a false-positive collision with
+        // kWeatherStateMagic here is astronomically unlikely, and even
+        // then WeatherSync's own magic re-check inside
+        // IngestRelayedPacket would still catch it.
+        uint32_t raw_magic = 0;
+        if (bytes.size() >= sizeof(raw_magic)) {
+            std::memcpy(&raw_magic, bytes.data(), sizeof(raw_magic));
+        }
+        if (raw_magic == flytogether::kWeatherStateMagic) {
+            g_weather_sync.IngestRelayedPacket(bytes.data(), bytes.size());
+            return;
+        }
+
+        // Everything else on this channel (position, dataref sync,
+        // ownership) IS encrypted - decrypted ONCE here, before the
+        // magic-based dispatch below, since that dispatch needs the
+        // PLAINTEXT magic to route correctly. This is also why
+        // SharedCockpitSync::IngestRelayedPacket/
+        // DatarefSync::IngestRelayedMessage (called below) do NOT decrypt
+        // internally: it already happened here, once, for whichever one
+        // ends up receiving these bytes - see their own comments. No
+        // session key yet (crypto unset) is itself impossible here:
+        // on_relay_received can only fire after on_session_ready already
+        // set g_shared_cockpit_crypto.
+        if (!g_shared_cockpit_crypto) {
+            return;
+        }
+        const auto opened = g_shared_cockpit_crypto->Open(bytes);
+        if (!opened) {
+            return; // wrong/no key, or corrupted/foreign packet
+        }
+        const std::vector<uint8_t>& plain = *opened;
+
+        // Disambiguate by the leading (plaintext) magic value, not by
+        // size: both AircraftStatePacket and an encoded DatarefSyncMessage
+        // start with a uint32 magic, and relying on size alone (the two
+        // happen to be exactly equal for some plausible dataref-name
+        // lengths) risked routing a dataref-sync message through the
+        // position-packet path or vice versa. Each Ingest* call
+        // re-validates its own magic on top of this, so a corrupted/
+        // foreign payload is still rejected either way.
         uint32_t magic = 0;
-        if (bytes.size() >= sizeof(magic)) {
-            std::memcpy(&magic, bytes.data(), sizeof(magic));
+        if (plain.size() >= sizeof(magic)) {
+            std::memcpy(&magic, plain.data(), sizeof(magic));
         }
         if (magic == flytogether::kAircraftStateMagic) {
-            g_shared_cockpit.IngestRelayedPacket(bytes.data(), bytes.size(), now);
-        } else if (magic == flytogether::kDatarefSyncMagic) {
-            g_dataref_sync.IngestRelayedMessage(bytes.data(), bytes.size());
+            g_shared_cockpit.IngestRelayedPacket(plain.data(), plain.size(), now);
+        } else if (magic == flytogether::kDatarefSyncMagic || magic == flytogether::kOwnershipRequestMagic ||
+                   magic == flytogether::kOwnershipResponseMagic) {
+            // All three land on the same DatarefSync UDP channel and
+            // IngestRelayedMessage already re-disambiguates between them
+            // internally (DatarefSync::ApplyIncomingBytes peeks the magic
+            // again) - the ownership magics were missing from this outer
+            // gate entirely until this was first noticed, meaning an
+            // ownership message relayed (rather than reaching the peer via
+            // direct UDP) was silently dropped here before ever reaching
+            // that internal check.
+            g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size(), now);
         }
         // Anything else (wrong magic, too short): not one of ours, ignore.
     };
@@ -968,7 +1295,7 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
 // once on_peer_joined fires above with the discovered peer address.
 void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
                                    flytogether::SharedCockpitRole role, const std::string& code,
-                                   const std::vector<std::string>& datarefs) {
+                                   const std::vector<flytogether::DatarefSyncSpec>& datarefs) {
     SetupSharedCockpitRendezvousCallbacksOnce();
 
     g_shared_cockpit_reconnect.wanted = true;
@@ -1011,6 +1338,11 @@ void DisconnectSharedCockpit() {
     StopSharedCockpit();
     g_shared_cockpit_rendezvous.Stop(); // sends leave_session if we were actually in one
     g_shared_cockpit_rendezvous_active = false;
+    // Clear the consumers' pointers BEFORE destroying what they point to -
+    // see DisconnectFormation()'s identical comment.
+    g_shared_cockpit.SetCrypto(nullptr);
+    g_dataref_sync.SetCrypto(nullptr);
+    g_shared_cockpit_crypto.reset();
     g_control_listener.SetSharedCockpitCode("");
     g_control_listener.SetSharedCockpitStatus("not started");
 }
@@ -1029,6 +1361,58 @@ void MaybeReconnectSharedCockpit() {
     } else {
         g_shared_cockpit_rendezvous.JoinSession(g_shared_cockpit_reconnect_code);
     }
+}
+
+double g_last_link_quality_push_s = -1000.0;
+
+// Builds and pushes the LINK_QUALITY status line (see control_listener.h's
+// wire-format comment) from every independent source that has one: both
+// RendezvousClients' server RTT (RendezvousClient::Rtt(), an approximation
+// - see its comment), FormationSync's per-peer packet loss, and
+// SharedCockpitSync's master-link loss. Throttled to about once a second
+// (same reasoning as UpdateFormationCallback's XPLMDebugString summary
+// line just above it) - called from PollControlListenerCallback, which
+// already runs every frame unconditionally regardless of which mode(s), if
+// any, are actually active.
+void MaybePushLinkQuality(double now) {
+    if (now - g_last_link_quality_push_s < 1.0) {
+        return;
+    }
+    g_last_link_quality_push_s = now;
+
+    std::ostringstream out;
+    out << "formation_server_rtt_ms:";
+    if (g_rendezvous_client.HasRtt()) {
+        out << g_rendezvous_client.Rtt().count();
+    } else {
+        out << "?";
+    }
+
+    out << " formation_peer_loss_pct:";
+    bool first_peer = true;
+    g_formation_sync.ForEachLinkQuality([&](uint32_t sender_id, double loss_ratio) {
+        if (!first_peer) {
+            out << ";";
+        }
+        first_peer = false;
+        out << sender_id << ":" << static_cast<int>(loss_ratio * 100.0 + 0.5);
+    });
+
+    out << " sc_server_rtt_ms:";
+    if (g_shared_cockpit_rendezvous.HasRtt()) {
+        out << g_shared_cockpit_rendezvous.Rtt().count();
+    } else {
+        out << "?";
+    }
+
+    out << " sc_master_loss_pct:";
+    if (g_shared_cockpit.HasMasterLinkQualityData()) {
+        out << static_cast<int>(g_shared_cockpit.MasterLinkLossRatio() * 100.0 + 0.5);
+    } else {
+        out << "?";
+    }
+
+    g_control_listener.SetLinkQuality(out.str());
 }
 
 float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
@@ -1050,6 +1434,7 @@ float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
         RefreshOwnIcaoType();
     }
     g_control_listener.Poll();
+    MaybePushLinkQuality(XPLMGetElapsedTime());
     return -1.0f; // every frame, so the companion app feels responsive
 }
 
@@ -1202,6 +1587,16 @@ PLUGIN_API int XPluginEnable() {
     };
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
+    control_callbacks.on_request_ownership = [](flytogether::DatarefCategory category) {
+        const double now = XPLMGetElapsedTime();
+        g_dataref_sync.RequestOwnership(category, now);
+        PushSharedCockpitOwnershipIfChanged(now);
+    };
+    control_callbacks.on_respond_ownership = [](flytogether::DatarefCategory category, bool grant) {
+        const double now = XPLMGetElapsedTime();
+        g_dataref_sync.RespondOwnership(category, grant, now);
+        PushSharedCockpitOwnershipIfChanged(now);
+    };
     if (g_control_listener.Start(control_callbacks)) {
         XPLMRegisterFlightLoopCallback(PollControlListenerCallback, -1.0f, nullptr);
         g_control_listener.SetPluginVersion(XPMULTICREW_VERSION);

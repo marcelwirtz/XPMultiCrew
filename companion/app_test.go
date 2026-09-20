@@ -91,3 +91,15 @@ func TestDisconnectSharedCockpitSendsCommand(t *testing.T) {
 		t.Fatalf("unexpected command line: %q", got)
 	}
 }
+
+func TestRequestOwnershipSendsCommand(t *testing.T) {
+	_, recv := recvLine(t)
+	app := NewApp()
+
+	if err := app.RequestOwnership("engine"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := recv(); got != "REQUEST_OWNERSHIP engine" {
+		t.Fatalf("unexpected command line: %q", got)
+	}
+}

@@ -12,10 +12,18 @@
 
 namespace flytogether {
 
+// This build's own wire-protocol version, sent as client_version on every
+// message - see server/protocol.go's ProtocolVersion comment for the hard-
+// cutover reasoning (session-auth/encryption, docs/plan.md Phase 4). Must
+// match server/protocol.go's ProtocolVersion exactly; the two are kept in
+// sync by hand like every other part of this hand-rolled protocol.
+constexpr int kRendezvousProtocolVersion = 2;
+
 // Client -> server
 struct RendezvousClientMessage {
-    std::string type;    // "create_session" | "join_session" | "relay" | "keepalive" | "leave_session"
-    std::string code;    // join_session
+    std::string type;             // "create_session" | "join_session" | "relay" | "keepalive" | "leave_session"
+    std::string code;             // join_session
+    int client_version = kRendezvousProtocolVersion;
     std::string payload; // relay, base64
 };
 
@@ -24,6 +32,7 @@ struct RendezvousServerMessage {
     std::string type; // "session_created" | "peer_joined" | "peer_left" | "relay" | "error" | "keepalive_ack"
     std::string code;
     int your_id = 0;
+    std::string salt; // session_created, base64 - see net/session_crypto.h
     int peer_id = 0;
     std::string peer_addr; // "ip:port"
     int from_peer_id = 0;

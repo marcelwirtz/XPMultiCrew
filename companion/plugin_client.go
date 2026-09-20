@@ -34,9 +34,27 @@ type PluginClient struct {
 	formationCode       string
 	sharedCockpitStatus string
 	sharedCockpitCode   string
-	formationPeers      []FormationPeer
-	simReady            bool
-	runningVersion      string
+	// sharedCockpitOwnership maps a category name ("engine"/"avionics"/
+	// "systems") to "me" or "peer" - see control_listener.h's
+	// SHARED_COCKPIT_OWNERSHIP line. Nil until the plugin has pushed one.
+	sharedCockpitOwnership map[string]string
+	formationPeers         []FormationPeer
+	linkQuality            LinkQuality
+	sharedCockpitMismatch  string // "" if none - see control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH
+	simReady               bool
+	runningVersion         string
+}
+
+// LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
+// nil when the plugin reported "?" (not yet measured, e.g. no session or no
+// keepalive round trip completed yet), and PeerLoss/MasterLoss are omitted
+// (nil map / nil pointer) the same way, rather than defaulting to a
+// misleading 0.
+type LinkQuality struct {
+	FormationServerRttMs       *int64         `json:"formationServerRttMs,omitempty"`
+	FormationPeerLossPct       map[uint32]int `json:"formationPeerLossPct,omitempty"`
+	SharedCockpitServerRttMs   *int64         `json:"sharedCockpitServerRttMs,omitempty"`
+	SharedCockpitMasterLossPct *int           `json:"sharedCockpitMasterLossPct,omitempty"`
 }
 
 func NewPluginClient() *PluginClient {
@@ -101,6 +119,21 @@ func (c *PluginClient) SimReady() bool {
 	return c.simReady
 }
 
+// SharedCockpitOwnership returns the last-pushed per-category ownership
+// ("me"/"peer" keyed by "engine"/"avionics"/"systems" - see
+// control_listener.h's SHARED_COCKPIT_OWNERSHIP line), or an empty map
+// before Shared Cockpit's dataref sync has actually started. Never nil,
+// so it marshals to JSON `{}` rather than `null`.
+func (c *PluginClient) SharedCockpitOwnership() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]string, len(c.sharedCockpitOwnership))
+	for k, v := range c.sharedCockpitOwnership {
+		out[k] = v
+	}
+	return out
+}
+
 // RunningVersion returns the version of the plugin currently loaded and
 // running in X-Plane (see control_listener.h's PLUGIN_VERSION line), or
 // "" if the plugin hasn't been seen yet (X-Plane not running, or not
@@ -112,6 +145,28 @@ func (c *PluginClient) RunningVersion() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.runningVersion
+}
+
+// LinkQuality returns the last-pushed LINK_QUALITY reading (see
+// control_listener.h's wire-format comment) - a zero-value LinkQuality
+// (every field nil/empty) before the plugin has ever pushed one.
+func (c *PluginClient) LinkQuality() LinkQuality {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Shallow copy is enough: FormationPeerLossPct is only ever replaced
+	// wholesale by applyStatusMessage below, never mutated in place.
+	return c.linkQuality
+}
+
+// SharedCockpitAircraftMismatch returns "<own icao>:<master icao>" if the
+// client detected it's flying a different aircraft type than the master
+// (see control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH), or "" if
+// there's no mismatch (including "not a client", "no session", or "not
+// measured yet" - the plugin doesn't distinguish those cases either).
+func (c *PluginClient) SharedCockpitAircraftMismatch() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sharedCockpitMismatch
 }
 
 // applyStatusMessage updates stored status from one received UDP payload
@@ -141,8 +196,14 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.sharedCockpitCode = value
 		case "SHARED_COCKPIT":
 			c.sharedCockpitStatus = value
+		case "SHARED_COCKPIT_OWNERSHIP":
+			c.sharedCockpitOwnership = parseSharedCockpitOwnership(value)
 		case "PEERS":
 			c.formationPeers = parseFormationPeers(value)
+		case "LINK_QUALITY":
+			c.linkQuality = parseLinkQuality(value)
+		case "SHARED_COCKPIT_AIRCRAFT_MISMATCH":
+			c.sharedCockpitMismatch = value
 		case "SIM_READY":
 			c.simReady = value == "1"
 		case "PLUGIN_VERSION":
@@ -173,6 +234,109 @@ func parseFormationPeers(encoded string) []FormationPeer {
 		peers = append(peers, FormationPeer{ID: uint32(id), ICAO: icao})
 	}
 	return peers
+}
+
+// parseSharedCockpitOwnership decodes control_listener.h's
+// SHARED_COCKPIT_OWNERSHIP wire format: "engine:me avionics:peer
+// systems:me" (space-separated "<category>:<me|peer>" pairs; empty string
+// before a session has actually started). Malformed entries are skipped
+// rather than failing the whole line, same reasoning as
+// parseFormationPeers.
+func parseSharedCockpitOwnership(encoded string) map[string]string {
+	out := map[string]string{}
+	if encoded == "" {
+		return out
+	}
+	for _, entry := range strings.Fields(encoded) {
+		category, owner, found := strings.Cut(entry, ":")
+		if !found {
+			continue
+		}
+		out[category] = owner
+	}
+	return out
+}
+
+// parseLinkQuality decodes control_listener.h's LINK_QUALITY wire format:
+// "formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
+// sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?>" - "?" for any field
+// not yet measured (see the plugin's MaybePushLinkQuality), decoded here as
+// a nil pointer/omitted map entry rather than a misleading 0. Malformed
+// entries are skipped rather than failing the whole line, same reasoning
+// as parseFormationPeers/parseSharedCockpitOwnership.
+func parseLinkQuality(encoded string) LinkQuality {
+	var lq LinkQuality
+	for _, field := range strings.Fields(encoded) {
+		key, value, found := strings.Cut(field, ":")
+		if !found {
+			continue
+		}
+		switch key {
+		case "formation_server_rtt_ms":
+			lq.FormationServerRttMs = parseOptionalMs(value)
+		case "sc_server_rtt_ms":
+			lq.SharedCockpitServerRttMs = parseOptionalMs(value)
+		case "sc_master_loss_pct":
+			lq.SharedCockpitMasterLossPct = parseOptionalPct(value)
+		case "formation_peer_loss_pct":
+			lq.FormationPeerLossPct = parsePeerLossPct(value)
+		}
+	}
+	return lq
+}
+
+// parseOptionalMs parses a LINK_QUALITY millisecond field, or nil for "?".
+func parseOptionalMs(value string) *int64 {
+	if value == "?" {
+		return nil
+	}
+	ms, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &ms
+}
+
+// parseOptionalPct parses a LINK_QUALITY percentage field, or nil for "?".
+func parseOptionalPct(value string) *int {
+	if value == "?" {
+		return nil
+	}
+	pct, err := strconv.Atoi(value)
+	if err != nil {
+		return nil
+	}
+	return &pct
+}
+
+// parsePeerLossPct decodes the "formation_peer_loss_pct" sub-field's own
+// "<sender_id>:<pct>;<sender_id>:<pct>;..." format - same shape as
+// control_listener.h's top-level PEERS line, just nested one level here
+// since LINK_QUALITY packs several independent readings onto one line.
+func parsePeerLossPct(encoded string) map[uint32]int {
+	if encoded == "" {
+		return nil
+	}
+	out := map[uint32]int{}
+	for _, entry := range strings.Split(encoded, ";") {
+		idStr, pctStr, found := strings.Cut(entry, ":")
+		if !found {
+			continue
+		}
+		id, err := strconv.ParseUint(idStr, 10, 32)
+		if err != nil {
+			continue
+		}
+		pct, err := strconv.Atoi(pctStr)
+		if err != nil {
+			continue
+		}
+		out[uint32(id)] = pct
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ListenForStatus blocks forever applying every status push the plugin

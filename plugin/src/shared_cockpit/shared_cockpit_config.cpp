@@ -4,8 +4,34 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 
 namespace flytogether {
+
+bool ParseDatarefCategoryName(const std::string& name, DatarefCategory& out) {
+    if (name == "engine") {
+        out = DatarefCategory::kEngine;
+    } else if (name == "avionics") {
+        out = DatarefCategory::kAvionics;
+    } else if (name == "systems") {
+        out = DatarefCategory::kSystems;
+    } else {
+        return false; // unrecognized - leave `out` untouched, caller keeps the default
+    }
+    return true;
+}
+
+std::string DatarefCategoryName(DatarefCategory category) {
+    switch (category) {
+        case DatarefCategory::kEngine:
+            return "engine";
+        case DatarefCategory::kAvionics:
+            return "avionics";
+        case DatarefCategory::kSystems:
+            return "systems";
+    }
+    return "systems";
+}
 
 SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
     SharedCockpitConfig config;
@@ -29,7 +55,29 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
 
         if (keyword == "DATAREF") {
             if (!rest.empty()) {
-                config.datarefs.push_back(rest);
+                // First token is the dataref path; any further
+                // whitespace-separated tokens are optional modifiers
+                // (STREAM, or CATEGORY followed by its own value), in
+                // either order - see this file's DATAREF grammar comment.
+                std::istringstream tokens(rest);
+                DatarefSyncSpec spec;
+                tokens >> spec.name;
+                std::string token;
+                while (tokens >> token) {
+                    if (token == "STREAM") {
+                        spec.stream = true;
+                    } else if (token == "CATEGORY") {
+                        std::string category_name;
+                        tokens >> category_name;
+                        ParseDatarefCategoryName(category_name, spec.category); // invalid -> keeps the default
+                    }
+                    // Unrecognized tokens are ignored, same "forward
+                    // compatible, don't hard-fail on the unknown" spirit
+                    // as everywhere else this file parses.
+                }
+                if (!spec.name.empty()) {
+                    config.datarefs.push_back(spec);
+                }
             }
         }
         // ROLE/PEER are no longer recognized here - Shared Cockpit only

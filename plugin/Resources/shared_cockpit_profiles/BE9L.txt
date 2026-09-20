@@ -1,0 +1,93 @@
+# Shared Cockpit "systems" dataref list for the default X-Plane 12
+# Beechcraft King Air C90B (ICAO type "BE9L", twin PT6 turboprop,
+# retractable gear) - see shared_cockpit/shared_cockpit_config.h's
+# ResolveSharedCockpitConfigPath: this file is picked up automatically
+# whenever the current aircraft's ICAO type matches this filename.
+#
+# Every dataref below was checked against a real X-Plane 12
+# Resources/plugins/DataRefs.txt, not guessed - see C172.txt's header
+# comment for the general ground rules (writable-only, no autopilot-mode-
+# engagement datarefs) and BE58.txt's header comment for why per-engine
+# array datarefs (not the "_all" variants) are used throughout - both
+# still apply here.
+#
+# Turboprop-specific differences from BE58.txt (piston twin):
+#   - No carb_heat_ratio/primer_on - turbine engines have neither a
+#     carburetor nor a primer, and X-Plane doesn't expose either dataref
+#     as meaningful for this engine type.
+#   - mixture_ratio (per-engine, 0.0=cutoff..1.0=full rich for a piston
+#     engine) is the SAME dataref X-Plane's generic engine model reuses
+#     for a turboprop's condition lever - there's no separate
+#     "condition_lever" dataref in X-Plane's data model. Synced here
+#     unchanged; the doc string's piston-specific wording just doesn't
+#     apply literally.
+#   - ENGN_propmode is added: the PT6's prop can be feathered or run in
+#     beta/reverse range for ground ops, which a fixed-pitch or simple
+#     constant-speed piston prop (BE58.txt) doesn't model.
+
+# Radios - active and standby, so a flip/flop swap either pilot makes
+# shows up correctly on both sides, not just the currently-active side
+DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/com2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav1_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_standby_frequency_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/adf1_stdby_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/dme_freq_hz CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_code CATEGORY avionics
+DATAREF sim/cockpit/radios/transponder_mode CATEGORY avionics
+
+# Course/OBS selectors and audio panel selection
+DATAREF sim/cockpit2/radios/actuators/nav1_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/nav2_obs_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_com_selection CATEGORY avionics
+DATAREF sim/cockpit2/radios/actuators/audio_nav_selection CATEGORY avionics
+
+# Autopilot bugs/targets (see C172.txt's note re: engagement modes -
+# still out of scope here for the same reason)
+DATAREF sim/cockpit2/autopilot/heading_dial_deg_mag_pilot CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/altitude_dial_ft CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/vvi_dial_fpm CATEGORY avionics
+DATAREF sim/cockpit2/autopilot/airspeed_dial_kts CATEGORY avionics
+
+# Flight control trim (aircraft-wide, not per-engine)
+DATAREF sim/cockpit2/controls/elevator_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/aileron_trim CATEGORY systems
+DATAREF sim/cockpit2/controls/rudder_trim CATEGORY systems
+
+# Flaps, gear and parking brake
+DATAREF sim/flightmodel/controls/flaprqst CATEGORY systems
+DATAREF sim/cockpit2/controls/gear_handle_down CATEGORY systems
+DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
+
+# Engine / prop / fuel / start procedure - per-engine arrays throughout,
+# see this file's header comment for the mixture_ratio-as-condition-lever
+# note and why ENGN_propmode (feather/beta/reverse) is included here but
+# not in BE58.txt. ignition_key is STREAM for the same spring-loaded-
+# starter reason documented in C172.txt.
+DATAREF sim/cockpit2/engine/actuators/throttle_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/prop_ratio CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/mixture_ratio CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_propmode CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_left CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_right CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
+
+# Electrical / avionics / pitot-static
+DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
+DATAREF sim/cockpit2/electrical/generator_on CATEGORY systems
+DATAREF sim/cockpit2/switches/avionics_power_on CATEGORY systems
+DATAREF sim/cockpit/switches/pitot_heat_on CATEGORY systems
+DATAREF sim/cockpit2/switches/alternate_static_air_ratio CATEGORY systems
+
+# Exterior lights
+DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
+DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems

@@ -104,6 +104,9 @@ std::string EncodeClientMessage(const RendezvousClientMessage& msg) {
     if (!msg.code.empty()) {
         out += ",\"code\":\"" + JsonEscape(msg.code) + "\"";
     }
+    // Always included (not just on create/join_session) - see
+    // RendezvousClientMessage::client_version's comment.
+    out += ",\"client_version\":" + std::to_string(msg.client_version);
     if (!msg.payload.empty()) {
         out += ",\"payload\":\"" + JsonEscape(msg.payload) + "\"";
     }
@@ -119,6 +122,7 @@ bool DecodeServerMessage(const std::string& json, RendezvousServerMessage& out) 
     out.type = *type;
     if (const auto v = ExtractString(json, "code")) out.code = *v;
     if (const auto v = ExtractInt(json, "your_id")) out.your_id = *v;
+    if (const auto v = ExtractString(json, "salt")) out.salt = *v;
     if (const auto v = ExtractInt(json, "peer_id")) out.peer_id = *v;
     if (const auto v = ExtractString(json, "peer_addr")) out.peer_addr = *v;
     if (const auto v = ExtractInt(json, "from_peer_id")) out.from_peer_id = *v;
