@@ -129,10 +129,13 @@ XPLMDataRef g_beacon_ref = nullptr;
 XPLMDataRef g_strobe_ref = nullptr;
 XPLMDataRef g_nav_ref = nullptr;
 XPLMDataRef g_landing_ref = nullptr;
+XPLMDataRef g_icao_ref = nullptr; // sim/aircraft/view/acf_ICAO
 
 flytogether::FormationSync g_formation_sync;
 uint32_t g_sender_id = 0;
 uint32_t g_formation_sequence = 0;
+// Refreshed by RefreshOwnIcaoType(), not read only once - see its comment
+// for why a single XPluginStart-time read isn't enough.
 char g_icao_type[9] = {}; // one extra byte so it's always null-terminated
 
 bool g_xpmp_initialized = false;
@@ -453,6 +456,26 @@ uint8_t ReadLightBits() {
     if (g_nav_ref && XPLMGetDataf(g_nav_ref) > 0.5f) bits |= flytogether::LightBits::kNav;
     if (g_landing_ref && XPLMGetDataf(g_landing_ref) > 0.5f) bits |= flytogether::LightBits::kLanding;
     return bits;
+}
+
+// Re-reads g_icao_type from sim/aircraft/view/acf_ICAO. Called from
+// XPluginStart() as a best-effort first attempt, but that alone is not
+// enough: X-Plane loads plugins (calling XPluginStart) before it loads
+// the default aircraft (see control_listener.h's SIM_READY comment for
+// the same ordering issue affecting a different dataref), so acf_ICAO can
+// still be empty at that point - every peer would then broadcast an empty
+// icao_type for its entire session, showing up as an unrecognized/no
+// aircraft type on every other peer's side. Also called on every
+// XPLM_MSG_PLANE_LOADED for the user's own aircraft (see
+// XPluginReceiveMessage), which both fixes that cold-start gap and keeps
+// this correct if the user changes aircraft mid-session - neither of
+// which a single XPluginStart-time read could ever catch.
+void RefreshOwnIcaoType() {
+    if (!g_icao_ref) {
+        return;
+    }
+    XPLMGetDatab(g_icao_ref, g_icao_type, 0, sizeof(g_icao_type) - 1);
+    g_icao_type[sizeof(g_icao_type) - 1] = '\0';
 }
 
 // Reads all the datarefs both Formation mode (sending "here's another
@@ -1015,9 +1038,15 @@ float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
     // screen right now (see control_listener.h's SIM_READY comment) -
     // catches the one case XPLM_MSG_PLANE_LOADED alone misses: the very
     // first flight of an X-Plane session, which can finish loading before
-    // this plugin was even enabled to receive that message.
+    // this plugin was even enabled to receive that message. That's also
+    // the one case RefreshOwnIcaoType()'s own XPLM_MSG_PLANE_LOADED call
+    // misses (same message, same "not listening yet" gap) - self-heal it
+    // here too, otherwise acf_ICAO could stay empty (read too early in
+    // XPluginStart) for a peer's entire session on their very first
+    // flight, showing up as an unrecognized aircraft type to everyone else.
     if (!g_control_listener.IsSimReady()) {
         g_control_listener.SetSimReady(true);
+        RefreshOwnIcaoType();
     }
     g_control_listener.Poll();
     return -1.0f; // every frame, so the companion app feels responsive
@@ -1059,10 +1088,8 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_local_vy_ref = XPLMFindDataRef("sim/flightmodel/position/local_vy");
     g_local_vz_ref = XPLMFindDataRef("sim/flightmodel/position/local_vz");
 
-    if (XPLMDataRef icao_ref = XPLMFindDataRef("sim/aircraft/view/acf_ICAO")) {
-        XPLMGetDatab(icao_ref, g_icao_type, 0, sizeof(g_icao_type) - 1);
-        g_icao_type[sizeof(g_icao_type) - 1] = '\0';
-    }
+    g_icao_ref = XPLMFindDataRef("sim/aircraft/view/acf_ICAO");
+    RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -1292,6 +1319,11 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID /*inFrom*/, int inMsg, void* 
     const auto plane_index = reinterpret_cast<intptr_t>(inParam);
     if (inMsg == XPLM_MSG_PLANE_LOADED && plane_index == 0) {
         g_control_listener.SetSimReady(true);
+        // See RefreshOwnIcaoType()'s comment: this is what actually
+        // catches acf_ICAO being empty at XPluginStart-time (X-Plane
+        // hadn't loaded an aircraft yet), and keeps it correct across an
+        // aircraft change mid-session too.
+        RefreshOwnIcaoType();
     } else if (inMsg == XPLM_MSG_PLANE_UNLOADED && plane_index == 0) {
         g_control_listener.SetSimReady(false);
     }
