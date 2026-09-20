@@ -181,7 +181,13 @@
   <h1>XPMultiCrew</h1>
   <div class="subtitle">Companion app — talks to the X-Plane plugin on this machine only.</div>
 
-  <div class="status" id="loading-banner" style="display: none; margin-bottom: 20px;">
+  <!-- Shown (not display:none) by default, and Create/Join/Start below
+       start disabled: until the first "status" push/poll actually arrives
+       (main.js's EventsOn('status', ...)), we don't yet know whether
+       SIM_READY is true - assuming "not ready" until told otherwise is
+       the safe default, instead of briefly (or, if that first event is
+       ever delayed/lost, indefinitely) showing every button as usable. -->
+  <div class="status" id="loading-banner" style="margin-bottom: 20px;">
     <span class="dot"></span><span>X-Plane is still loading — Create/Join/Start are disabled until it's done.</span>
   </div>
 
@@ -218,8 +224,8 @@
       <input type="text" id="code" placeholder="ABC123">
 
       <div class="row buttons">
-        <button id="create-btn">Create Session</button>
-        <button id="join-btn" class="secondary">Join Session</button>
+        <button id="create-btn" disabled>Create Session</button>
+        <button id="join-btn" class="secondary" disabled>Join Session</button>
       </div>
       <div class="row buttons">
         <button id="disconnect-formation-btn" class="secondary" disabled>Disconnect</button>
@@ -248,7 +254,7 @@
       <input type="text" id="sc-code" placeholder="ABC123">
 
       <div class="row buttons">
-        <button id="start-sc-btn">Start Shared Cockpit</button>
+        <button id="start-sc-btn" disabled>Start Shared Cockpit</button>
       </div>
       <div class="row buttons">
         <button id="disconnect-sc-btn" class="secondary" disabled>Disconnect</button>
