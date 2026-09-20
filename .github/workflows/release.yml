@@ -80,6 +80,14 @@ jobs:
           New-Item -ItemType Directory -Path stage/XPMultiCrew -Force | Out-Null
           Copy-Item build/XPMultiCrew/RelWithDebInfo/win.xpl stage/XPMultiCrew/
           Copy-Item build/XPMultiCrew/RelWithDebInfo/Resources stage/XPMultiCrew/Resources -Recurse
+          # Unlike the Linux job (which zips the whole build/XPMultiCrew
+          # directory), this only copied win.xpl + Resources - silently
+          # dropping version.txt (see plugin/CMakeLists.txt's post-build
+          # copy step) out of the Windows package. That's what made the
+          # companion app's Installed/Available plugin version show
+          # "unknown" on Windows: AvailablePluginVersion() reads this file
+          # straight out of the embedded plugin build.
+          Copy-Item build/XPMultiCrew/RelWithDebInfo/version.txt stage/XPMultiCrew/
           Compress-Archive -Path stage/XPMultiCrew -DestinationPath xpmulticrew-plugin-windows.zip
 
       - uses: actions/upload-artifact@v4
@@ -127,9 +135,18 @@ jobs:
       - name: Stage plugin for embedding
         run: unzip -q xpmulticrew-plugin-linux.zip -d companion/embedded_plugin
 
+      # Same versioning scheme as the plugin (plugin/CMakeLists.txt's
+      # `git describe --tags --always --dirty`) - baked into the binary
+      # via -ldflags since Go has no equivalent of CMake's compile
+      # definitions, and read back by companion/main.go's companionVersion
+      # var to show in the window title.
+      - name: Determine version
+        id: version
+        run: echo "value=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
+
       - name: Build
         working-directory: companion
-        run: wails build -tags webkit2_41
+        run: wails build -tags webkit2_41 -ldflags "-X main.companionVersion=${{ steps.version.outputs.value }}"
 
       - name: Package
         run: |
@@ -173,9 +190,18 @@ jobs:
         shell: pwsh
         run: Expand-Archive -Path xpmulticrew-plugin-windows.zip -DestinationPath companion/embedded_plugin
 
+      # Same versioning scheme as the plugin - see companion-linux's
+      # "Determine version" step above.
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $v = git describe --tags --always --dirty
+          "value=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
       - name: Build
         working-directory: companion
-        run: wails build
+        run: wails build -ldflags "-X main.companionVersion=${{ steps.version.outputs.value }}"
 
       - name: Package
         shell: pwsh

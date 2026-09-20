@@ -15,6 +15,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,11 +25,26 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// Set via `wails build -ldflags "-X main.companionVersion=..."` (see
+// .github/workflows/release.yml), derived from `git describe --tags
+// --always --dirty` the same way the plugin's own version is (see
+// plugin/CMakeLists.txt) - this is what lets the window title below show
+// a real version instead of "dev" (the fallback for a manually-run
+// `wails build`/`wails dev` outside CI).
+var companionVersion = "dev"
+
+func windowTitle() string {
+	if companionVersion == "" || companionVersion == "dev" {
+		return "XPMultiCrew"
+	}
+	return fmt.Sprintf("XPMultiCrew %s", companionVersion)
+}
+
 func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:            "XPMultiCrew",
+		Title:            windowTitle(),
 		Width:            760,
 		Height:           520,
 		MinWidth:         600,
