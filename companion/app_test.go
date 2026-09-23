@@ -128,14 +128,14 @@ func TestJoinSessionSendsSpectatorToken(t *testing.T) {
 	}
 }
 
-func TestRequestOwnershipSendsCommand(t *testing.T) {
+func TestClaimOwnershipSendsCommand(t *testing.T) {
 	_, recv := recvLine(t)
 	app := NewApp()
 
-	if err := app.RequestOwnership("engine"); err != nil {
+	if err := app.ClaimOwnership("engine"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := recv(); got != "REQUEST_OWNERSHIP engine" {
+	if got := recv(); got != "CLAIM_OWNERSHIP engine" {
 		t.Fatalf("unexpected command line: %q", got)
 	}
 }

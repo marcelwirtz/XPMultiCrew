@@ -129,68 +129,37 @@ void TestEmptyNameOrOversizedArrayRejectedAtEncode() {
     std::printf("TestEmptyNameOrOversizedArrayRejectedAtEncode: OK\n");
 }
 
-void TestOwnershipRequestMessageRoundTrip() {
+void TestOwnershipClaimMessageRoundTrip() {
     for (DatarefCategory category :
          {DatarefCategory::kSystems, DatarefCategory::kEngine, DatarefCategory::kAvionics}) {
-        OwnershipRequestMessage msg{category, /*nonce=*/42};
-        const auto encoded = EncodeOwnershipRequestMessage(msg);
+        OwnershipClaimMessage msg{category};
+        const auto encoded = EncodeOwnershipClaimMessage(msg);
         assert(!encoded.empty());
 
-        OwnershipRequestMessage decoded;
-        assert(DecodeOwnershipRequestMessage(encoded.data(), encoded.size(), decoded));
+        OwnershipClaimMessage decoded;
+        assert(DecodeOwnershipClaimMessage(encoded.data(), encoded.size(), decoded));
         assert(decoded.category == category);
-        assert(decoded.nonce == 42);
     }
-    std::printf("TestOwnershipRequestMessageRoundTrip: OK\n");
+    std::printf("TestOwnershipClaimMessageRoundTrip: OK\n");
 }
 
-void TestOwnershipRequestMessageDecodeRejectsGarbage() {
-    OwnershipRequestMessage decoded;
-    assert(!DecodeOwnershipRequestMessage(nullptr, 0, decoded));
+void TestOwnershipClaimMessageDecodeRejectsGarbage() {
+    OwnershipClaimMessage decoded;
+    assert(!DecodeOwnershipClaimMessage(nullptr, 0, decoded));
 
-    const uint8_t too_short[] = {0x35, 0x53, 0x54, 0x46}; // magic only, no category/nonce
-    assert(!DecodeOwnershipRequestMessage(too_short, sizeof(too_short), decoded));
+    const uint8_t too_short[] = {0x35, 0x53, 0x54, 0x46}; // magic only, no category
+    assert(!DecodeOwnershipClaimMessage(too_short, sizeof(too_short), decoded));
 
-    OwnershipRequestMessage msg{DatarefCategory::kEngine, 7};
-    auto encoded = EncodeOwnershipRequestMessage(msg);
+    OwnershipClaimMessage msg{DatarefCategory::kEngine};
+    auto encoded = EncodeOwnershipClaimMessage(msg);
     encoded[0] ^= 0xFF; // corrupt the magic
-    assert(!DecodeOwnershipRequestMessage(encoded.data(), encoded.size(), decoded));
+    assert(!DecodeOwnershipClaimMessage(encoded.data(), encoded.size(), decoded));
 
-    encoded = EncodeOwnershipRequestMessage(msg);
+    encoded = EncodeOwnershipClaimMessage(msg);
     encoded[sizeof(uint32_t)] = 99; // not a valid DatarefCategory value
-    assert(!DecodeOwnershipRequestMessage(encoded.data(), encoded.size(), decoded));
+    assert(!DecodeOwnershipClaimMessage(encoded.data(), encoded.size(), decoded));
 
-    std::printf("TestOwnershipRequestMessageDecodeRejectsGarbage: OK\n");
-}
-
-void TestOwnershipResponseMessageRoundTrip() {
-    for (bool grant : {true, false}) {
-        OwnershipResponseMessage msg{DatarefCategory::kAvionics, /*nonce=*/123, grant};
-        const auto encoded = EncodeOwnershipResponseMessage(msg);
-        assert(!encoded.empty());
-
-        OwnershipResponseMessage decoded;
-        assert(DecodeOwnershipResponseMessage(encoded.data(), encoded.size(), decoded));
-        assert(decoded.category == DatarefCategory::kAvionics);
-        assert(decoded.nonce == 123);
-        assert(decoded.grant == grant);
-    }
-    std::printf("TestOwnershipResponseMessageRoundTrip: OK\n");
-}
-
-void TestOwnershipResponseMessageDecodeRejectsGarbage() {
-    OwnershipResponseMessage decoded;
-    assert(!DecodeOwnershipResponseMessage(nullptr, 0, decoded));
-
-    const uint8_t too_short[] = {0x36, 0x53, 0x54, 0x46};
-    assert(!DecodeOwnershipResponseMessage(too_short, sizeof(too_short), decoded));
-
-    OwnershipResponseMessage msg{DatarefCategory::kEngine, 7, true};
-    auto encoded = EncodeOwnershipResponseMessage(msg);
-    encoded[0] ^= 0xFF; // corrupt the magic
-    assert(!DecodeOwnershipResponseMessage(encoded.data(), encoded.size(), decoded));
-
-    std::printf("TestOwnershipResponseMessageDecodeRejectsGarbage: OK\n");
+    std::printf("TestOwnershipClaimMessageDecodeRejectsGarbage: OK\n");
 }
 
 void TestPeekChannelMagicDistinguishesMessageShapes() {
@@ -198,13 +167,9 @@ void TestPeekChannelMagicDistinguishesMessageShapes() {
     const auto dr_encoded = EncodeDatarefSyncMessage(dr_msg);
     assert(PeekDatarefSyncChannelMagic(dr_encoded.data(), dr_encoded.size()) == kDatarefSyncMagic);
 
-    const OwnershipRequestMessage req_msg{DatarefCategory::kAvionics, 1};
-    const auto req_encoded = EncodeOwnershipRequestMessage(req_msg);
-    assert(PeekDatarefSyncChannelMagic(req_encoded.data(), req_encoded.size()) == kOwnershipRequestMagic);
-
-    const OwnershipResponseMessage resp_msg{DatarefCategory::kAvionics, 1, true};
-    const auto resp_encoded = EncodeOwnershipResponseMessage(resp_msg);
-    assert(PeekDatarefSyncChannelMagic(resp_encoded.data(), resp_encoded.size()) == kOwnershipResponseMagic);
+    const OwnershipClaimMessage claim_msg{DatarefCategory::kAvionics};
+    const auto claim_encoded = EncodeOwnershipClaimMessage(claim_msg);
+    assert(PeekDatarefSyncChannelMagic(claim_encoded.data(), claim_encoded.size()) == kOwnershipClaimMagic);
 
     const uint8_t too_short[] = {1, 2, 3};
     assert(PeekDatarefSyncChannelMagic(too_short, sizeof(too_short)) == 0);
@@ -223,10 +188,8 @@ int main() {
     TestValueEqualityIgnoresIrrelevantFields();
     TestDecodeRejectsGarbage();
     TestEmptyNameOrOversizedArrayRejectedAtEncode();
-    TestOwnershipRequestMessageRoundTrip();
-    TestOwnershipRequestMessageDecodeRejectsGarbage();
-    TestOwnershipResponseMessageRoundTrip();
-    TestOwnershipResponseMessageDecodeRejectsGarbage();
+    TestOwnershipClaimMessageRoundTrip();
+    TestOwnershipClaimMessageDecodeRejectsGarbage();
     TestPeekChannelMagicDistinguishesMessageShapes();
     std::printf("All dataref_sync_protocol tests passed.\n");
     return 0;

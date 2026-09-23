@@ -66,20 +66,12 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_lan_connect_formation) {
             callbacks_.on_lan_connect_formation(host_port, code);
         }
-    } else if (cmd == "REQUEST_OWNERSHIP") {
+    } else if (cmd == "CLAIM_OWNERSHIP") {
         std::string category_name;
         ls >> category_name;
         DatarefCategory category;
-        if (ParseDatarefCategoryName(category_name, category) && callbacks_.on_request_ownership) {
-            callbacks_.on_request_ownership(category);
-        }
-    } else if (cmd == "RESPOND_OWNERSHIP") {
-        std::string category_name, decision;
-        ls >> category_name >> decision;
-        DatarefCategory category;
-        if (ParseDatarefCategoryName(category_name, category) && callbacks_.on_respond_ownership &&
-            (decision == "grant" || decision == "deny")) {
-            callbacks_.on_respond_ownership(category, decision == "grant");
+        if (ParseDatarefCategoryName(category_name, category) && callbacks_.on_claim_ownership) {
+            callbacks_.on_claim_ownership(category);
         }
     } else if (cmd == "DISCONNECT_FORMATION") {
         if (callbacks_.on_disconnect_formation) callbacks_.on_disconnect_formation();
@@ -126,8 +118,6 @@ const char* OwnershipUiStateName(ControlListener::OwnershipUiState state) {
     switch (state) {
         case ControlListener::OwnershipUiState::kMe: return "me";
         case ControlListener::OwnershipUiState::kPeer: return "peer";
-        case ControlListener::OwnershipUiState::kPending: return "pending";
-        case ControlListener::OwnershipUiState::kRequested: return "requested";
     }
     return "peer"; // unreachable for a valid enum value, but keeps this total
 }

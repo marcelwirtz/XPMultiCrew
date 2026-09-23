@@ -2,6 +2,7 @@ import {
   ApplyUpdate,
   CheckForUpdate,
   ChooseXPlanePath,
+  ClaimOwnership,
   CreateSession,
   DeleteSavedServer,
   DisconnectFormation,
@@ -15,8 +16,6 @@ import {
   InstallPlugin,
   JoinSession,
   LanConnectFormation,
-  RequestOwnership,
-  RespondOwnership,
   SaveServer,
   StartSharedCockpit,
 } from '../wailsjs/go/main/App';
@@ -306,11 +305,13 @@ document.getElementById('disconnect-sc-btn').addEventListener('click', async () 
 // One click handler for all three ownership buttons - each carries its
 // own category in data-category (see index.html), and is already
 // disabled while it's owned by this side (see the status handler below),
-// so a click here always means "take this category from the peer".
+// so a click here always means "take this category from the peer" -
+// instantly, no permission round trip (see ownership_tracker.h's
+// claim-and-tell model).
 document.querySelectorAll('.ownership-toggle button').forEach((btn) => {
   btn.addEventListener('click', async () => {
     try {
-      await RequestOwnership(btn.dataset.category);
+      await ClaimOwnership(btn.dataset.category);
     } catch (e) {
       alert(e);
     }
@@ -344,65 +345,22 @@ function isIdle(text) {
 }
 
 // Renders the three ownership buttons from control_listener.h's
-// SHARED_COCKPIT_OWNERSHIP map - one of "me"/"peer"/"pending"/"requested"
-// per category (missing entirely before Shared Cockpit's dataref sync has
-// started, treated the same as "peer"). Each button's own enabled state is
-// handled separately below (gated on Shared Cockpit actually running, in
-// addition to not already being owned/mid-request) - this only sets how
-// it looks. "requested" still reads as owned here (this side does hold
-// the category) - see renderOwnershipRequests() for the separate
-// Grant/Deny prompt that state also drives.
+// SHARED_COCKPIT_OWNERSHIP map - one of "me"/"peer" per category (missing
+// entirely before Shared Cockpit's dataref sync has started, treated the
+// same as "peer"). Each button's own enabled state is handled separately
+// below (gated on Shared Cockpit actually running, in addition to not
+// already being owned) - this only sets how it looks. Clicking a "peer"
+// button claims the category immediately (see the click handler above),
+// no permission prompt to wait for.
 function renderOwnership(ownership) {
   document.querySelectorAll('.ownership-toggle button').forEach((btn) => {
     const state = (ownership && ownership[btn.dataset.category]) || 'peer';
-    const owned = state === 'me' || state === 'requested';
-    const pending = state === 'pending';
+    const owned = state === 'me';
     btn.classList.toggle('owned', owned);
-    btn.classList.toggle('pending', pending);
     const label = btn.dataset.category.charAt(0).toUpperCase() + btn.dataset.category.slice(1);
-    btn.textContent = owned ? `${label} · you` : pending ? `${label} · pending…` : `${label} · peer`;
-    btn.dataset.owned = owned || pending ? '1' : ''; // nothing to click while owned OR already asked
+    btn.textContent = owned ? `${label} · you` : `${label} · peer`;
+    btn.dataset.owned = owned ? '1' : ''; // nothing to click while already owned
   });
-}
-
-// Renders a Grant/Deny prompt for every category in the "requested" state
-// - the co-pilot asking this side to hand it over (control_listener.h's
-// RESPOND_OWNERSHIP). Usually at most one at a time (only three
-// categories total), but not assumed to be exactly one.
-function renderOwnershipRequests(ownership) {
-  const el = document.getElementById('ownership-requests');
-  const requested = Object.entries(ownership || {}).filter(([, state]) => state === 'requested');
-  if (requested.length === 0) {
-    el.innerHTML = '';
-    return;
-  }
-  el.innerHTML = requested
-    .map(([category]) => {
-      const label = category.charAt(0).toUpperCase() + category.slice(1);
-      return (
-        `<div class="ownership-request" data-category="${category}">` +
-        `<span>Co-pilot wants ${label}</span>` +
-        `<span class="actions">` +
-        `<button class="grant-btn" data-category="${category}">Grant</button>` +
-        `<button class="secondary deny-btn" data-category="${category}">Deny</button>` +
-        `</span></div>`
-      );
-    })
-    .join('');
-  el.querySelectorAll('.grant-btn').forEach((btn) => {
-    btn.addEventListener('click', () => respondOwnership(btn.dataset.category, true));
-  });
-  el.querySelectorAll('.deny-btn').forEach((btn) => {
-    btn.addEventListener('click', () => respondOwnership(btn.dataset.category, false));
-  });
-}
-
-async function respondOwnership(category, grant) {
-  try {
-    await RespondOwnership(category, grant);
-  } catch (e) {
-    alert(e);
-  }
 }
 
 function renderPeerList(peers) {
@@ -562,7 +520,6 @@ EventsOn('status', (data) => {
 
   renderPeerList(data.peers);
   renderOwnership(data.sharedCockpitOwnership);
-  renderOwnershipRequests(data.sharedCockpitOwnership);
   renderFormationLinkQuality(data.linkQuality, data.peers);
   renderSharedCockpitLinkQuality(data.linkQuality);
   renderAircraftMismatch(data.sharedCockpitMismatch);

@@ -14,6 +14,10 @@ export function ChooseXPlanePath() {
   return window['go']['main']['App']['ChooseXPlanePath']();
 }
 
+export function ClaimOwnership(arg1) {
+  return window['go']['main']['App']['ClaimOwnership'](arg1);
+}
+
 export function CreateSession(arg1, arg2) {
   return window['go']['main']['App']['CreateSession'](arg1, arg2);
 }
@@ -64,14 +68,6 @@ export function JoinSession(arg1, arg2, arg3) {
 
 export function LanConnectFormation(arg1, arg2) {
   return window['go']['main']['App']['LanConnectFormation'](arg1, arg2);
-}
-
-export function RequestOwnership(arg1) {
-  return window['go']['main']['App']['RequestOwnership'](arg1);
-}
-
-export function RespondOwnership(arg1, arg2) {
-  return window['go']['main']['App']['RespondOwnership'](arg1, arg2);
 }
 
 export function SaveServer(arg1, arg2) {

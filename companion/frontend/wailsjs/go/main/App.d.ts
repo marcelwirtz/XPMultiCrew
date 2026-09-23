@@ -8,6 +8,8 @@ export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function ChooseXPlanePath():Promise<main.ChooseXPlaneResult>;
 
+export function ClaimOwnership(arg1:string):Promise<void>;
+
 export function CreateSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
@@ -33,10 +35,6 @@ export function InstallPlugin():Promise<void>;
 export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function LanConnectFormation(arg1:string,arg2:string):Promise<void>;
-
-export function RequestOwnership(arg1:string):Promise<void>;
-
-export function RespondOwnership(arg1:string,arg2:boolean):Promise<void>;
 
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
 

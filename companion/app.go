@@ -331,29 +331,17 @@ func (a *App) StartSharedCockpit(role, server, code string) error {
 	return a.plugin.Send("START_SHARED_COCKPIT " + role + " " + server + " " + code)
 }
 
-// RequestOwnership asks the plugin to claim a Shared Cockpit "systems"
-// dataref category (engine/avionics/systems) for this side - see
-// control_listener.h's REQUEST_OWNERSHIP and
-// shared_cockpit/ownership_tracker.h. Bound to the frontend's ownership
-// buttons. Unlike StartSharedCockpit's role validation, an unrecognized
-// category is the plugin's problem to ignore (see
-// ControlListener::HandleLine), not this method's - the frontend only
-// ever sends the three fixed category names its buttons carry.
-func (a *App) RequestOwnership(category string) error {
-	return a.plugin.Send("REQUEST_OWNERSHIP " + strings.TrimSpace(category))
-}
-
-// RespondOwnership answers a pending incoming ownership request (see
-// control_listener.h's SHARED_COCKPIT_OWNERSHIP "requested" state) for
-// category with Grant (grant=true) or Deny (grant=false) - see
-// control_listener.h's RESPOND_OWNERSHIP. Bound to the frontend's
-// Grant/Deny prompt buttons.
-func (a *App) RespondOwnership(category string, grant bool) error {
-	decision := "deny"
-	if grant {
-		decision = "grant"
-	}
-	return a.plugin.Send("RESPOND_OWNERSHIP " + strings.TrimSpace(category) + " " + decision)
+// ClaimOwnership asks the plugin to immediately take over a Shared Cockpit
+// "systems" dataref category (engine/avionics/systems) for this side - see
+// control_listener.h's CLAIM_OWNERSHIP and
+// shared_cockpit/ownership_tracker.h's claim-and-tell model (no
+// permission step - the peer yields as soon as the claim arrives). Bound
+// to the frontend's ownership buttons. Unlike StartSharedCockpit's role
+// validation, an unrecognized category is the plugin's problem to ignore
+// (see ControlListener::HandleLine), not this method's - the frontend
+// only ever sends the three fixed category names its buttons carry.
+func (a *App) ClaimOwnership(category string) error {
+	return a.plugin.Send("CLAIM_OWNERSHIP " + strings.TrimSpace(category))
 }
 
 // DisconnectFormation asks the plugin to leave its current Formation

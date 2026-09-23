@@ -30,8 +30,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   JOIN_SESSION <host:port> <code> [SPECTATOR]
 //   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
 //   LAN_CONNECT_FORMATION <host:port> <code>
-//   REQUEST_OWNERSHIP <engine|avionics|systems>
-//   RESPOND_OWNERSHIP <engine|avionics|systems> <grant|deny>
+//   CLAIM_OWNERSHIP <engine|avionics|systems>
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   GET_STATUS
@@ -44,17 +43,11 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // auto-reconnect (see g_formation_reconnect_is_spectator) so a dropped-
 // and-restored connection doesn't silently start broadcasting a spectator
 // again.
-// REQUEST_OWNERSHIP asks to take over a Shared Cockpit "systems" dataref
-// category from whichever side currently holds it - see
-// shared_cockpit/ownership_tracker.h's request/grant/deny handshake. Not
-// an instant claim: the peer has to Grant or Deny it (or simply not
-// respond within OwnershipTracker::kRequestTimeoutS, which reads the same
-// as a Deny). RESPOND_OWNERSHIP is that Grant/Deny, for a category this
-// side currently owns and the peer has an outstanding request for - a
-// no-op if there's no live incoming request for it any more (already
-// answered, or the requester's own timeout already passed). Both silently
-// ignore an unrecognized category name (same "don't hard-fail on the
-// unknown" spirit as this listener's other parsing).
+// CLAIM_OWNERSHIP takes over a Shared Cockpit "systems" dataref category
+// from whichever side currently holds it - immediately, no permission
+// step - see shared_cockpit/ownership_tracker.h's claim-and-tell model.
+// Silently ignores an unrecognized category name (same "don't hard-fail on
+// the unknown" spirit as this listener's other parsing).
 // LAN_CONNECT_FORMATION bypasses the rendezvous server entirely - it's the
 // companion app's mDNS "Nearby on LAN" list (discovery itself happens
 // companion-side, see companion/lan_discovery.go) handing the plugin a
@@ -91,13 +84,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   SHARED_COCKPIT_CODE <code, empty if none yet (CLIENT never has one)>
 //   SHARED_COCKPIT_OWNERSHIP <engine>:<state> <avionics>:<state> <systems>:<state>
 //     <state> is one of:
-//       me        - this side owns it, no outstanding request from the peer
-//       peer      - the peer owns it, this side has no outstanding request
-//       pending   - the peer owns it, AND this side is waiting on a
-//                   response to its own request for it
-//       requested - this side owns it, AND the peer has an outstanding
-//                   request for it awaiting a local Grant/Deny (via
-//                   RESPOND_OWNERSHIP)
+//       me   - this side owns it
+//       peer - the peer owns it
 //   PEERS <sender_id>:<icao>;<sender_id>:<icao>;... (Formation only, empty if none)
 //   LINK_QUALITY formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?>
@@ -107,8 +95,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // SHARED_COCKPIT_OWNERSHIP reflects DatarefSync::Owns() for each category
 // from this side's point of view (empty string before Shared Cockpit's
 // dataref sync has actually started) - plugin_main.cpp pushes it whenever
-// it changes, whether from this side's own REQUEST_OWNERSHIP or from the
-// peer claiming a category over the network.
+// it changes, whether from this side's own CLAIM_OWNERSHIP (or touching a
+// dataref directly) or from the peer claiming a category over the network.
 // PLUGIN_VERSION is the actually-running plugin's version (set once at
 // startup, see plugin_main.cpp's XPMULTICREW_VERSION - derived from git at
 // build time). The companion app also reads this off disk (a version.txt
@@ -152,8 +140,7 @@ public:
         std::function<void(const std::string& hostPort, const std::string& code)> on_lan_connect_formation;
         std::function<void()> on_disconnect_formation;
         std::function<void()> on_disconnect_shared_cockpit;
-        std::function<void(DatarefCategory)> on_request_ownership;
-        std::function<void(DatarefCategory, bool grant)> on_respond_ownership;
+        std::function<void(DatarefCategory)> on_claim_ownership;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -169,10 +156,10 @@ public:
     void SetSharedCockpitStatus(const std::string& text);
     void SetSharedCockpitCode(const std::string& code);
 
-    // The four states a category's ownership can be in from this side's
+    // The two states a category's ownership can be in from this side's
     // point of view - see the SHARED_COCKPIT_OWNERSHIP wire-format comment
     // above for what each one means to the companion app.
-    enum class OwnershipUiState : uint8_t { kMe, kPeer, kPending, kRequested };
+    enum class OwnershipUiState : uint8_t { kMe, kPeer };
 
     // `state[i]` = this side's OwnershipUiState for DatarefCategory(i).
     // Pass all three every time (cheap, and avoids a partial-update

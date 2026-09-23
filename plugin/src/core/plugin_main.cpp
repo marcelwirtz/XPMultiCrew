@@ -836,8 +836,10 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
 // "systems" dataref sync (shared_cockpit/dataref_sync.h) - see the
 // discussion that led here: no per-aircraft mapping file needed since both
 // peers fly an identical aircraft, so watched dataref names resolve to the
-// same thing on both sides. Request-release ownership of individual
-// switches is not implemented; whichever side wrote last simply wins.
+// same thing on both sides. Ownership of individual dataref categories
+// (engine/avionics/systems) is claim-and-tell: touching a switch claims
+// its category immediately, no permission step - see
+// shared_cockpit/ownership_tracker.h's class comment.
 
 XPLMDataRef g_override_planepath_ref = nullptr; // int[20], index 0 = own aircraft
 XPLMDataRef g_local_x_ref = nullptr;
@@ -869,28 +871,18 @@ bool g_has_pushed_ownership = false;
 // PushAircraftMismatchIfChanged() in UpdateSharedCockpitCallback.
 std::string g_last_pushed_aircraft_mismatch;
 
-// Called right after a local RequestOwnership()/RespondOwnership() (so the
-// companion app's buttons/prompt reflect the change immediately) and every
-// PollDatarefSyncCallback tick (so it also reflects the peer requesting/
-// granting/denying a category over the network, or a locally-pending
-// request quietly timing out - neither has any other local trigger point).
-// `now_s` should be XPLMGetElapsedTime() - needed to read
-// IsOwnershipRequestPending/HasIncomingOwnershipRequest's live-vs-expired
-// state (see ownership_tracker.h).
-void PushSharedCockpitOwnershipIfChanged(double now_s) {
+// Called right after a local ClaimOwnership() (so the companion app's
+// buttons reflect the change immediately) and every PollDatarefSyncCallback
+// tick (so it also reflects the peer claiming a category over the network,
+// or this side auto-claiming one by touching a dataref directly - neither
+// has any other local trigger point).
+void PushSharedCockpitOwnershipIfChanged() {
     using flytogether::ControlListener;
     std::array<ControlListener::OwnershipUiState, flytogether::kDatarefCategoryCount> current{};
     for (int i = 0; i < flytogether::kDatarefCategoryCount; ++i) {
         const auto category = static_cast<flytogether::DatarefCategory>(i);
-        if (g_dataref_sync.Owns(category)) {
-            current[i] = g_dataref_sync.HasIncomingOwnershipRequest(category, now_s)
-                             ? ControlListener::OwnershipUiState::kRequested
-                             : ControlListener::OwnershipUiState::kMe;
-        } else {
-            current[i] = g_dataref_sync.IsOwnershipRequestPending(category, now_s)
-                             ? ControlListener::OwnershipUiState::kPending
-                             : ControlListener::OwnershipUiState::kPeer;
-        }
+        current[i] = g_dataref_sync.Owns(category) ? ControlListener::OwnershipUiState::kMe
+                                                    : ControlListener::OwnershipUiState::kPeer;
     }
     if (g_has_pushed_ownership && current == g_last_pushed_ownership) {
         return;
@@ -1066,15 +1058,11 @@ float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
                                float /*elapsedTimeSinceLastFlightLoop*/,
                                int /*counter*/,
                                void* /*refcon*/) {
-    const double now = XPLMGetElapsedTime();
-    g_dataref_sync.Poll(now);
-    // Catches the peer requesting/granting/denying a category over the
-    // network, which (unlike a local RequestOwnership()/RespondOwnership()
-    // call) has no other point in this plugin that would notice and push
-    // an update - see the function's comment. Also needed to notice a
-    // locally-pending request timing out (see ownership_tracker.h), which
-    // isn't triggered by any network event at all.
-    PushSharedCockpitOwnershipIfChanged(now);
+    g_dataref_sync.Poll();
+    // Catches the peer claiming a category over the network, which (unlike
+    // a local ClaimOwnership() call) has no other point in this plugin
+    // that would notice and push an update - see the function's comment.
+    PushSharedCockpitOwnershipIfChanged();
     return 1.0f / 10.0f; // 10 Hz - switches don't need Formation's 20 Hz
 }
 
@@ -1210,7 +1198,7 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
         // skipped as "unchanged from last session" if the previous role
         // happened to end in the same state.
         g_has_pushed_ownership = false;
-        PushSharedCockpitOwnershipIfChanged(XPLMGetElapsedTime());
+        PushSharedCockpitOwnershipIfChanged();
     } else {
         XPLMDebugString("XPMultiCrew: failed to start dataref sync (UDP port busy?)\n");
     }
@@ -1354,17 +1342,16 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         }
         if (magic == flytogether::kAircraftStateMagic) {
             g_shared_cockpit.IngestRelayedPacket(plain.data(), plain.size(), now);
-        } else if (magic == flytogether::kDatarefSyncMagic || magic == flytogether::kOwnershipRequestMagic ||
-                   magic == flytogether::kOwnershipResponseMagic) {
-            // All three land on the same DatarefSync UDP channel and
+        } else if (magic == flytogether::kDatarefSyncMagic || magic == flytogether::kOwnershipClaimMagic) {
+            // Both land on the same DatarefSync UDP channel and
             // IngestRelayedMessage already re-disambiguates between them
             // internally (DatarefSync::ApplyIncomingBytes peeks the magic
-            // again) - the ownership magics were missing from this outer
+            // again) - the ownership magic was missing from this outer
             // gate entirely until this was first noticed, meaning an
             // ownership message relayed (rather than reaching the peer via
             // direct UDP) was silently dropped here before ever reaching
             // that internal check.
-            g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size(), now);
+            g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size());
         }
         // Anything else (wrong magic, too short): not one of ours, ignore.
     };
@@ -1691,15 +1678,9 @@ PLUGIN_API int XPluginEnable() {
     };
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
-    control_callbacks.on_request_ownership = [](flytogether::DatarefCategory category) {
-        const double now = XPLMGetElapsedTime();
-        g_dataref_sync.RequestOwnership(category, now);
-        PushSharedCockpitOwnershipIfChanged(now);
-    };
-    control_callbacks.on_respond_ownership = [](flytogether::DatarefCategory category, bool grant) {
-        const double now = XPLMGetElapsedTime();
-        g_dataref_sync.RespondOwnership(category, grant, now);
-        PushSharedCockpitOwnershipIfChanged(now);
+    control_callbacks.on_claim_ownership = [](flytogether::DatarefCategory category) {
+        g_dataref_sync.ClaimOwnership(category);
+        PushSharedCockpitOwnershipIfChanged();
     };
     if (g_control_listener.Start(control_callbacks)) {
         XPLMRegisterFlightLoopCallback(PollControlListenerCallback, -1.0f, nullptr);

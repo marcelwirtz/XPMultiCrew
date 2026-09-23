@@ -214,38 +214,6 @@
     color: #05070a;
     border-color: var(--ok);
   }
-  .ownership-toggle button.pending {
-    color: var(--accent);
-    border-color: var(--accent);
-    font-style: italic;
-  }
-  .ownership-requests {
-    margin-top: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .ownership-request {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px;
-    background: rgba(77, 163, 255, 0.1);
-    border: 1px solid var(--accent);
-    border-radius: 6px;
-    font-size: 12px;
-  }
-  .ownership-request .actions {
-    display: flex;
-    gap: 6px;
-    flex: 0 0 auto;
-  }
-  .ownership-request button {
-    flex: 0 0 auto;
-    padding: 5px 12px;
-    font-size: 12px;
-  }
   .status {
     margin-top: 16px;
     padding: 10px 12px;
@@ -621,13 +589,6 @@
               <button id="own-avionics" data-category="avionics" disabled>Avionics</button>
               <button id="own-systems" data-category="systems" disabled>Systems</button>
             </div>
-
-            <!-- Grant/Deny prompt(s) for a category the co-pilot is
-                 currently requesting from this side (control_listener.h's
-                 SHARED_COCKPIT_OWNERSHIP "requested" state) - see
-                 main.js's renderOwnershipRequests(). Empty/hidden when
-                 nothing's pending. -->
-            <div class="ownership-requests" id="ownership-requests"></div>
 
             <div class="status" id="sc-status"><span class="dot"></span><span id="sc-status-text">loading…</span></div>
 

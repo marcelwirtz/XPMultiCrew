@@ -21,7 +21,7 @@ constexpr int kDatarefCategoryCount = 3;
 
 // Parses a category name as spelled in the DATAREF grammar's CATEGORY
 // token ("engine", "avionics", "systems") - also reused by
-// control/control_listener.h's REQUEST_OWNERSHIP command, so the two
+// control/control_listener.h's CLAIM_OWNERSHIP command, so the two
 // stay spelled the same way. False (and `out` left untouched) for
 // anything else.
 bool ParseDatarefCategoryName(const std::string& name, DatarefCategory& out);

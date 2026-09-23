@@ -119,19 +119,15 @@ void DatarefSync::ApplyValue(WatchedDataref& w, const DatarefValue& value) {
     w.has_last_known = true;
 }
 
-void DatarefSync::Poll(double now_s) {
-    // 1. Detect local changes and either broadcast them (this side owns
-    // the dataref's category) or revert them (it doesn't - see this
-    // class's comment). A dataref seen for the very first time (no
-    // last_known yet) has nothing authoritative to revert to, so it's
-    // always adopted as the initial cached baseline either way - but
-    // still only *broadcast* if this side actually owns the category, so
-    // an unseeded, unowned dataref's cold-start value doesn't leak onto
-    // the wire once. (Every current call site pairs "unowned" with
-    // "seeded from current values" - see DatarefSync::Start's comment -
-    // so has_last_known is already true by the time Poll() first runs for
-    // that case in practice; this still keeps the two checks logically
-    // independent instead of relying on that pairing always holding.)
+void DatarefSync::Poll() {
+    // 1. Detect local changes, claiming their category first if this side
+    // doesn't already own it (see this class's comment), then broadcast
+    // the new value unconditionally - touching it IS taking it. A dataref
+    // seen for the very first time (no last_known yet) is always adopted
+    // as the initial cached baseline (nothing to compare against), and
+    // still goes through the same claim-then-broadcast path as any other
+    // change - a cold-start value from an unowned category becomes this
+    // side's own claimed value, same as a real switch flip would.
     for (auto& w : watched_) {
         const DatarefValue current = ReadCurrentValue(w);
         const bool changed = w.stream || !w.has_last_known || current != w.last_known;
@@ -139,24 +135,15 @@ void DatarefSync::Poll(double now_s) {
             continue;
         }
 
-        const bool owns_category = ownership_.ShouldBroadcastLocalChange(w.category);
-        if (owns_category || !w.has_last_known) {
-            w.last_known = current;
-            w.has_last_known = true;
+        w.last_known = current;
+        w.has_last_known = true;
 
-            if (owns_category) {
-                const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
-                if (!encoded.empty()) {
-                    SendToPeers(encoded);
-                }
-            }
-        } else {
-            // Not owned, and there's a known-good value to fall back to:
-            // an unauthorized local touch (e.g. a hardware switch wired
-            // straight into X-Plane) gets snapped back to it instead of
-            // being broadcast - one deterministic revert, not a fight
-            // with the network on every subsequent Poll() tick.
-            ApplyValue(w, w.last_known);
+        if (!ownership_.Owns(w.category)) {
+            ClaimOwnership(w.category);
+        }
+        const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
+        if (!encoded.empty()) {
+            SendToPeers(encoded);
         }
     }
 
@@ -185,11 +172,11 @@ void DatarefSync::Poll(double now_s) {
             plain_data = opened->data();
             plain_size = opened->size();
         }
-        ApplyIncomingBytes(plain_data, plain_size, now_s);
+        ApplyIncomingBytes(plain_data, plain_size);
     }
 }
 
-void DatarefSync::IngestRelayedMessage(const void* data, size_t len, double now_s) {
+void DatarefSync::IngestRelayedMessage(const void* data, size_t len) {
     // Already PLAINTEXT, unlike the direct-UDP path above - NOT decrypted
     // again here. The relay channel multiplexes several message shapes
     // (position, dataref sync, ownership, weather) onto one stream, and
@@ -197,7 +184,7 @@ void DatarefSync::IngestRelayedMessage(const void* data, size_t len, double now_
     // can even peek the magic byte to know which Ingest* to call in the
     // first place - see that dispatcher's comment. A second Open() here
     // on already-decrypted bytes would just fail.
-    ApplyIncomingBytes(data, len, now_s);
+    ApplyIncomingBytes(data, len);
 }
 
 void DatarefSync::SendToPeers(const std::vector<uint8_t>& encoded) {
@@ -223,41 +210,25 @@ void DatarefSync::SendToPeers(const std::vector<uint8_t>& encoded) {
     }
 }
 
-void DatarefSync::RequestOwnership(DatarefCategory category, double now_s) {
-    const auto msg = ownership_.RequestCategory(category, now_s);
+void DatarefSync::ClaimOwnership(DatarefCategory category) {
+    const auto msg = ownership_.Claim(category);
     if (!msg) {
-        return; // already own it, or nothing new to send - see RequestCategory's comment
+        return; // already own it - nothing to send
     }
-    const auto encoded = EncodeOwnershipRequestMessage(*msg);
+    const auto encoded = EncodeOwnershipClaimMessage(*msg);
     if (encoded.empty()) {
         return;
     }
     // Sent a few times back-to-back: this channel is plain best-effort UDP
-    // with no ACK, and this is the request itself, not a state machine
-    // that needs a timed resend loop - OwnershipTracker's own pending-
-    // request state (kept across Poll() calls) is what makes a repeat
-    // click resend the *same* request (same nonce) instead of starting a
-    // second one.
+    // with no ACK, and a one-way notify has nothing to resend on beyond
+    // that - unlike the old request/grant handshake, there's no reply to
+    // wait for and so no pending state to dedupe a repeat send against.
     for (int i = 0; i < 3; ++i) {
         SendToPeers(encoded);
     }
 }
 
-void DatarefSync::RespondOwnership(DatarefCategory category, bool grant, double now_s) {
-    const auto msg = grant ? ownership_.Grant(category, now_s) : ownership_.Deny(category, now_s);
-    if (!msg) {
-        return; // no live incoming request for this category any more
-    }
-    const auto encoded = EncodeOwnershipResponseMessage(*msg);
-    if (encoded.empty()) {
-        return;
-    }
-    for (int i = 0; i < 3; ++i) {
-        SendToPeers(encoded);
-    }
-}
-
-void DatarefSync::ApplyIncomingBytes(const void* data, size_t len, double now_s) {
+void DatarefSync::ApplyIncomingBytes(const void* data, size_t len) {
     // `data`/`len` are always already PLAINTEXT by the time they reach
     // here - decrypted by Poll() for the direct-UDP path, or by
     // plugin_main.cpp's relay dispatcher for the relay path (see
@@ -266,17 +237,10 @@ void DatarefSync::ApplyIncomingBytes(const void* data, size_t len, double now_s)
     const auto* bytes = static_cast<const uint8_t*>(data);
     const uint32_t magic = PeekDatarefSyncChannelMagic(bytes, len);
 
-    if (magic == kOwnershipRequestMagic) {
-        OwnershipRequestMessage req;
-        if (DecodeOwnershipRequestMessage(bytes, len, req)) {
-            ownership_.OnPeerRequested(req.category, req.nonce, now_s);
-        }
-        return;
-    }
-    if (magic == kOwnershipResponseMagic) {
-        OwnershipResponseMessage resp;
-        if (DecodeOwnershipResponseMessage(bytes, len, resp)) {
-            ownership_.OnPeerResponded(resp.category, resp.nonce, resp.grant, now_s);
+    if (magic == kOwnershipClaimMagic) {
+        OwnershipClaimMessage claim;
+        if (DecodeOwnershipClaimMessage(bytes, len, claim)) {
+            ownership_.OnPeerClaimed(claim.category);
         }
         return;
     }

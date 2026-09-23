@@ -29,17 +29,15 @@ constexpr uint16_t kDatarefSyncUdpPort = 49021;
 // override_planepath.
 //
 // Every watched dataref belongs to one of a small fixed set of
-// DatarefCategory buckets (see shared_cockpit_config.h), and real,
-// enforced ownership is tracked per category via OwnershipTracker: only
-// the side that currently owns a category can have its local changes to
-// that category's datarefs actually take effect and propagate - a local
-// change to a dataref in a category this side doesn't own is reverted
-// back to the last-known-good value instead of being broadcast (one
-// deterministic snap-back, not a continuous fight against the network),
-// and an incoming remote write for a category this side *does* own is
-// dropped rather than applied, protecting that ownership in both
-// directions. See ownership_tracker.h's class comment for why this is a
-// unilateral claim/notify design rather than a request/grant handshake.
+// DatarefCategory buckets (see shared_cockpit_config.h), and ownership is
+// tracked per category via OwnershipTracker: touching a dataref in a
+// category this side doesn't currently own claims that category
+// immediately (broadcasting an OwnershipClaimMessage alongside the changed
+// value), and an incoming remote write for a category this side *does*
+// own is dropped rather than applied, protecting that ownership until
+// this side's own peer's claim is received. See ownership_tracker.h's
+// class comment for why this is a unilateral claim/notify design rather
+// than a request/grant handshake.
 //
 // Works for any aircraft without per-aircraft code: since both peers fly
 // the identical aircraft, watched dataref names resolve to the same thing
@@ -77,21 +75,18 @@ public:
     void Stop();
 
     // Call every frame or so: reads each watched dataref, broadcasts any
-    // that changed locally to every peer (or, for a category this side
-    // doesn't own, reverts the unauthorized local change instead - see
-    // this class's comment), and applies (with echo prevention and
-    // ownership gating) any change a peer sent for a dataref we're
-    // watching. `now_s` should be XPLMGetElapsedTime() - needed for the
-    // ownership request/grant/deny handshake's timeout (see
-    // ownership_tracker.h).
-    void Poll(double now_s);
+    // that changed locally to every peer (claiming its category first if
+    // this side doesn't already own it - see this class's comment), and
+    // applies (with echo prevention and ownership gating) any change a
+    // peer sent for a dataref we're watching.
+    void Poll();
 
     // Feeds a message that arrived via the rendezvous server's relay
     // rather than this class's own direct-UDP socket - see
     // SharedCockpitSync::IngestRelayedPacket's comment for why relay is
     // needed as a NAT-traversal fallback for Shared Cockpit over the
     // internet. Applies exactly like a directly-received change would.
-    void IngestRelayedMessage(const void* data, size_t len, double now_s);
+    void IngestRelayedMessage(const void* data, size_t len);
 
     // Also hand every locally-detected change to this callback (set once
     // by plugin_main.cpp to relay through the rendezvous server), in
@@ -103,37 +98,19 @@ public:
 
     size_t watched_count() const { return watched_.size(); }
 
-    // Local UI action ("I'd like this category") - see
-    // OwnershipTracker::RequestCategory. Not an immediate claim any more:
-    // sends a request to the peer (+ relay) a few times in a row (best-
-    // effort UDP, no ACK below this) and waits for their Grant/Deny -
-    // see ownership_tracker.h's class comment for the full handshake and
-    // its timeout. `now_s` should be XPLMGetElapsedTime(), same clock as
-    // Poll().
-    void RequestOwnership(DatarefCategory category, double now_s);
-
-    // Local UI action: answer a pending incoming request (see
-    // HasIncomingOwnershipRequest below) for `category` with Grant
-    // (`grant=true`) or Deny (`grant=false`). No-op if there's no live
-    // incoming request for it any more (already answered, or the
-    // requester's own timeout already passed).
-    void RespondOwnership(DatarefCategory category, bool grant, double now_s);
+    // Local UI action ("I'm taking this category now") - see
+    // OwnershipTracker::Claim. An immediate, unconditional claim: no
+    // permission step, see ownership_tracker.h's class comment. Sent to
+    // the peer (+ relay) a few times in a row (best-effort UDP, no ACK
+    // below this), same delivery policy as every other message on this
+    // channel. A no-op if this side already owns `category`.
+    void ClaimOwnership(DatarefCategory category);
 
     bool Owns(DatarefCategory category) const { return ownership_.Owns(category); }
 
-    // Exposed for the companion app's UI (via control_listener.h's
-    // SHARED_COCKPIT_OWNERSHIP line) - see OwnershipTracker's own
-    // comments for exactly what "pending"/"incoming" mean.
-    bool IsOwnershipRequestPending(DatarefCategory category, double now_s) const {
-        return ownership_.IsRequestPending(category, now_s);
-    }
-    bool HasIncomingOwnershipRequest(DatarefCategory category, double now_s) const {
-        return ownership_.HasIncomingRequest(category, now_s);
-    }
-
-    // Encrypts every outgoing message (dataref sync + ownership
-    // request/response, direct-UDP and relay alike, via the shared
-    // SendToPeers choke point) from here on - see net/session_crypto.h.
+    // Encrypts every outgoing message (dataref sync + ownership claims,
+    // direct-UDP and relay alike, via the shared SendToPeers choke point)
+    // from here on - see net/session_crypto.h.
     // On the RECEIVE side, only direct-UDP (Poll()) decrypts here; a
     // relayed message arrives via IngestRelayedMessage already decrypted
     // by plugin_main.cpp's relay dispatcher - see that method's comment
@@ -157,7 +134,7 @@ private:
 
     DatarefValue ReadCurrentValue(const WatchedDataref& w) const;
     void ApplyValue(WatchedDataref& w, const DatarefValue& value);
-    void ApplyIncomingBytes(const void* data, size_t len, double now_s);
+    void ApplyIncomingBytes(const void* data, size_t len);
     void SendToPeers(const std::vector<uint8_t>& encoded);
 
     UdpSocket socket_;
