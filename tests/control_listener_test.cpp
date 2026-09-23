@@ -43,6 +43,7 @@ int main() {
     bool join_as_spectator = false;
     std::string lan_host_port, lan_code;
     bool lan_connect_called = false;
+    bool reload_csl_called = false;
 
     ControlListener::Callbacks callbacks;
     callbacks.on_create_session = [&](const std::string& hp, bool as_spectator) {
@@ -72,6 +73,8 @@ int main() {
         ownership_claimed = true;
         claimed_category = category;
     };
+
+    callbacks.on_reload_csl = [&]() { reload_csl_called = true; };
 
     assert(listener.Start(callbacks));
 
@@ -173,6 +176,12 @@ int main() {
     PumpFor(listener, 200ms);
     assert(!ownership_claimed);
     std::printf("CLAIM_OWNERSHIP with an unknown category is ignored: OK\n");
+
+    const std::string cmd_reload = "RELOAD_CSL\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_reload.data(), cmd_reload.size());
+    PumpFor(listener, 200ms);
+    assert(reload_csl_called);
+    std::printf("RELOAD_CSL parsed correctly: OK\n");
 
     // Status push: SetFormationStatus should immediately send a decodable
     // message to the companion's port.

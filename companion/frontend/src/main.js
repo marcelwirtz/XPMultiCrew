@@ -7,7 +7,6 @@ import {
   DeleteSavedServer,
   DisconnectFormation,
   DisconnectSharedCockpit,
-  DiscoverLanPeers,
   GetAvailablePluginVersion,
   GetInstalledPluginVersion,
   GetRecentLogLines,
@@ -15,7 +14,7 @@ import {
   GetXPlanePath,
   InstallPlugin,
   JoinSession,
-  LanConnectFormation,
+  ReloadCsl,
   SaveServer,
   StartSharedCockpit,
 } from '../wailsjs/go/main/App';
@@ -302,6 +301,16 @@ document.getElementById('disconnect-sc-btn').addEventListener('click', async () 
   }
 });
 
+// See control_listener.h's RELOAD_CSL - the new model count arrives with
+// the next status push (CSL_STATUS), not as this call's result.
+document.getElementById('reload-csl-btn').addEventListener('click', async () => {
+  try {
+    await ReloadCsl();
+  } catch (e) {
+    alert(e);
+  }
+});
+
 // One click handler for all three ownership buttons - each carries its
 // own category in data-category (see index.html), and is already
 // disabled while it's owned by this side (see the status handler below),
@@ -374,60 +383,6 @@ function renderPeerList(peers) {
     .join('');
   el.innerHTML = `<ul>${items}</ul>`;
 }
-
-// Renders app.go's DiscoverLanPeers result as the "Nearby on LAN" list -
-// each entry gets its own Connect button, sending the code currently typed
-// into #lan-code (a separate, manually-agreed secret from the rendezvous
-// session codes above - see app.go's LanConnectFormation).
-function renderLanPeers(peers) {
-  const el = document.getElementById('lan-peer-list');
-  if (!peers || peers.length === 0) {
-    el.innerHTML = '<div class="empty">no XPMultiCrew instances found nearby</div>';
-    return;
-  }
-  const items = peers
-    .map((p) => {
-      const hostPort = `${p.host}:${p.port}`;
-      return (
-        `<li><span>${p.name} <span class="addr">(${hostPort})</span></span>` +
-        `<button class="secondary lan-connect-btn" data-host-port="${hostPort}">Connect</button></li>`
-      );
-    })
-    .join('');
-  el.innerHTML = `<ul>${items}</ul>`;
-  el.querySelectorAll('.lan-connect-btn').forEach((btn) => {
-    btn.addEventListener('click', () => connectLanPeer(btn.dataset.hostPort));
-  });
-}
-
-async function connectLanPeer(hostPort) {
-  const code = document.getElementById('lan-code').value.trim();
-  if (!code) {
-    alert('Enter the session code you agreed with your LAN peer first.');
-    return;
-  }
-  try {
-    await LanConnectFormation(hostPort, code);
-  } catch (e) {
-    alert(e);
-  }
-}
-
-// mDNS discovery itself takes a couple of seconds (see
-// companion/lan_discovery.go's discoverLanPeers timeout) - a background
-// poll rather than gating it on the Refresh click alone, so the list stays
-// current without the user needing to keep clicking it, same "cheap, poll
-// unconditionally" reasoning as pollDiagnostics below.
-async function refreshLanPeers() {
-  try {
-    renderLanPeers(await DiscoverLanPeers());
-  } catch (e) {
-    // Best-effort - a transient mDNS failure shouldn't spam an alert.
-  }
-}
-document.getElementById('lan-refresh-btn').addEventListener('click', refreshLanPeers);
-setInterval(refreshLanPeers, 10000);
-refreshLanPeers();
 
 // Renders control_listener.h's LINK_QUALITY reading for the Formation
 // panel - server RTT plus each currently-visible peer's packet loss.
@@ -551,6 +506,8 @@ EventsOn('status', (data) => {
   document.getElementById('start-sc-btn').disabled = !data.simReady || !sharedCockpitIdle;
   document.getElementById('disconnect-formation-btn').disabled = formationIdle;
   document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
+  document.getElementById('csl-status').textContent = data.cslStatus || '—';
+  document.getElementById('reload-csl-btn').disabled = !data.simReady;
 
   // Only meaningful while a Shared Cockpit session is actually running,
   // and pointless to click on a category already owned by this side (see

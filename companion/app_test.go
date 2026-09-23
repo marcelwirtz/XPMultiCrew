@@ -68,6 +68,18 @@ func TestStartSharedCockpitRequiresServer(t *testing.T) {
 	}
 }
 
+func TestReloadCslSendsCommand(t *testing.T) {
+	_, recv := recvLine(t)
+	app := NewApp()
+
+	if err := app.ReloadCsl(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := recv(); got != "RELOAD_CSL" {
+		t.Fatalf("unexpected command line: %q", got)
+	}
+}
+
 func TestDisconnectFormationSendsCommand(t *testing.T) {
 	_, recv := recvLine(t)
 	app := NewApp()

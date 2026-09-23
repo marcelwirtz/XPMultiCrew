@@ -43,6 +43,7 @@ type PluginClient struct {
 	sharedCockpitMismatch  string // "" if none - see control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH
 	simReady               bool
 	runningVersion         string
+	cslStatus              string // "" until the plugin has pushed one - see control_listener.h's CSL_STATUS
 }
 
 // LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
@@ -147,6 +148,14 @@ func (c *PluginClient) RunningVersion() string {
 	return c.runningVersion
 }
 
+// CslStatus returns the plugin's last-pushed CSL_STATUS (e.g. "3 model(s)
+// loaded" - see control_listener.h), or "" before the plugin has been seen.
+func (c *PluginClient) CslStatus() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cslStatus
+}
+
 // LinkQuality returns the last-pushed LINK_QUALITY reading (see
 // control_listener.h's wire-format comment) - a zero-value LinkQuality
 // (every field nil/empty) before the plugin has ever pushed one.
@@ -208,6 +217,8 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.simReady = value == "1"
 		case "PLUGIN_VERSION":
 			c.runningVersion = value
+		case "CSL_STATUS":
+			c.cslStatus = value
 		}
 	}
 }

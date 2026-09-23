@@ -169,9 +169,9 @@ int g_formation_own_peer_id = 0;
 // comment for why relay isn't handled inside that class itself.
 std::optional<flytogether::SessionCrypto> g_formation_crypto;
 
-// LAN-direct Formation (docs/plan.md's LAN-Auto-Discovery): companion-side
-// mDNS discovery hands the plugin a peer's address directly via
-// LAN_CONNECT_FORMATION, entirely bypassing g_rendezvous_client. Shares
+// LAN-direct Formation: LAN_CONNECT_FORMATION (see control_listener.h)
+// hands the plugin a peer's address directly, entirely bypassing
+// g_rendezvous_client. Shares
 // g_formation_crypto/g_formation_sync above with the rendezvous path (one
 // Formation link is either rendezvous-based or LAN-direct, never both at
 // once - see LanConnectFormation's comment); these three only track
@@ -518,8 +518,7 @@ void DisconnectFormation() {
 // means a LAN peer going quiet is NOT auto-retried (MaybeReconnectFormation
 // only ever drives the rendezvous path) - accepted v1 scope, see
 // docs/plan.md's LAN-Auto-Discovery open items; re-issuing
-// LAN_CONNECT_FORMATION (e.g. the companion app noticing the peer
-// reappeared via mDNS) is the way back in.
+// LAN_CONNECT_FORMATION is the way back in.
 void LanConnectFormation(const std::string& hostPort, const std::string& code) {
     if (g_rendezvous_active) {
         g_control_listener.SetFormationStatus(
@@ -636,6 +635,91 @@ std::string GetXPlanePluginsRootPath(const std::string& own_resources_path) {
 const std::vector<std::string> kKnownSharedCslDirs = {
     "IVAO_CSL",
 };
+
+// XPMPMultiplayerInit + loading our own Resources/CSL and every
+// kKnownSharedCslDirs entry that's installed. Shared by XPluginStart and
+// ReloadCsl below. Returns the text pushed as CSL_STATUS (see
+// control_listener.h) - "error: ..." only if XPMP2 itself failed to
+// initialize; a single package failing to load is logged but doesn't stop
+// the others.
+std::string InitXpmpAndLoadCsl() {
+    const std::string resources_path = GetPluginResourcesPath();
+    const std::string xpmp2_resources = resources_path + "/XPMP2";
+    const std::string csl_path = resources_path + "/CSL";
+
+    const char* xpmp_err = XPMPMultiplayerInit("XPMultiCrew", xpmp2_resources.c_str(),
+                                                nullptr, "GENR", "XPMultiCrew");
+    if (xpmp_err && xpmp_err[0]) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerInit failed: %s\n", xpmp_err);
+        XPLMDebugString(buf);
+        return std::string("error: XPMP2 init failed: ") + xpmp_err;
+    }
+    g_xpmp_initialized = true;
+
+    const char* csl_err = XPMPLoadCSLPackage(csl_path.c_str());
+    if (csl_err && csl_err[0]) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
+                      csl_path.c_str(), csl_err);
+        XPLMDebugString(buf);
+    }
+
+    const std::string plugins_root = GetXPlanePluginsRootPath(resources_path);
+    for (const auto& shared_dir_name : kKnownSharedCslDirs) {
+        const std::string shared_path = plugins_root + "/" + shared_dir_name;
+        std::error_code ec;
+        if (!std::filesystem::is_directory(shared_path, ec) || ec) {
+            continue; // not installed - not an error, just nothing to load
+        }
+        const char* shared_err = XPMPLoadCSLPackage(shared_path.c_str());
+        char buf[512];
+        if (shared_err && shared_err[0]) {
+            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
+                          shared_path.c_str(), shared_err);
+        } else {
+            std::snprintf(buf, sizeof(buf), "XPMultiCrew: loaded shared CSL package from %s\n",
+                          shared_path.c_str());
+        }
+        XPLMDebugString(buf);
+    }
+
+    const int model_count = XPMPGetNumberOfInstalledModels();
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "XPMultiCrew: %d CSL model(s) loaded\n", model_count);
+    XPLMDebugString(buf);
+    return std::to_string(model_count) + " model(s) loaded";
+}
+
+// RELOAD_CSL's handler (see control_listener.h) - picks up CSL packages
+// dropped into Resources/CSL (or an edited xsb_aircraft.txt, e.g. a
+// retuned VERT_OFFSET) without restarting X-Plane. XPMP2 has no API to
+// unload or replace already-loaded models (CSLModelsAdd silently keeps
+// the first definition of a duplicate key), so the only clean reload is a
+// full XPMPMultiplayerCleanup/Init cycle. Every XPMP2::Aircraft has to be
+// destroyed before that cleanup - UpdateFormationCallback recreates them
+// on its next frame for every peer that's still active, so remote
+// aircraft only blink out briefly.
+void ReloadCsl() {
+    XPLMDebugString("XPMultiCrew: reloading CSL models...\n");
+
+    g_xpmp_aircraft.clear();
+    if (g_xpmp_initialized) {
+        XPMPMultiplayerCleanup();
+        g_xpmp_initialized = false;
+    }
+
+    const std::string status = InitXpmpAndLoadCsl();
+    if (g_xpmp_initialized) {
+        const char* err = XPMPMultiplayerEnable();
+        if (err && err[0]) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
+            XPLMDebugString(buf);
+        }
+    }
+    g_control_listener.SetCslStatus(status);
+}
 
 // Reads the first element of a float-array dataref, or 0 if the dataref
 // wasn't found (e.g. name changed in a future X-Plane version - see the
@@ -792,9 +876,10 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
         }
     }
 
-    // Create XPMP2 aircraft for newly-seen peers.
+    // Create XPMP2 aircraft for newly-seen peers (not while XPMP2 is down,
+    // e.g. after a failed ReloadCsl - there'd be nothing to draw them with).
     for (const auto& [sender_id, icao] : active) {
-        if (g_xpmp_aircraft.find(sender_id) == g_xpmp_aircraft.end()) {
+        if (g_xpmp_initialized && g_xpmp_aircraft.find(sender_id) == g_xpmp_aircraft.end()) {
             try {
                 g_xpmp_aircraft.emplace(
                     sender_id, std::make_unique<flytogether::RemoteAircraftXPMP>(icao, sender_id));
@@ -1569,45 +1654,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     std::uniform_int_distribution<uint32_t> dist(1, 0xFFFFFFFEu);
     g_sender_id = dist(gen);
 
-    const std::string resources_path = GetPluginResourcesPath();
-    const std::string xpmp2_resources = resources_path + "/XPMP2";
-    const std::string csl_path = resources_path + "/CSL";
-
-    const char* xpmp_err = XPMPMultiplayerInit("XPMultiCrew", xpmp2_resources.c_str(),
-                                                nullptr, "GENR", "XPMultiCrew");
-    if (xpmp_err && xpmp_err[0]) {
-        char buf[512];
-        std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerInit failed: %s\n", xpmp_err);
-        XPLMDebugString(buf);
-    } else {
-        g_xpmp_initialized = true;
-        const char* csl_err = XPMPLoadCSLPackage(csl_path.c_str());
-        if (csl_err && csl_err[0]) {
-            char buf[512];
-            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
-                          csl_path.c_str(), csl_err);
-            XPLMDebugString(buf);
-        }
-
-        const std::string plugins_root = GetXPlanePluginsRootPath(resources_path);
-        for (const auto& shared_dir_name : kKnownSharedCslDirs) {
-            const std::string shared_path = plugins_root + "/" + shared_dir_name;
-            std::error_code ec;
-            if (!std::filesystem::is_directory(shared_path, ec) || ec) {
-                continue; // not installed - not an error, just nothing to load
-            }
-            const char* shared_err = XPMPLoadCSLPackage(shared_path.c_str());
-            char buf[512];
-            if (shared_err && shared_err[0]) {
-                std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPLoadCSLPackage(%s) failed: %s\n",
-                              shared_path.c_str(), shared_err);
-            } else {
-                std::snprintf(buf, sizeof(buf), "XPMultiCrew: loaded shared CSL package from %s\n",
-                              shared_path.c_str());
-            }
-            XPLMDebugString(buf);
-        }
-    }
+    g_control_listener.SetCslStatus(InitXpmpAndLoadCsl());
 
     return 1;
 }
@@ -1678,6 +1725,7 @@ PLUGIN_API int XPluginEnable() {
     };
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
+    control_callbacks.on_reload_csl = []() { ReloadCsl(); };
     control_callbacks.on_claim_ownership = [](flytogether::DatarefCategory category) {
         g_dataref_sync.ClaimOwnership(category);
         PushSharedCockpitOwnershipIfChanged();

@@ -34,10 +34,6 @@ export function DisconnectSharedCockpit() {
   return window['go']['main']['App']['DisconnectSharedCockpit']();
 }
 
-export function DiscoverLanPeers() {
-  return window['go']['main']['App']['DiscoverLanPeers']();
-}
-
 export function GetAvailablePluginVersion() {
   return window['go']['main']['App']['GetAvailablePluginVersion']();
 }
@@ -66,8 +62,8 @@ export function JoinSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['JoinSession'](arg1, arg2, arg3);
 }
 
-export function LanConnectFormation(arg1, arg2) {
-  return window['go']['main']['App']['LanConnectFormation'](arg1, arg2);
+export function ReloadCsl() {
+  return window['go']['main']['App']['ReloadCsl']();
 }
 
 export function SaveServer(arg1, arg2) {

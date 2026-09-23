@@ -161,6 +161,14 @@ func TestApplyStatusMessageParsesRunningVersion(t *testing.T) {
 	}
 }
 
+func TestApplyStatusMessageParsesCslStatus(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("CSL_STATUS 3 model(s) loaded\n")
+	if got := c.CslStatus(); got != "3 model(s) loaded" {
+		t.Fatalf("unexpected CSL status: %q", got)
+	}
+}
+
 func TestSharedCockpitOwnershipDefaultsToEmptyNotNil(t *testing.T) {
 	c := NewPluginClient()
 	ownership := c.SharedCockpitOwnership()

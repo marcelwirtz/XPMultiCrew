@@ -18,8 +18,6 @@ export function DisconnectFormation():Promise<void>;
 
 export function DisconnectSharedCockpit():Promise<void>;
 
-export function DiscoverLanPeers():Promise<Array<main.LanPeer>>;
-
 export function GetAvailablePluginVersion():Promise<string>;
 
 export function GetInstalledPluginVersion():Promise<string>;
@@ -34,7 +32,7 @@ export function InstallPlugin():Promise<void>;
 
 export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-export function LanConnectFormation(arg1:string,arg2:string):Promise<void>;
+export function ReloadCsl():Promise<void>;
 
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
 

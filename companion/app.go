@@ -32,6 +32,7 @@ type statusEvent struct {
 	SharedCockpitMismatch  string            `json:"sharedCockpitMismatch"`
 	SimReady               bool              `json:"simReady"`
 	RunningVersion         string            `json:"runningVersion"`
+	CslStatus              string            `json:"cslStatus"`
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -39,7 +40,6 @@ type statusEvent struct {
 type App struct {
 	ctx    context.Context
 	plugin *PluginClient
-	lanAd  *lanAdvertiser // nil if LAN advertising failed to start - see startup
 
 	// Session-persistence bookkeeping (see maybePersistFormation/
 	// maybePersistSharedCockpit/maybeAutoRejoin) - guarded by mu since
@@ -68,25 +68,6 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.plugin.ListenForStatus()
 	go a.pollStatus()
-
-	// LAN-Auto-Discovery: advertise this instance unconditionally, not
-	// gated on any session being active - see lan_discovery.go's package
-	// comment. A failure here (e.g. multicast blocked) only disables the
-	// "Nearby on LAN" list, same "log and carry on" spirit as the plugin's
-	// own UDP-port-busy failure modes - it must never block the rest of
-	// startup.
-	if ad, err := startLanAdvertise(); err == nil {
-		a.lanAd = ad
-	}
-}
-
-// shutdown stops LAN advertising when the window closes - see main.go's
-// OnShutdown. Not strictly required for correctness (the process exiting
-// closes the socket anyway), but Server.Shutdown() gets a chance to send a
-// goodbye packet, which keeps this instance from briefly lingering as a
-// stale, unreachable entry in other peers' "Nearby on LAN" lists.
-func (a *App) shutdown(ctx context.Context) {
-	a.lanAd.stop()
 }
 
 // pollStatus periodically asks the plugin for its current status (in case
@@ -118,6 +99,7 @@ func (a *App) pollStatus() {
 			SharedCockpitMismatch:  a.plugin.SharedCockpitAircraftMismatch(),
 			SimReady:               a.plugin.SimReady(),
 			RunningVersion:         a.plugin.RunningVersion(),
+			CslStatus:              a.plugin.CslStatus(),
 		})
 	}
 }
@@ -263,47 +245,6 @@ func (a *App) JoinSession(server, code string, asSpectator bool) error {
 	return a.plugin.Send(cmd)
 }
 
-// DiscoverLanPeers browses the LAN for a few seconds for other XPMultiCrew
-// instances (see lan_discovery.go) and returns what it found, for the
-// frontend's "Nearby on LAN" list. Never nil (an empty slice when there's
-// nothing nearby, or LAN advertising itself failed to start earlier), so
-// it marshals to JSON `[]` rather than `null`. Bound to the frontend's
-// "Refresh" action in the Formation panel's LAN section - a one-shot call
-// rather than a live-streaming list, since a Wails-bound method can't push
-// a channel to JS - the frontend re-calls this itself on a timer/click,
-// same polling pattern pollStatus already uses for plugin status.
-func (a *App) DiscoverLanPeers() ([]LanPeer, error) {
-	ownName := ""
-	if a.lanAd != nil {
-		ownName = a.lanAd.instanceName
-	}
-	peers, err := discoverLanPeers(2*time.Second, ownName)
-	if peers == nil {
-		peers = []LanPeer{}
-	}
-	return peers, err
-}
-
-// LanConnectFormation asks the plugin to connect directly to a peer
-// discovered via DiscoverLanPeers, bypassing the rendezvous server
-// entirely - see control_listener.h's LAN_CONNECT_FORMATION. `code` is a
-// session code the user manually agreed with the peer out of band (never
-// carried over mDNS - see lan_discovery.go's package comment); it does NOT
-// come from GetSavedServers/CreateSession's rendezvous-server codes, which
-// are a different namespace. Bound to the frontend's "Connect" action on
-// each "Nearby on LAN" list entry.
-func (a *App) LanConnectFormation(hostPort, code string) error {
-	hostPort = strings.TrimSpace(hostPort)
-	code = strings.TrimSpace(code)
-	if hostPort == "" {
-		return errors.New("peer address is required")
-	}
-	if code == "" {
-		return errors.New("enter the session code you agreed with your peer")
-	}
-	return a.plugin.Send("LAN_CONNECT_FORMATION " + hostPort + " " + code)
-}
-
 // StartSharedCockpit asks the plugin to start Shared Cockpit with the given
 // role (MASTER/CLIENT), using the same rendezvous-server session-code flow
 // as Formation's CreateSession/JoinSession (see control_listener.h's
@@ -342,6 +283,14 @@ func (a *App) StartSharedCockpit(role, server, code string) error {
 // only ever sends the three fixed category names its buttons carry.
 func (a *App) ClaimOwnership(category string) error {
 	return a.plugin.Send("CLAIM_OWNERSHIP " + strings.TrimSpace(category))
+}
+
+// ReloadCsl asks the plugin to re-scan its CSL model folders without an
+// X-Plane restart - see control_listener.h's RELOAD_CSL. Bound to the
+// frontend's "Reload CSL" button in the Multiplayer panel; the result
+// comes back asynchronously as CSL_STATUS.
+func (a *App) ReloadCsl() error {
+	return a.plugin.Send("RELOAD_CSL")
 }
 
 // DisconnectFormation asks the plugin to leave its current Formation

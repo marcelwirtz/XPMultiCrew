@@ -33,6 +33,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   CLAIM_OWNERSHIP <engine|avionics|systems>
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
+//   RELOAD_CSL
 //   GET_STATUS
 // The optional trailing SPECTATOR token on CREATE_SESSION/JOIN_SESSION
 // (Formation only - Shared Cockpit has no spectator mode, see
@@ -48,13 +49,14 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // step - see shared_cockpit/ownership_tracker.h's claim-and-tell model.
 // Silently ignores an unrecognized category name (same "don't hard-fail on
 // the unknown" spirit as this listener's other parsing).
-// LAN_CONNECT_FORMATION bypasses the rendezvous server entirely - it's the
-// companion app's mDNS "Nearby on LAN" list (discovery itself happens
-// companion-side, see companion/lan_discovery.go) handing the plugin a
-// peer's address directly, plus a manually-shared code both sides type in
-// (mDNS never carries the code - see net/session_crypto.h's code-only
+// LAN_CONNECT_FORMATION bypasses the rendezvous server entirely - it hands
+// the plugin a peer's address directly, plus a manually-shared code both
+// sides agree on out of band (see net/session_crypto.h's code-only
 // constructor for why, and its accepted trade-off vs. the salted,
-// rendezvous-minted key). Calling it a second time with a different
+// rendezvous-minted key). The companion app currently has no UI that
+// sends it (its mDNS "Nearby on LAN" discovery was removed again - it
+// picked up unrelated LAN devices), but the command stays so a future
+// LAN-connect UI, or a manual UDP datagram for testing, can still use it. Calling it a second time with a different
 // address just adds another direct peer to the same LAN group (all LAN
 // peers share one code, same as one rendezvous session's code covers
 // everyone in it); calling it with a DIFFERENT code while LAN peers from
@@ -69,6 +71,12 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // forever, specifically so a transient network/server blip doesn't need
 // the user to notice and re-click Create/Join - these commands are the
 // only way to actually stop that and go back to "not connected".
+// RELOAD_CSL re-scans Resources/CSL (and the shared CSL folders, see
+// plugin_main.cpp's kKnownSharedCslDirs) without restarting X-Plane - for
+// a CSL package dropped in while the sim is running, or a tweaked
+// xsb_aircraft.txt. Implemented as a full XPMP2 cleanup/re-init (see
+// plugin_main.cpp's ReloadCsl), so remote aircraft briefly disappear and
+// get re-matched against the fresh model set; sessions stay connected.
 // Shared Cockpit's peer discovery goes through the same rendezvous/relay
 // server as Formation mode (docs/plan.md section 7), not a manually-typed
 // peer address - see plugin_main.cpp's dedicated g_shared_cockpit_rendezvous
@@ -92,6 +100,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   SHARED_COCKPIT_AIRCRAFT_MISMATCH <own icao>:<master icao> (empty if matching/unknown)
 //   SIM_READY <0|1>
 //   PLUGIN_VERSION <version>
+//   CSL_STATUS <"N model(s) loaded" | "error: ..."> (empty before XPMP2 init ran)
 // SHARED_COCKPIT_OWNERSHIP reflects DatarefSync::Owns() for each category
 // from this side's point of view (empty string before Shared Cockpit's
 // dataref sync has actually started) - plugin_main.cpp pushes it whenever
@@ -141,6 +150,7 @@ public:
         std::function<void()> on_disconnect_formation;
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_claim_ownership;
+        std::function<void()> on_reload_csl;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -178,6 +188,7 @@ public:
     void SetSimReady(bool ready);
     bool IsSimReady() const { return sim_ready_; }
     void SetPluginVersion(const std::string& version);
+    void SetCslStatus(const std::string& text);
 
 private:
     void HandleLine(const std::string& line);
@@ -195,6 +206,7 @@ private:
     std::string shared_cockpit_aircraft_mismatch_;
     bool sim_ready_ = false;
     std::string plugin_version_ = "unknown";
+    std::string csl_status_;
 };
 
 } // namespace flytogether

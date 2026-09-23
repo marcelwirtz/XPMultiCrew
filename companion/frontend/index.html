@@ -41,8 +41,8 @@
      content area, rather than everything (Setup, Formation, Shared
      Cockpit, Diagnostics) stacked on one ever-growing page. Each section
      is its own .page, shown one at a time (see main.js's showPage()) -
-     this scales as later phases add more sections (LAN discovery,
-     preflight health check, flight log) without the window growing
+     this scales as later phases add more sections (preflight
+     health check, flight log) without the window growing
      unboundedly tall. */
   .app-layout {
     display: flex;
@@ -356,53 +356,26 @@
   .link-quality .peer-loss {
     margin-left: 6px;
   }
-  .lan-discovery {
+  .csl-section {
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid var(--border);
   }
-  .lan-discovery-header {
+  .csl-section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
-  .lan-discovery-header label {
+  .csl-section-header label {
     margin: 0;
   }
-  .lan-discovery-header button {
+  .csl-section-header label b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .csl-section-header button {
     flex: 0 0 auto;
     padding: 6px 10px;
-    font-size: 12px;
-  }
-  .lan-peer-list {
-    margin-top: 10px;
-    font-size: 13px;
-  }
-  .lan-peer-list .empty {
-    color: var(--muted);
-  }
-  .lan-peer-list ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .lan-peer-list li {
-    padding: 6px 10px;
-    background: #101317;
-    border-radius: 6px;
-    margin-top: 6px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-  }
-  .lan-peer-list li .addr {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .lan-peer-list li button {
-    flex: 0 0 auto;
-    padding: 5px 12px;
     font-size: 12px;
   }
   .mismatch-warning {
@@ -533,21 +506,13 @@
                  so an idle/not-connected panel doesn't show "?" everywhere. -->
             <div class="link-quality" id="formation-link-quality" style="display: none;"></div>
 
-            <!-- LAN-Auto-Discovery (docs/plan.md's Phase 4 #6): other
-                 XPMultiCrew instances mDNS-discovered on the same LAN,
-                 connecting directly and entirely bypassing the rendezvous
-                 server above - see app.go's LanConnectFormation. The code
-                 here is a separate, manually-agreed secret (never carried
-                 over mDNS - see companion/lan_discovery.go), not one of
-                 the rendezvous codes above. -->
-            <div class="lan-discovery">
-              <div class="lan-discovery-header">
-                <label>Nearby on LAN</label>
-                <button id="lan-refresh-btn" class="secondary" type="button">Refresh</button>
-              </div>
-              <input type="text" id="lan-code" placeholder="Session code (agree this with your LAN peer)">
-              <div class="lan-peer-list" id="lan-peer-list">
-                <div class="empty">no XPMultiCrew instances found nearby</div>
+            <!-- See control_listener.h's RELOAD_CSL - picks up CSL
+                 packages dropped into Resources/CSL while X-Plane is
+                 running. -->
+            <div class="csl-section">
+              <div class="csl-section-header">
+                <label>Aircraft models (CSL): <b id="csl-status">—</b></label>
+                <button id="reload-csl-btn" class="secondary" type="button" disabled>Reload CSL</button>
               </div>
             </div>
           </div>

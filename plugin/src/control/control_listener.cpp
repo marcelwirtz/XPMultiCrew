@@ -77,6 +77,8 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_disconnect_formation) callbacks_.on_disconnect_formation();
     } else if (cmd == "DISCONNECT_SHARED_COCKPIT") {
         if (callbacks_.on_disconnect_shared_cockpit) callbacks_.on_disconnect_shared_cockpit();
+    } else if (cmd == "RELOAD_CSL") {
+        if (callbacks_.on_reload_csl) callbacks_.on_reload_csl();
     } else if (cmd == "GET_STATUS") {
         SendStatus();
     }
@@ -89,7 +91,7 @@ void ControlListener::SendStatus() {
                              "\nPEERS " + formation_peers_ + "\nLINK_QUALITY " + link_quality_ +
                              "\nSHARED_COCKPIT_AIRCRAFT_MISMATCH " + shared_cockpit_aircraft_mismatch_ +
                              "\nSIM_READY " + (sim_ready_ ? "1" : "0") + "\nPLUGIN_VERSION " + plugin_version_ +
-                             "\n";
+                             "\nCSL_STATUS " + csl_status_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -151,6 +153,11 @@ void ControlListener::SetSharedCockpitAircraftMismatch(const std::string& encode
 
 void ControlListener::SetSimReady(bool ready) {
     sim_ready_ = ready;
+    SendStatus();
+}
+
+void ControlListener::SetCslStatus(const std::string& text) {
+    csl_status_ = text;
     SendStatus();
 }
 
