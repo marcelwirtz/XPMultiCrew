@@ -174,6 +174,12 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int, isSpe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Creating a fresh session implicitly leaves whatever session this
+	// address was still in - otherwise that old membership would linger
+	// (it's no longer reachable through clientsByAddr, so neither
+	// leave_session nor SweepStaleClients could ever remove it).
+	s.detachAddr(addr)
+
 	var code string
 	for {
 		c, err := randomSessionCode()
@@ -231,6 +237,38 @@ func (s *Server) handleJoinSession(addr *net.UDPAddr, code string, clientVersion
 		})
 		return
 	}
+
+	// Same address re-joining the session it's already in: the plugin's
+	// auto-reconnect does exactly this after its own (shorter) server-silence
+	// timeout fires while we still consider it a member - e.g. after a long
+	// loading screen. Treat it as a resume: keep its member ID, re-send the
+	// current peer list (the client dropped its own copy on disconnect) and
+	// don't tell anyone else, since from their side nothing changed.
+	// Handing out a new ID instead used to leave the old entry behind as a
+	// ghost member pointing at the same address.
+	if existing, ok := s.clientsByAddr[addr.String()]; ok && existing.SessionCode == code {
+		if _, stillMember := session.Members[existing.MemberID]; stillMember {
+			existing.LastSeen = time.Now()
+			existing.IsSpectator = isSpectator
+			for id, other := range session.Members {
+				if id == existing.MemberID {
+					continue
+				}
+				s.sender.SendTo(addr, ServerMessage{
+					Type: MsgPeerJoined, PeerID: other.MemberID, PeerAddr: other.Addr.String(),
+					PeerIsSpectator: other.IsSpectator,
+				})
+			}
+			s.sender.SendTo(addr, ServerMessage{
+				Type: MsgSessionCreated, Code: code, YourID: existing.MemberID,
+				Salt: base64.StdEncoding.EncodeToString(session.Salt),
+			})
+			return
+		}
+	}
+	// Joining a different session implicitly leaves the old one - see
+	// handleCreateSession's identical call.
+	s.detachAddr(addr)
 
 	newID := session.nextID
 	session.nextID++
@@ -307,7 +345,12 @@ func (s *Server) handleKeepalive(addr *net.UDPAddr) {
 func (s *Server) handleLeaveSession(addr *net.UDPAddr) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.detachAddr(addr)
+}
 
+// detachAddr removes addr's current session membership, if any, notifying
+// its remaining peers. Caller must hold s.mu.
+func (s *Server) detachAddr(addr *net.UDPAddr) {
 	member, ok := s.clientsByAddr[addr.String()]
 	if !ok {
 		return

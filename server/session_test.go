@@ -514,3 +514,81 @@ func TestKeepaliveFromUnknownClientIsHarmless(t *testing.T) {
 		t.Fatalf("expected no messages, got: %+v", msgs)
 	}
 }
+
+// The plugin's auto-reconnect re-sends join_session from the same socket
+// after its own 40s silence timeout, while the server (120s timeout) still
+// has it as a member. That must resume the existing membership, not add a
+// second one for the same address.
+func TestRejoinFromSameAddressResumesMembership(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(10001)
+	b := addrFor(10002)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession})
+	code := sender.messagesTo(a)[0].Code
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: code})
+
+	sender.sent = nil
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: code})
+
+	if n := len(server.sessions[code].Members); n != 2 {
+		t.Fatalf("expected 2 members after rejoin, got %d", n)
+	}
+	if msgs := sender.messagesTo(a); len(msgs) != 0 {
+		t.Fatalf("a should not be notified of b's resume, got %+v", msgs)
+	}
+	bMsgs := sender.messagesTo(b)
+	gotPeerA, gotWelcome := false, false
+	for _, m := range bMsgs {
+		if m.Type == MsgPeerJoined && m.PeerID == 2 {
+			t.Fatalf("b was told about itself: %+v", bMsgs)
+		}
+		if m.Type == MsgPeerJoined && m.PeerID == 1 {
+			gotPeerA = true
+		}
+		if m.Type == MsgSessionCreated && m.YourID == 2 {
+			gotWelcome = true
+		}
+	}
+	if !gotPeerA || !gotWelcome {
+		t.Fatalf("b did not get peer list + session_created with its old id: %+v", bMsgs)
+	}
+}
+
+func TestCreateOrJoinOtherSessionLeavesOldOne(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	a := addrFor(10001)
+	b := addrFor(10002)
+	c := addrFor(10003)
+
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession})
+	codeA := sender.messagesTo(a)[0].Code
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: codeA})
+	server.HandleMessage(c, ClientMessage{Type: MsgCreateSession})
+	codeC := sender.messagesTo(c)[0].Code
+
+	sender.sent = nil
+	server.HandleMessage(b, ClientMessage{Type: MsgJoinSession, Code: codeC})
+
+	if n := len(server.sessions[codeA].Members); n != 1 {
+		t.Fatalf("b should have left session A, it has %d members", n)
+	}
+	gotLeft := false
+	for _, m := range sender.messagesTo(a) {
+		if m.Type == MsgPeerLeft && m.PeerID == 2 {
+			gotLeft = true
+		}
+	}
+	if !gotLeft {
+		t.Fatal("a was not told that b left")
+	}
+
+	// Creating a new session leaves the old one too - and the now-empty
+	// session A goes away entirely.
+	server.HandleMessage(a, ClientMessage{Type: MsgCreateSession})
+	if _, ok := server.sessions[codeA]; ok {
+		t.Fatal("empty session A should have been deleted")
+	}
+}
