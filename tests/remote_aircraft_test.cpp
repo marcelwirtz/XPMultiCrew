@@ -218,6 +218,25 @@ void TestHardResetSnapsForLargeJump() {
 
 } // namespace
 
+// protocol_version 2's ref_height_agl_m reaches the pose; a version 1
+// sender's packet (shorter, so the field keeps its default) reads as
+// unknown rather than as whatever bytes happen to be there.
+void TestRefHeightOnlyFromVersion2Senders() {
+    AircraftStatePacket v2;
+    v2.sequence = 1;
+    v2.ref_height_agl_m = 2.3f;
+    RemoteAircraft a;
+    a.OnPacketReceived(v2, 1.0);
+    assert(NearlyEqual(a.ComputePose(1.0).ref_height_agl_m, 2.3, 1e-6));
+
+    AircraftStatePacket v1 = v2;
+    v1.protocol_version = 1;
+    RemoteAircraft b;
+    b.OnPacketReceived(v1, 1.0);
+    assert(b.ComputePose(1.0).ref_height_agl_m < 0.0f);
+    std::printf("TestRefHeightOnlyFromVersion2Senders: OK\n");
+}
+
 int main() {
     TestHoldsLastKnownPoseWithOnlyOneSample();
     TestExtrapolatesLinearMotion();
@@ -227,6 +246,7 @@ int main() {
     TestTracksConstantVelocityAcrossMultipleFrames();
     TestBlendsTowardTargetInsteadOfSnapping();
     TestHardResetSnapsForLargeJump();
+    TestRefHeightOnlyFromVersion2Senders();
     std::printf("All remote_aircraft tests passed.\n");
     return 0;
 }

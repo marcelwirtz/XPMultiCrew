@@ -12,26 +12,17 @@ OBJ8_AIRCRAFT Generic
 
 OBJ8 SOLID YES XPMultiCrew_Generic/generic.obj
 
-# Without this, XPMP2 falls back to auto-computing the vertical offset from
-# generic.obj's own Y extents (CSLModels.cpp's FetchVertOfsFromObjFile) -
-# and that auto-detect is a bad fit for this particular mesh: generic.obj's
-# vertices all sit ABOVE Y=0 (0.05 to 1.45, no landing-gear geometry below
-# the fuselage box), which trips the "min >= 0" fallback branch and returns
-# just -1.45 (the negated top of the mesh) as the offset, not anything
-# related to where the model should actually sit relative to the ground.
-# Result (confirmed live, two-instance test 2026-09-20): remote aircraft
-# floated ~1m above the ground, since X-Plane's own aircraft-reference-
-# point elevation (sim/flightmodel/position/elevation, what we send as
-# elevation_m) sits well above actual ground level for a grounded aircraft
-# - roughly 2.4-2.5m for the twins in this project's own bundled Shared
-# Cockpit profiles (BE58/BE9L), and the -1.45 auto-detected offset only
-# corrected part of that gap.
-# -2.5 is a tuned approximation for that same reason a single generic
-# placeholder model can never be exactly right for every real aircraft
-# type it stands in for (their actual reference-point heights differ) -
-# retune this the same way (fly two instances, compare against known
-# elevation, adjust) if it's later found off for a materially
-# different aircraft type/mix.
-VERT_OFFSET -2.5
+# VERT_OFFSET follows the normal XPMP2 meaning: how far to lift the model
+# so its lowest point sits at the altitude it's given, which is the bottom
+# of the peer's landing gear (the plugin subtracts the peer's reported
+# reference-point height, see csl_aircraft.cpp). generic.obj's lowest
+# vertex is at Y=0.05, so it just needs to come down those 5cm.
+#
+# Set explicitly because XPMP2's auto-detect (FetchVertOfsFromObjFile)
+# gets this mesh wrong: with every vertex above Y=0 it falls back to the
+# negated TOP of the mesh (-1.45). Up to v0.2.2 this line was -2.5, which
+# also compensated for the reference-point height the plugin didn't send
+# back then.
+VERT_OFFSET -0.05
 
 ICAO GENR

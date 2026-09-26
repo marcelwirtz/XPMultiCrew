@@ -101,6 +101,9 @@ AircraftPose RemoteAircraft::ComputeTargetPose(double now_s, double* out_vel_nor
     pose.speedbrake_ratio = latest_.speedbrake_ratio;
     pose.engine_ratio = latest_.engine_ratio;
     pose.light_bits = latest_.light_bits;
+    if (latest_.protocol_version >= 2) {
+        pose.ref_height_agl_m = latest_.ref_height_agl_m;
+    }
 
     const double sample_dt = latest_receive_time_s_ - previous_receive_time_s_;
 

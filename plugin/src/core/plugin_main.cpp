@@ -135,6 +135,12 @@ XPLMDataRef g_strobe_ref = nullptr;
 XPLMDataRef g_nav_ref = nullptr;
 XPLMDataRef g_landing_ref = nullptr;
 XPLMDataRef g_icao_ref = nullptr; // sim/aircraft/view/acf_ICAO
+XPLMDataRef g_y_agl_ref = nullptr;     // sim/flightmodel/position/y_agl, float meters
+XPLMDataRef g_on_ground_ref = nullptr; // sim/flightmodel/failures/onground_any, int
+// Own reference-point height above the bottom of the gear - see
+// AircraftStatePacket::ref_height_agl_m. Re-measured whenever we're on
+// the ground, held while airborne, reset on aircraft change.
+float g_ref_height_agl_m = -1.0f;
 
 flytogether::FormationSync g_formation_sync;
 uint32_t g_sender_id = 0;
@@ -783,6 +789,14 @@ flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id,
     packet.light_bits = ReadLightBits();
 
     std::memcpy(packet.icao_type, g_icao_type, sizeof(packet.icao_type));
+
+    if (g_y_agl_ref && g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0) {
+        const float y_agl = XPLMGetDataf(g_y_agl_ref);
+        if (y_agl >= 0.0f && y_agl < 15.0f) {
+            g_ref_height_agl_m = y_agl;
+        }
+    }
+    packet.ref_height_agl_m = g_ref_height_agl_m;
     return packet;
 }
 
@@ -1652,6 +1666,8 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_local_vz_ref = XPLMFindDataRef("sim/flightmodel/position/local_vz");
 
     g_icao_ref = XPLMFindDataRef("sim/aircraft/view/acf_ICAO");
+    g_y_agl_ref = XPLMFindDataRef("sim/flightmodel/position/y_agl");
+    g_on_ground_ref = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
     RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
     std::random_device rd;
@@ -1845,6 +1861,7 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID /*inFrom*/, int inMsg, void* 
         // hadn't loaded an aircraft yet), and keeps it correct across an
         // aircraft change mid-session too.
         RefreshOwnIcaoType();
+        g_ref_height_agl_m = -1.0f; // different aircraft, different gear height - re-measure
     } else if (inMsg == XPLM_MSG_PLANE_UNLOADED && plane_index == 0) {
         g_control_listener.SetSimReady(false);
     }

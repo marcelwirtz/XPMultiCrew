@@ -22,7 +22,7 @@ constexpr uint32_t kAircraftStateMagic = 0x46545331; // "FTS1"
 // introduced in>` - never on exact equality, so a receiver correctly
 // treats "newer than me" the same as "current" (it just won't read fields
 // it doesn't know about yet) instead of rejecting the packet outright.
-constexpr uint32_t kAircraftStateProtocolVersion = 1;
+constexpr uint32_t kAircraftStateProtocolVersion = 2;
 
 // The oldest protocol_version this build still understands enough of to
 // accept at all - deliberately a *separate*, frozen constant from
@@ -91,14 +91,27 @@ struct AircraftStatePacket {
 
     char icao_type[8] = {}; // e.g. "C172", null-padded, not null-terminated
                              // if it fills all 8 bytes
+
+    // --- protocol_version 2 ---
+
+    // How far the reference point `elevation_m` describes sits above the
+    // bottom of the landing gear, in meters - measured while on the ground
+    // (sim/flightmodel/position/y_agl) and held from then on. Lets the
+    // receiver hand XPMP2 the gear-contact altitude it expects, so any CSL
+    // model's own VERT_OFFSET places it correctly on the ground. Negative
+    // = unknown (not measured yet, or a protocol_version 1 sender whose
+    // shorter packet never reached this field - it keeps this default).
+    float ref_height_agl_m = -1.0f;
 };
 #pragma pack(pop)
 
-// If this ever fires, `kAircraftStateMinSize` above needs a fresh,
-// separately-tracked value for the new baseline the next time a field is
-// appended - see its comment. It must never simply become
-// `sizeof(AircraftStatePacket)`.
-static_assert(sizeof(AircraftStatePacket) == kAircraftStateMinSize,
-              "AircraftStatePacket's size changed - see kAircraftStateMinSize's comment");
+// Size as of protocol_version 2. kAircraftStateMinSize above stays at the
+// version 1 baseline on purpose - see its comment.
+constexpr size_t kAircraftStateV2Size = 81;
+static_assert(sizeof(AircraftStatePacket) == kAircraftStateV2Size,
+              "AircraftStatePacket's size changed - add a new kAircraftStateV<N>Size, don't touch "
+              "kAircraftStateMinSize (see its comment)");
+static_assert(offsetof(AircraftStatePacket, ref_height_agl_m) == kAircraftStateMinSize,
+              "protocol_version 2 fields must start right after the version 1 baseline");
 
 } // namespace flytogether

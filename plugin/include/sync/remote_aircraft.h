@@ -19,6 +19,8 @@ struct AircraftPose {
     float speedbrake_ratio = 0.0f;
     float engine_ratio = 0.0f;
     uint8_t light_bits = 0;
+    // See AircraftStatePacket::ref_height_agl_m - negative = unknown.
+    float ref_height_agl_m = -1.0f;
 };
 
 // Tracks one remote aircraft's network-reported state and extrapolates a
