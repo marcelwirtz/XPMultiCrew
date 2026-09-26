@@ -37,6 +37,7 @@ type statusEvent struct {
 	CslStatus              string            `json:"cslStatus"`
 	OwnIcao                string            `json:"ownIcao"`
 	TcasStatus             string            `json:"tcasStatus"`
+	Learn                  LearnStatus       `json:"learn"`
 	SelfPos                *MapPosition      `json:"selfPos"`
 	PeerPos                []MapPosition     `json:"peerPos"`
 }
@@ -110,6 +111,7 @@ func (a *App) pollStatus() {
 			CslStatus:              a.plugin.CslStatus(),
 			OwnIcao:                a.plugin.OwnIcao(),
 			TcasStatus:             a.plugin.TcasStatus(),
+			Learn:                  a.describedLearnStatus(),
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 		})
@@ -597,4 +599,38 @@ func (a *App) GetAirports() (AirportData, error) {
 		return AirportData{}, errors.New("choose your X-Plane folder first (Setup)")
 	}
 	return loadAirports(root)
+}
+
+// describedLearnStatus adds DataRefs.txt descriptions and a suggested
+// category to what the plugin learned.
+func (a *App) describedLearnStatus() LearnStatus {
+	status := a.plugin.Learn()
+	root := loadConfig().XPlanePath
+	for i := range status.Changes {
+		info := describeDataref(root, status.Changes[i].Name)
+		status.Changes[i].Description = info.Description
+		status.Changes[i].Category = info.Category
+	}
+	return status
+}
+
+// StartLearn asks the plugin to start "learn from the cockpit" (see
+// control_listener.h's LEARN_START).
+func (a *App) StartLearn() error {
+	return a.plugin.Send("LEARN_START")
+}
+
+// StopLearn ends it; the learned list stays until the next start.
+func (a *App) StopLearn() error {
+	return a.plugin.Send("LEARN_STOP")
+}
+
+// SearchDatarefs finds writable X-Plane datarefs by name or description for
+// the profile editor's suggestions.
+func (a *App) SearchDatarefs(query string) []DatarefInfo {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return []DatarefInfo{}
+	}
+	return searchDatarefs(root, query, 20)
 }

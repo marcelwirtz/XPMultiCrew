@@ -449,6 +449,41 @@
   .profile-table td.warn { color: var(--err); font-size: 11px; }
   .profile-table button.row-delete { background: transparent; color: var(--err); font-weight: 700; padding: 4px 8px; flex: none; }
   .profile-table input.has-warning { border-color: var(--err); }
+  .dataref-suggest {
+    position: fixed;
+    z-index: 50;
+    display: none;
+    max-height: 260px;
+    overflow-y: auto;
+    background: #0d1014;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    font-size: 12px;
+  }
+  .dataref-suggest > div { padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .dataref-suggest > div:last-child { border-bottom: none; }
+  .dataref-suggest > div.active, .dataref-suggest > div:hover { background: rgba(77, 163, 255, 0.15); }
+  .dataref-suggest .s-name { font-family: ui-monospace, "SF Mono", Consolas, monospace; color: var(--text); }
+  .dataref-suggest .s-desc { color: var(--muted); margin-top: 2px; }
+  .dataref-suggest .s-cat { float: right; color: var(--accent); margin-left: 8px; }
+  .learn-panel {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: rgba(77, 163, 255, 0.06);
+  }
+  .learn-panel .learn-status { font-size: 13px; margin-bottom: 10px; }
+  .learn-list { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+  .learn-list li { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--border); }
+  .learn-list li .l-main { flex: 1; min-width: 0; }
+  .learn-list li .l-name { font-family: ui-monospace, "SF Mono", Consolas, monospace; word-break: break-all; }
+  .learn-list li .l-desc { color: var(--muted); }
+  .learn-list li select {
+    background: #101317; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; padding: 4px;
+  }
+  .learn-list li.known { opacity: 0.5; }
   .map-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
   .map-toolbar select {
     background: #101317;
@@ -559,7 +594,19 @@
               <thead><tr><th>Dataref</th><th>Category</th><th title="Send every tick instead of only on change (spring-loaded switches like the starter)">Stream</th><th></th></tr></thead>
               <tbody id="profile-rows"></tbody>
             </table>
+            <div class="hint">Type part of a name or what it does (e.g. "beacon", "mixture") for suggestions -
+              or let the plugin find them: "Learn from cockpit", then flip the switches in X-Plane.</div>
+            <div class="learn-panel" id="learn-panel" style="display: none;">
+              <div class="learn-status" id="learn-status"></div>
+              <ul class="learn-list" id="learn-list"></ul>
+              <div class="row buttons">
+                <button id="learn-add-btn" type="button">Add selected</button>
+                <button id="learn-stop-btn" class="secondary" type="button">Stop</button>
+                <button id="learn-close-btn" class="secondary" type="button">Close</button>
+              </div>
+            </div>
             <div class="row buttons">
+              <button id="profile-learn-btn" class="secondary" type="button">Learn from cockpit</button>
               <button id="profile-add-btn" class="secondary" type="button">Add dataref</button>
               <button id="profile-save-btn" type="button">Save my profile</button>
               <button id="profile-revert-btn" class="secondary" type="button">Delete my version</button>
@@ -746,6 +793,7 @@
     </div>
   </div>
 
+  <div class="dataref-suggest" id="dataref-suggest"></div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

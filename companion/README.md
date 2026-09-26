@@ -175,6 +175,16 @@ is checked against `<X-Plane>/Resources/plugins/DataRefs.txt` (unknown or
 read-only names get a warning; add-on datarefs that don't start with
 `sim/` can't be checked).
 
+Two helpers so nobody needs to know dataref names: suggestions while
+typing (`SearchDatarefs` - name + description search over DataRefs.txt,
+writable only, physics/multiplayer/override areas left out, a category
+guessed from the path) and **Learn from cockpit** (`LEARN_START`/
+`LEARN_STOP`, see `plugin/include/shared_cockpit/dataref_learner.h`): the
+plugin enumerates every writable dataref X-Plane knows (XPLM400's
+`XPLMGetDataRefsByIndex`, add-on datarefs included), marks whatever moves
+during a 3 s hands-off baseline - or keeps moving afterwards - as noise, and
+reports what the user changed via `LEARN_CHANGES`.
+
 ## System dependencies
 
 - Go 1.22+, Node.js/npm (for the Vite-built frontend).

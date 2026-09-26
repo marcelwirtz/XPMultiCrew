@@ -28,6 +28,28 @@ export namespace main {
 	        this.warning = source["warning"];
 	    }
 	}
+	export class DatarefInfo {
+	    name: string;
+	    type: string;
+	    writable: boolean;
+	    units?: string;
+	    description?: string;
+	    category: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DatarefInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.writable = source["writable"];
+	        this.units = source["units"];
+	        this.description = source["description"];
+	        this.category = source["category"];
+	    }
+	}
 	export class LogLinesResult {
 	    lines: string[];
 	    offset: number;

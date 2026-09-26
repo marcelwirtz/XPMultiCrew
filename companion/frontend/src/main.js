@@ -21,8 +21,11 @@ import {
   ReloadCsl,
   SaveProfile,
   SaveServer,
+  SearchDatarefs,
   SetPrefs,
+  StartLearn,
   StartSharedCockpit,
+  StopLearn,
 } from '../wailsjs/go/main/App';
 
 // Everything peer-supplied (callsigns, ICAO types) goes through this before
@@ -578,6 +581,9 @@ EventsOn('status', (data) => {
   document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
   renderTcasStatus(data.tcasStatus);
+  lastSimReady = data.simReady;
+  document.getElementById('profile-learn-btn').disabled = !data.simReady;
+  renderLearn(data.learn);
   document.getElementById('reload-csl-btn').disabled = !data.simReady || Date.now() < cslReloadBlockedUntil;
 
   // Only meaningful while a Shared Cockpit session is actually running,
@@ -867,3 +873,192 @@ document.getElementById('profile-revert-btn').addEventListener('click', async ()
 });
 document.querySelector('.sidebar button[data-page="profiles"]').addEventListener('click', () => refreshProfileList());
 if (initialPage === 'profiles') refreshProfileList();
+
+// --- Dataref suggestions while typing (companion/profiles.go's
+// searchDatarefs: name or description, writable only) ---
+const suggestBox = document.getElementById('dataref-suggest');
+let suggestInput = null;
+let suggestItems = [];
+let suggestActive = -1;
+let suggestTimer = null;
+let suggestSeq = 0;
+
+function hideSuggestions() {
+  suggestBox.style.display = 'none';
+  suggestItems = [];
+  suggestActive = -1;
+}
+
+function pickSuggestion(item) {
+  if (!suggestInput) return;
+  suggestInput.value = item.name;
+  suggestInput.classList.remove('has-warning');
+  const row = suggestInput.closest('tr');
+  const category = row && row.querySelector('.p-category');
+  if (category && item.category) category.value = item.category;
+  hideSuggestions();
+}
+
+function renderSuggestions() {
+  if (!suggestInput || suggestItems.length === 0) {
+    hideSuggestions();
+    return;
+  }
+  suggestBox.innerHTML = suggestItems
+    .map((s, i) => `<div data-i="${i}" class="${i === suggestActive ? 'active' : ''}">
+      <span class="s-cat">${escapeHtml(s.category)}</span>
+      <div class="s-name">${escapeHtml(s.name)}</div>
+      ${s.description ? `<div class="s-desc">${escapeHtml(s.description)}${s.units ? ` (${escapeHtml(s.units)})` : ''}</div>` : ''}
+    </div>`)
+    .join('');
+  const rect = suggestInput.getBoundingClientRect();
+  suggestBox.style.left = `${rect.left}px`;
+  suggestBox.style.top = `${rect.bottom + 2}px`;
+  suggestBox.style.width = `${Math.max(rect.width, 420)}px`;
+  suggestBox.style.display = 'block';
+}
+
+suggestBox.addEventListener('mousedown', (e) => {
+  const el = e.target.closest('[data-i]');
+  if (!el) return;
+  e.preventDefault(); // keep focus in the input
+  pickSuggestion(suggestItems[Number(el.dataset.i)]);
+});
+
+document.getElementById('profile-rows').addEventListener('input', (e) => {
+  if (!e.target.classList.contains('p-name')) return;
+  suggestInput = e.target;
+  clearTimeout(suggestTimer);
+  const query = e.target.value.trim();
+  if (query.length < 2 || query.includes('/') && query.length > 60) {
+    hideSuggestions();
+    return;
+  }
+  suggestTimer = setTimeout(async () => {
+    const seq = ++suggestSeq;
+    const results = await SearchDatarefs(query).catch(() => []);
+    if (seq !== suggestSeq || suggestInput !== e.target) return; // a newer keystroke won
+    suggestItems = results || [];
+    suggestActive = -1;
+    renderSuggestions();
+  }, 150);
+});
+
+document.getElementById('profile-rows').addEventListener('keydown', (e) => {
+  if (!e.target.classList.contains('p-name') || suggestBox.style.display !== 'block') return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = suggestItems.length;
+    suggestActive = (suggestActive + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    renderSuggestions();
+  } else if (e.key === 'Enter' && suggestActive >= 0) {
+    e.preventDefault();
+    pickSuggestion(suggestItems[suggestActive]);
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+});
+
+document.getElementById('profile-rows').addEventListener('focusout', () => setTimeout(hideSuggestions, 150));
+document.querySelector('.content').addEventListener('scroll', hideSuggestions);
+
+// --- "Learn from cockpit" (plugin's LEARN_START/LEARN_STOP, see
+// shared_cockpit/dataref_learner.h) ---
+let lastSimReady = false;
+let learnPanelOpen = false;
+let lastLearn = null;
+const learnUnchecked = new Set(); // names the user unticked
+const learnCategory = new Map(); // name -> category the user picked
+
+function profileNames() {
+  return new Set(readProfileRows().map((r) => r.name));
+}
+
+function renderLearn(learn) {
+  lastLearn = learn;
+  const panel = document.getElementById('learn-panel');
+  if (!learn || (!learnPanelOpen && learn.state === 'idle')) {
+    panel.style.display = 'none';
+    return;
+  }
+  learnPanelOpen = true;
+  panel.style.display = '';
+  const status = document.getElementById('learn-status');
+  if (learn.state === 'baseline') {
+    status.textContent = `Hands off for a moment - checking which of ${learn.candidates} datarefs change on their own…`;
+  } else if (learn.state === 'watching') {
+    status.textContent = `Now flip the switches, turn the knobs and press the buttons you want to keep in sync. ` +
+      `(${learn.candidates} datarefs watched, ${learn.noisy} ignored because they move by themselves)`;
+  } else {
+    status.textContent = learn.changes.length ? 'Learning stopped. Tick what you want and add it to the profile.'
+      : 'Learning stopped - nothing changed.';
+  }
+  document.getElementById('learn-stop-btn').style.display = learn.state === 'idle' ? 'none' : '';
+
+  // Don't rebuild the list under the user's cursor if nothing changed.
+  const list = document.getElementById('learn-list');
+  const signature = JSON.stringify(learn.changes);
+  if (list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
+  const known = profileNames();
+  list.innerHTML = learn.changes
+    .map((c) => {
+      const inProfile = known.has(c.name);
+      const category = learnCategory.get(c.name) || c.category;
+      const options = kCategories
+        .map((k) => `<option value="${k}" ${k === category ? 'selected' : ''}>${k}</option>`)
+        .join('');
+      return `<li class="${inProfile ? 'known' : ''}" data-name="${escapeHtml(c.name)}">
+        <input type="checkbox" ${inProfile ? 'disabled' : learnUnchecked.has(c.name) ? '' : 'checked'}>
+        <div class="l-main">
+          <div class="l-name">${escapeHtml(c.name)}</div>
+          <div class="l-desc">${escapeHtml(c.before)} → ${escapeHtml(c.after)}${c.description ? ` · ${escapeHtml(c.description)}` : ''}${inProfile ? ' · already in the profile' : ''}</div>
+        </div>
+        <select ${inProfile ? 'disabled' : ''}>${options}</select>
+      </li>`;
+    })
+    .join('');
+  list.querySelectorAll('li').forEach((li) => {
+    const name = li.dataset.name;
+    li.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) learnUnchecked.delete(name);
+      else learnUnchecked.add(name);
+    });
+    li.querySelector('select').addEventListener('change', (e) => learnCategory.set(name, e.target.value));
+  });
+}
+
+document.getElementById('profile-learn-btn').addEventListener('click', async () => {
+  if (!currentProfile) return;
+  learnUnchecked.clear();
+  learnCategory.clear();
+  learnPanelOpen = true;
+  document.getElementById('learn-list').dataset.signature = '';
+  try {
+    await StartLearn();
+  } catch (e) {
+    alert(e);
+  }
+});
+document.getElementById('learn-stop-btn').addEventListener('click', () => StopLearn().catch(alert));
+document.getElementById('learn-close-btn').addEventListener('click', () => {
+  if (lastLearn && lastLearn.state !== 'idle') StopLearn().catch(() => {});
+  learnPanelOpen = false;
+  document.getElementById('learn-panel').style.display = 'none';
+});
+document.getElementById('learn-add-btn').addEventListener('click', () => {
+  if (!currentProfile || !lastLearn) return;
+  const entries = readProfileRows().filter((r) => r.name);
+  const known = new Set(entries.map((r) => r.name));
+  let added = 0;
+  for (const c of lastLearn.changes) {
+    if (known.has(c.name) || learnUnchecked.has(c.name)) continue;
+    entries.push({ name: c.name, category: learnCategory.get(c.name) || c.category, stream: false });
+    known.add(c.name);
+    added++;
+  }
+  renderProfile({ ...currentProfile, entries, unsaved: currentProfile.unsaved || added > 0 });
+  document.getElementById('learn-list').dataset.signature = ''; // re-mark "already in the profile"
+  renderLearn(lastLearn);
+  if (added) setProfileStatus(`${added} dataref(s) added - review them and click "Save my profile".`, 'ok');
+});

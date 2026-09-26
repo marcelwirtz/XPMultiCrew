@@ -157,13 +157,26 @@ func formatProfile(icao string, entries []ProfileEntry) string {
 	return b.String()
 }
 
-// datarefIndex maps a dataref name to whether X-Plane says it's writable,
-// parsed from <X-Plane>/Resources/plugins/DataRefs.txt (a few MB, so
-// cached until the file changes).
+// DatarefInfo is one DataRefs.txt entry - also what SearchDatarefs returns
+// to the profile editor.
+type DatarefInfo struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Writable    bool   `json:"writable"`
+	Units       string `json:"units,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Suggested profile category for it, see suggestCategory.
+	Category string `json:"category"`
+}
+
+// datarefIndex holds <X-Plane>/Resources/plugins/DataRefs.txt (a few MB,
+// so parsed once and cached until the file changes).
 type datarefIndex struct {
 	path     string
 	modTime  time.Time
 	writable map[string]bool
+	byName   map[string]*DatarefInfo
+	all      []DatarefInfo // file order
 }
 
 var (
@@ -172,6 +185,14 @@ var (
 )
 
 func loadDatarefIndex(xplaneRoot string) map[string]bool {
+	idx := loadFullDatarefIndex(xplaneRoot)
+	if idx == nil {
+		return nil
+	}
+	return idx.writable
+}
+
+func loadFullDatarefIndex(xplaneRoot string) *datarefIndex {
 	path := filepath.Join(xplaneRoot, "Resources", "plugins", "DataRefs.txt")
 	st, err := os.Stat(path)
 	if err != nil {
@@ -180,25 +201,143 @@ func loadDatarefIndex(xplaneRoot string) map[string]bool {
 	datarefCacheMu.Lock()
 	defer datarefCacheMu.Unlock()
 	if datarefCache != nil && datarefCache.path == path && datarefCache.modTime.Equal(st.ModTime()) {
-		return datarefCache.writable
+		return datarefCache
 	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
-	writable := map[string]bool{}
+	idx := &datarefIndex{path: path, modTime: st.ModTime(), writable: map[string]bool{}, byName: map[string]*DatarefInfo{}}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
+		// name \t type \t writable(y/n) \t units \t description
 		fields := strings.Split(scanner.Text(), "\t")
 		if len(fields) < 3 || !strings.HasPrefix(fields[0], "sim/") {
 			continue
 		}
-		writable[fields[0]] = strings.TrimSpace(fields[2]) == "y"
+		info := DatarefInfo{Name: fields[0], Type: strings.TrimSpace(fields[1]), Writable: strings.TrimSpace(fields[2]) == "y"}
+		if len(fields) > 3 {
+			info.Units = strings.TrimSpace(fields[3])
+		}
+		if len(fields) > 4 {
+			info.Description = strings.TrimSpace(strings.Join(fields[4:], " "))
+		}
+		info.Category = suggestCategory(info.Name, info.Description)
+		idx.writable[info.Name] = info.Writable
+		idx.all = append(idx.all, info)
 	}
-	datarefCache = &datarefIndex{path: path, modTime: st.ModTime(), writable: writable}
-	return writable
+	for i := range idx.all {
+		idx.byName[idx.all[i].Name] = &idx.all[i]
+	}
+	datarefCache = idx
+	return idx
+}
+
+// suggestCategory guesses the profile category from a dataref's path and
+// description - the editor pre-selects it, the user can still change it.
+func suggestCategory(name, description string) string {
+	text := strings.ToLower(name + " " + description)
+	for _, kw := range []string{"radios", "radio", "transponder", "autopilot", "/gps", "audio", "com1", "com2",
+		"nav1", "nav2", "adf", "obs", "dme", "fms", "g1000", "avionics"} {
+		if strings.Contains(text, kw) {
+			return "avionics"
+		}
+	}
+	for _, kw := range []string{"engine", "fuel", "mixture", "throttle", "prop", "ignition", "magneto", "primer",
+		"starter", "carb", "cowl", "igniter"} {
+		if strings.Contains(text, kw) {
+			return "engine"
+		}
+	}
+	return "systems"
+}
+
+// searchDatarefs finds writable DataRefs.txt entries whose name or
+// description contains every word of the query (case-insensitive). Name
+// hits rank before description-only hits, sim/cockpit2 (the modern,
+// recommended paths) before the rest.
+func searchDatarefs(xplaneRoot, query string, limit int) []DatarefInfo {
+	idx := loadFullDatarefIndex(xplaneRoot)
+	words := strings.Fields(strings.ToLower(query))
+	if idx == nil || len(words) == 0 {
+		return []DatarefInfo{}
+	}
+	type hit struct {
+		info  DatarefInfo
+		score int
+	}
+	hits := []hit{}
+	for _, info := range idx.all {
+		if !info.Writable || !isProfileCandidate(info.Name) {
+			continue
+		}
+		name := strings.ToLower(info.Name)
+		desc := strings.ToLower(info.Description)
+		score := 0
+		matched := true
+		for _, w := range words {
+			switch {
+			case strings.Contains(name, w):
+				score += 2
+			case strings.Contains(desc, w):
+				score++
+			default:
+				matched = false
+			}
+			if !matched {
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if strings.HasPrefix(info.Name, "sim/cockpit2/") {
+			score++
+		}
+		if strings.Contains(info.Description, "REPLACED") || strings.Contains(strings.ToLower(info.Description), "deprecated") {
+			score -= 3
+		}
+		hits = append(hits, hit{info, score})
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	out := make([]DatarefInfo, len(hits))
+	for i, h := range hits {
+		out[i] = h.info
+	}
+	return out
+}
+
+// isProfileCandidate filters out areas that are never a cockpit switch -
+// the same list the plugin's learn mode skips (plugin_main.cpp's
+// IsLearnable): physics, clocks, joystick hardware, multiplayer slots,
+// overrides, aircraft definition.
+func isProfileCandidate(name string) bool {
+	for _, prefix := range []string{"sim/time/", "sim/flightmodel/position/", "sim/flightmodel/forces/",
+		"sim/flightmodel/movingparts/", "sim/flightmodel/misc/", "sim/flightmodel/ground/", "sim/flightmodel2/",
+		"sim/graphics/", "sim/weather/", "sim/multiplayer/", "sim/network/", "sim/joystick/", "sim/operation/",
+		"sim/cockpit2/tcas/", "sim/aircraft/", "sim/private/", "sim/test/", "sim/atc/", "sim/airfoils/",
+		"sim/world/"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// describeDataref returns DataRefs.txt's entry for name, or a bare entry
+// with a suggested category for add-on datarefs that aren't listed there.
+func describeDataref(xplaneRoot, name string) DatarefInfo {
+	if idx := loadFullDatarefIndex(xplaneRoot); idx != nil {
+		if info, ok := idx.byName[name]; ok {
+			return *info
+		}
+	}
+	return DatarefInfo{Name: name, Writable: true, Category: suggestCategory(name, "")}
 }
 
 func annotate(entries []ProfileEntry, index map[string]bool) {

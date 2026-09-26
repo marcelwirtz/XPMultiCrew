@@ -91,3 +91,46 @@ func TestSaveLoadDeleteProfile(t *testing.T) {
 		t.Fatal("expected an invalid ICAO to be rejected")
 	}
 }
+
+func writeDataRefsTxt(t *testing.T, root string) {
+	t.Helper()
+	plugins := filepath.Join(root, "Resources", "plugins")
+	if err := os.MkdirAll(plugins, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "2 1234 header\n" +
+		"sim/cockpit/electrical/beacon_lights_on\tint\ty\tboolean\tBeacon Light\n" +
+		"sim/cockpit2/switches/beacon_on\tint\ty\tboolean\tIs the beacon light on\n" +
+		"sim/cockpit/misc/outer_marker_lit\tint\tn\t???\tIs the outer marker beacon lit right now\n" +
+		"sim/cockpit2/engine/actuators/mixture_ratio\tfloat[16]\ty\tratio\tMixture control\n" +
+		"sim/cockpit2/radios/actuators/com1_frequency_hz\tint\ty\thz\tCOM1 frequency\n"
+	if err := os.WriteFile(filepath.Join(plugins, "DataRefs.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchDatarefs(t *testing.T) {
+	root := t.TempDir()
+	writeDataRefsTxt(t, root)
+	datarefCache = nil
+
+	got := searchDatarefs(root, "beacon", 20)
+	if len(got) != 2 {
+		t.Fatalf("expected the two writable beacon datarefs (not the read-only marker), got %+v", got)
+	}
+	if got[0].Name != "sim/cockpit2/switches/beacon_on" {
+		t.Fatalf("sim/cockpit2 should rank first, got %+v", got)
+	}
+	if res := searchDatarefs(root, "mixture control", 20); len(res) != 1 || res[0].Category != "engine" {
+		t.Fatalf("multi-word description search / engine category failed: %+v", res)
+	}
+	if res := searchDatarefs(root, "com1", 20); len(res) != 1 || res[0].Category != "avionics" {
+		t.Fatalf("avionics category failed: %+v", res)
+	}
+	if res := searchDatarefs(root, "   ", 20); len(res) != 0 {
+		t.Fatalf("empty query should return nothing, got %+v", res)
+	}
+	if info := describeDataref(root, "laminar/c172/fuel/selector"); info.Category != "engine" || info.Description != "" {
+		t.Fatalf("unlisted add-on dataref should still get a category guess: %+v", info)
+	}
+}

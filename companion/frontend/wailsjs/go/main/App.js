@@ -94,10 +94,22 @@ export function SaveServer(arg1, arg2) {
   return window['go']['main']['App']['SaveServer'](arg1, arg2);
 }
 
+export function SearchDatarefs(arg1) {
+  return window['go']['main']['App']['SearchDatarefs'](arg1);
+}
+
 export function SetPrefs(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3);
 }
 
+export function StartLearn() {
+  return window['go']['main']['App']['StartLearn']();
+}
+
 export function StartSharedCockpit(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartSharedCockpit'](arg1, arg2, arg3);
+}
+
+export function StopLearn() {
+  return window['go']['main']['App']['StopLearn']();
 }

@@ -35,7 +35,12 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   DISCONNECT_SHARED_COCKPIT
 //   RELOAD_CSL
 //   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+//   LEARN_START / LEARN_STOP
 //   GET_STATUS
+// LEARN_START starts "learn from the cockpit" for the profile editor: the
+// plugin watches every writable dataref, ignores what moves on its own for
+// the first seconds, then reports what the user changes by flipping
+// switches (LEARN / LEARN_CHANGES below) until LEARN_STOP.
 // SET_PREFS carries the companion app's settings: the callsign shown to
 // others ("-" = use the aircraft's tail number), whether XPMP2 draws
 // labels/map icons for remote aircraft, and whether Formation time &
@@ -108,6 +113,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
 //   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
+//   LEARN <idle|baseline|watching> <candidates> <noisy>
+//   LEARN_CHANGES <name>|<before>|<after>;... (see LEARN_START; at most 40)
 //   TCAS_STATUS <ok|remote|blocked:<plugin name>> (empty before XPMP2 was enabled)
 //     Who owns X-Plane's TCAS/AI planes: us, the XPMP2 Remote Client (fine,
 //     it shows everyone's planes) or another plugin such as LiveTraffic
@@ -170,6 +177,7 @@ public:
         std::function<void(DatarefCategory)> on_claim_ownership;
         std::function<void()> on_reload_csl;
         std::function<void(const std::string& callsign, bool labels, bool envSync)> on_set_prefs;
+        std::function<void(bool start)> on_learn;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -212,6 +220,7 @@ public:
     void SetPrefs(const std::string& encoded);
     void SetOwnIcao(const std::string& icao);
     void SetTcasStatus(const std::string& status);
+    void SetLearn(const std::string& state, const std::string& changes);
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
@@ -236,6 +245,8 @@ private:
     std::string prefs_;
     std::string own_icao_;
     std::string tcas_status_;
+    std::string learn_state_ = "idle 0 0";
+    std::string learn_changes_;
     std::string self_pos_;
     std::string peer_pos_;
 };

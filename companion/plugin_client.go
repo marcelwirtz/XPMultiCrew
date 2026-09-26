@@ -39,6 +39,25 @@ type MapPosition struct {
 	GroundspeedKt float64 `json:"groundspeedKt,omitempty"`
 }
 
+// LearnStatus mirrors control_listener.h's LEARN / LEARN_CHANGES lines -
+// "learn from the cockpit" in the profile editor.
+type LearnStatus struct {
+	State      string        `json:"state"` // idle, baseline, watching
+	Candidates int           `json:"candidates"`
+	Noisy      int           `json:"noisy"`
+	Changes    []LearnChange `json:"changes"`
+}
+
+// LearnChange is one dataref the user changed while learning. Description
+// and Category are filled in by app.go from DataRefs.txt.
+type LearnChange struct {
+	Name        string `json:"name"`
+	Before      string `json:"before"`
+	After       string `json:"after"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category"`
+}
+
 // PluginPrefs mirrors control_listener.h's PREFS line / SET_PREFS command.
 type PluginPrefs struct {
 	Callsign   string `json:"callsign"` // "" = aircraft tail number
@@ -82,6 +101,7 @@ type PluginClient struct {
 	prefsEncoded           string // raw PREFS value, "" until pushed
 	ownIcao                string
 	tcasStatus             string // see control_listener.h's TCAS_STATUS
+	learn                  LearnStatus
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 }
@@ -223,6 +243,34 @@ func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
 	return &self, peers
 }
 
+// Learn returns the latest learn-from-the-cockpit status (a copy).
+func (c *PluginClient) Learn() LearnStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := c.learn
+	out.Changes = append([]LearnChange{}, c.learn.Changes...)
+	if out.State == "" {
+		out.State = "idle"
+	}
+	return out
+}
+
+// parseLearnChanges decodes LEARN_CHANGES "<name>|<before>|<after>;...".
+func parseLearnChanges(value string) []LearnChange {
+	out := []LearnChange{}
+	if value == "" {
+		return out
+	}
+	for _, entry := range strings.Split(value, ";") {
+		f := strings.Split(entry, "|")
+		if len(f) != 3 || f[0] == "" {
+			continue
+		}
+		out = append(out, LearnChange{Name: f[0], Before: f[1], After: f[2]})
+	}
+	return out
+}
+
 // TcasStatus returns control_listener.h's TCAS_STATUS ("ok", "remote",
 // "blocked:<plugin>" or "" before the plugin reported it).
 func (c *PluginClient) TcasStatus() string {
@@ -308,6 +356,15 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.ownIcao = value
 		case "TCAS_STATUS":
 			c.tcasStatus = value
+		case "LEARN":
+			f := strings.Fields(value)
+			if len(f) == 3 {
+				c.learn.State = f[0]
+				c.learn.Candidates, _ = strconv.Atoi(f[1])
+				c.learn.Noisy, _ = strconv.Atoi(f[2])
+			}
+		case "LEARN_CHANGES":
+			c.learn.Changes = parseLearnChanges(value)
 		case "SELF_POS":
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":
@@ -548,7 +605,9 @@ func (c *PluginClient) ListenForStatus() {
 	}
 	defer conn.Close()
 
-	buf := make([]byte, 4096)
+	// Max UDP payload: with learned datarefs and many peers' positions the
+	// status can grow well past a few KB.
+	buf := make([]byte, 65536)
 	for {
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {

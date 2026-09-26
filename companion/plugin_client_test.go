@@ -328,3 +328,18 @@ func TestApplyStatusMessageTcasStatus(t *testing.T) {
 		t.Fatalf("got %q", c.TcasStatus())
 	}
 }
+
+func TestApplyStatusMessageLearn(t *testing.T) {
+	c := NewPluginClient()
+	if c.Learn().State != "idle" {
+		t.Fatalf("expected idle before anything was pushed")
+	}
+	c.applyStatusMessage("LEARN watching 5321 17\nLEARN_CHANGES sim/cockpit2/switches/beacon_on|0|1;bad;sim/x|[1]=118|[1]=119.1\n")
+	l := c.Learn()
+	if l.State != "watching" || l.Candidates != 5321 || l.Noisy != 17 || len(l.Changes) != 2 {
+		t.Fatalf("unexpected learn status: %+v", l)
+	}
+	if l.Changes[1].Before != "[1]=118" || l.Changes[1].After != "[1]=119.1" {
+		t.Fatalf("unexpected change: %+v", l.Changes[1])
+	}
+}

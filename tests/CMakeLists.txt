@@ -52,6 +52,14 @@ target_include_directories(time_sync_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 target_compile_features(time_sync_test PRIVATE cxx_std_17)
 add_test(NAME time_sync_test COMMAND time_sync_test)
 
+add_executable(dataref_learner_test
+    dataref_learner_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/dataref_learner.cpp
+)
+target_include_directories(dataref_learner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(dataref_learner_test PRIVATE cxx_std_17)
+add_test(NAME dataref_learner_test COMMAND dataref_learner_test)
+
 add_executable(rendezvous_protocol_test
     rendezvous_protocol_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_protocol.cpp

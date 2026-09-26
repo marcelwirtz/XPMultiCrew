@@ -44,6 +44,7 @@
 #include "formation/rendezvous_client.h"
 #include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
 #include "net/session_crypto.h"
+#include "shared_cockpit/dataref_learner.h"
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
 #include "shared_cockpit/shared_cockpit_config.h"
@@ -800,6 +801,156 @@ std::string InitXpmpAndLoadCsl() {
 // destroyed before that cleanup - UpdateFormationCallback recreates them
 // on its next frame for every peer that's still active, so remote
 // aircraft only blink out briefly.
+// --- "Learn from the cockpit" (LEARN_START/LEARN_STOP, see
+// control_listener.h and shared_cockpit/dataref_learner.h) -----------------
+
+struct LearnCandidate {
+    XPLMDataRef ref = nullptr;
+    std::string name;
+    XPLMDataTypeID type = 0;
+};
+std::vector<LearnCandidate> g_learn_candidates;
+flytogether::DatarefLearner g_learner;
+size_t g_learn_scan_pos = 0;
+double g_learn_last_push_s = 0.0;
+
+// Areas that are never "a switch in the cockpit": physics, clocks,
+// joystick hardware axes, networking, rendering, aircraft definition.
+// Filtering them up front keeps the per-frame scan small; the learner's
+// own noise detection catches whatever else moves by itself.
+bool IsLearnable(const char* name) {
+    static const char* const kSkipPrefixes[] = {
+        "sim/time/",           "sim/flightmodel/position/", "sim/flightmodel/forces/",
+        "sim/flightmodel/movingparts/", "sim/flightmodel/misc/", "sim/flightmodel/ground/",
+        "sim/flightmodel2/",   "sim/graphics/",             "sim/weather/",
+        "sim/multiplayer/",    "sim/network/",              "sim/joystick/",
+        "sim/operation/",      "sim/cockpit2/tcas/",        "sim/aircraft/",
+        "sim/private/",        "sim/test/",                 "sim/cockpit2/controls/yoke_",
+        "sim/atc/",            "sim/airfoils/",             "sim/world/",
+    };
+    for (const char* prefix : kSkipPrefixes) {
+        if (std::strncmp(name, prefix, std::strlen(prefix)) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Reads a candidate's value(s); arrays are capped at 64 elements.
+std::vector<double> ReadLearnValue(const LearnCandidate& c) {
+    constexpr int kMaxArray = 64;
+    if (c.type & xplmType_Int) return {static_cast<double>(XPLMGetDatai(c.ref))};
+    if (c.type & xplmType_Float) return {static_cast<double>(XPLMGetDataf(c.ref))};
+    if (c.type & xplmType_Double) return {XPLMGetDatad(c.ref)};
+    if (c.type & xplmType_FloatArray) {
+        float buf[kMaxArray];
+        const int n = std::min(XPLMGetDatavf(c.ref, nullptr, 0, 0), kMaxArray);
+        const int got = n > 0 ? XPLMGetDatavf(c.ref, buf, 0, n) : 0;
+        return std::vector<double>(buf, buf + std::max(got, 0));
+    }
+    if (c.type & xplmType_IntArray) {
+        int buf[kMaxArray];
+        const int n = std::min(XPLMGetDatavi(c.ref, nullptr, 0, 0), kMaxArray);
+        const int got = n > 0 ? XPLMGetDatavi(c.ref, buf, 0, n) : 0;
+        return std::vector<double>(buf, buf + std::max(got, 0));
+    }
+    return {};
+}
+
+std::string FormatLearnValue(const std::vector<double>& value, const std::vector<double>& other) {
+    char buf[64];
+    if (value.size() == 1) {
+        std::snprintf(buf, sizeof(buf), "%.6g", value[0]);
+        return buf;
+    }
+    // Arrays: just the first element that differs, e.g. "[1]=118".
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (i >= other.size() || value[i] != other[i]) {
+            std::snprintf(buf, sizeof(buf), "[%zu]=%.6g", i, value[i]);
+            return buf;
+        }
+    }
+    return "[]";
+}
+
+void PushLearnStatus(double now) {
+    const char* state = !g_learner.active() ? "idle" : g_learner.InBaseline(now) ? "baseline" : "watching";
+    std::string encoded;
+    int shown = 0;
+    for (const auto& change : g_learner.Changes()) {
+        if (++shown > 40) break;
+        if (!encoded.empty()) encoded += ";";
+        encoded += g_learn_candidates[change.index].name + "|" + FormatLearnValue(change.before, change.after) +
+                   "|" + FormatLearnValue(change.after, change.before);
+    }
+    g_control_listener.SetLearn(std::string(state) + " " + std::to_string(g_learn_candidates.size()) + " " +
+                                    std::to_string(g_learner.noisy_count()),
+                                encoded);
+}
+
+// Every frame while learning: reads the next slice of candidates, so a
+// full pass over several thousand datarefs is spread over a few frames
+// instead of stalling one.
+float LearnScanCallback(float /*elapsedSinceLastCall*/,
+                        float /*elapsedTimeSinceLastFlightLoop*/,
+                        int /*counter*/,
+                        void* /*refcon*/) {
+    if (!g_learner.active() || g_learn_candidates.empty()) {
+        return 0.0f; // unschedule
+    }
+    constexpr size_t kPerFrame = 1500;
+    const double now = XPLMGetElapsedTime();
+    for (size_t n = 0; n < kPerFrame && n < g_learn_candidates.size(); ++n) {
+        if (g_learn_scan_pos >= g_learn_candidates.size()) g_learn_scan_pos = 0;
+        g_learner.Observe(g_learn_scan_pos, ReadLearnValue(g_learn_candidates[g_learn_scan_pos]), now);
+        ++g_learn_scan_pos;
+    }
+    if (now - g_learn_last_push_s >= 0.5) {
+        g_learn_last_push_s = now;
+        PushLearnStatus(now);
+    }
+    return -1.0f;
+}
+
+void StartLearning() {
+    g_learn_candidates.clear();
+    const int count = XPLMCountDataRefs();
+    std::vector<XPLMDataRef> refs(static_cast<size_t>(std::max(count, 0)));
+    if (count > 0) {
+        XPLMGetDataRefsByIndex(0, count, refs.data());
+    }
+    const XPLMPluginID me = XPLMGetMyID();
+    constexpr XPLMDataTypeID kNumeric =
+        xplmType_Int | xplmType_Float | xplmType_Double | xplmType_FloatArray | xplmType_IntArray;
+    for (XPLMDataRef ref : refs) {
+        if (!ref) continue;
+        XPLMDataRefInfo_t info{};
+        info.structSize = sizeof(info);
+        XPLMGetDataRefInfo(ref, &info);
+        if (!info.writable || info.owner == me || !info.name || !(info.type & kNumeric) ||
+            !IsLearnable(info.name)) {
+            continue;
+        }
+        g_learn_candidates.push_back(LearnCandidate{ref, info.name, info.type});
+    }
+    const double now = XPLMGetElapsedTime();
+    g_learner.Begin(g_learn_candidates.size(), now);
+    g_learn_scan_pos = 0;
+    g_learn_last_push_s = 0.0;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "XPMultiCrew: learning from the cockpit - watching %zu of %d datarefs\n",
+                  g_learn_candidates.size(), count);
+    XPLMDebugString(buf);
+    XPLMRegisterFlightLoopCallback(LearnScanCallback, -1.0f, nullptr);
+    PushLearnStatus(now);
+}
+
+void StopLearning() {
+    g_learner.Stop();
+    XPLMUnregisterFlightLoopCallback(LearnScanCallback, nullptr);
+    PushLearnStatus(XPLMGetElapsedTime());
+}
+
 // Set by OnPlanesAvailable (X-Plane calls it when the plugin that held the
 // AI/TCAS planes - typically LiveTraffic - releases them); acted on from the
 // next PollControlListenerCallback tick rather than inside X-Plane's own
@@ -2148,6 +2299,13 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync) {
         SetPrefs(callsign, labels, env_sync);
     };
+    control_callbacks.on_learn = [](bool start) {
+        if (start) {
+            StartLearning();
+        } else {
+            StopLearning();
+        }
+    };
     control_callbacks.on_claim_ownership = [](flytogether::DatarefCategory category) {
         g_dataref_sync.ClaimOwnership(category);
         PushSharedCockpitOwnershipIfChanged();
@@ -2225,6 +2383,8 @@ PLUGIN_API int XPluginEnable() {
 
 PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(PollControlListenerCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(LearnScanCallback, nullptr);
+    g_learner.Stop();
     g_control_listener.Stop();
 
     XPLMUnregisterFlightLoopCallback(LogPositionCallback, nullptr);

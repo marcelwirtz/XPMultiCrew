@@ -90,6 +90,8 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_set_prefs && !callsign.empty()) {
             callbacks_.on_set_prefs(callsign == "-" ? "" : callsign, labels != "0", env_sync != "0");
         }
+    } else if (cmd == "LEARN_START" || cmd == "LEARN_STOP") {
+        if (callbacks_.on_learn) callbacks_.on_learn(cmd == "LEARN_START");
     } else if (cmd == "GET_STATUS") {
         SendStatus();
     }
@@ -104,7 +106,7 @@ void ControlListener::SendStatus() {
                              "\nSIM_READY " + (sim_ready_ ? "1" : "0") + "\nPLUGIN_VERSION " + plugin_version_ +
                              "\nCSL_STATUS " + csl_status_ + "\nPREFS " + prefs_ + "\nOWN_ICAO " + own_icao_ +
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
-                             "\n";
+                             "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -189,6 +191,13 @@ void ControlListener::SetOwnIcao(const std::string& icao) {
 void ControlListener::SetTcasStatus(const std::string& status) {
     if (status == tcas_status_) return;
     tcas_status_ = status;
+    SendStatus();
+}
+
+void ControlListener::SetLearn(const std::string& state, const std::string& changes) {
+    if (state == learn_state_ && changes == learn_changes_) return;
+    learn_state_ = state;
+    learn_changes_ = changes;
     SendStatus();
 }
 

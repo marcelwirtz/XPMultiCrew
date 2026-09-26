@@ -48,6 +48,12 @@ export function SaveProfile(arg1:string,arg2:Array<main.ProfileEntry>):Promise<m
 
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
 
+export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
+
 export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean):Promise<main.PluginPrefs>;
 
+export function StartLearn():Promise<void>;
+
 export function StartSharedCockpit(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function StopLearn():Promise<void>;

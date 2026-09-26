@@ -34,6 +34,23 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.3.2
+
+- **No more looking up dataref names** in the Shared Cockpit profile editor:
+  - **Learn from cockpit:** click it, keep your hands off for a few
+    seconds (the plugin notes what changes on its own), then flip the
+    switches, turn the knobs and press the buttons you want in sync. Every
+    dataref you touched shows up with before/after value, description and a
+    suggested category - tick and add. Works for add-on aircraft's own
+    datarefs too (the plugin enumerates everything X-Plane has registered).
+  - **Suggestions while typing:** "beacon", "mixture", "com1 standby"...
+    searches X-Plane's DataRefs.txt by name and description, writable ones
+    only, with a suggested category.
+- **New profile...** button, optionally starting from a copy of another one.
+- Warning in the companion when another plugin (e.g. LiveTraffic) owns
+  TCAS, plus automatic takeover when it's released - see below.
+- The map page now always fits the window.
+
 ## What's new in v0.3.1
 
 - **Map page** in the companion: your aircraft and every Formation peer
