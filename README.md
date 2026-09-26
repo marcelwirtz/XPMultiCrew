@@ -241,10 +241,16 @@ couldn't have caught:
   finished loading a flight yet - added a `SIM_READY` status signal
   (`XPLM_MSG_PLANE_LOADED`) the companion app shows a banner for.
 
-**Not yet verified:** whether direct P2P (UDP hole-punching) actually
-succeeded versus falling back to relay for that test - both work from the
-user's perspective, so there was no way to tell without packet capture;
-worth checking next time if latency matters to you.
+**Direct P2P:** up to v0.2.2 hole punching could never succeed - direct
+packets were sent from/to the sync engines' own fixed ports instead of the
+rendezvous socket whose address the server actually hands out, so
+everything silently went over the relay. Since v0.2.3 direct traffic runs
+over the rendezvous socket itself (tagged datagrams, only accepted from
+addresses the server announced, plus a 1s hole-punch keepalive for sides
+that don't send anything themselves). `Log.txt` prints
+`direct P2P link to ... is up` once it works for a peer; the relay keeps
+running in parallel as the fallback. **Not yet flown for real** over two
+separate internet connections.
 
 **Auto-reconnect:** the plugin keeps retrying (every 5s) to rejoin your
 current session on its own if the connection to the rendezvous server is

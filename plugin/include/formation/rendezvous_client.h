@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace flytogether {
@@ -15,10 +16,22 @@ namespace flytogether {
 // UDP "control" socket, separate from FormationSync's peer-to-peer data
 // socket. See docs/plan.md section 7 and server/README.md.
 //
+// Direct peer-to-peer (UDP hole punching) also runs over THIS socket, not
+// the sync engines' own fixed-port sockets: the peer_addr the server hands
+// out is this socket's public ip:port as the server observed it, so only
+// datagrams sent from and to this socket match the NAT mappings the server
+// exchange already opened. SendRelay() therefore also sends the same bytes
+// straight to every known peer, and PollIncoming() hands direct datagrams
+// from a known peer to on_relay_received exactly like a relayed payload -
+// callers see one stream either way. Direct datagrams carry
+// kDirectDatagramTag up front so they can't be confused with the server's
+// JSON (an AEAD envelope starts with random nonce bytes, which could be
+// '{').
+//
 // This client does not itself decide "direct failed, use relay instead" -
-// see plugin_main.cpp's simplification: it always relays in parallel with
-// direct sends once in a session, relying on RemoteAircraft's existing
-// sequence-number dedup to make the redundancy harmless.
+// it always relays in parallel with the direct sends once in a session,
+// relying on the receivers' sequence-number dedup to make the redundancy
+// harmless.
 class RendezvousClient {
 public:
     // `salt` is the raw (already base64-decoded) per-session value the
@@ -88,6 +101,10 @@ public:
 
     bool InSession() const { return in_session_; }
 
+    // Peers we've received a direct (non-relayed) datagram from within
+    // kDirectPathTimeout - i.e. hole punching towards them worked.
+    size_t DirectPeerCount() const;
+
     // Round-trip time to the rendezvous server, measured from the last
     // keepalive we sent to the "keepalive_ack" the server sends back for
     // it (see PollIncoming's comment on why that ack exists at all) - the
@@ -108,13 +125,30 @@ public:
     RelayReceivedFn on_relay_received;
     ErrorFn on_error;
     DisconnectedFn on_disconnected;
+    // Fired once per peer the first time a direct datagram from it arrives
+    // (again after the direct path had timed out) - diagnostics only.
+    std::function<void(int peerId)> on_direct_path_up;
+
+    static constexpr char kDirectDatagramTag[4] = {'X', 'M', 'C', 'D'};
 
 private:
     void Send(const RendezvousClientMessage& msg);
     void SendKeepaliveNow();
     void MaybeSendKeepalive();
+    void SendDirectToPeers(const void* data, size_t len);
+    void MaybeSendPunch();
+    void HandleDirectDatagram(const char* data, size_t len, const std::string& host, uint16_t port);
+
+    struct DirectPeer {
+        std::string host;
+        uint16_t port = 0;
+        bool path_up = false;
+        std::chrono::steady_clock::time_point last_direct_rx{};
+    };
 
     UdpSocket socket_;
+    std::unordered_map<int, DirectPeer> direct_peers_; // peer_id -> observed addr
+    std::chrono::steady_clock::time_point last_direct_tx_{};
     std::string server_host_;
     uint16_t server_port_ = 0;
     bool in_session_ = false;
@@ -129,6 +163,13 @@ private:
     // so a real outage is caught and retried well before the server would
     // have given up on us anyway.
     static constexpr std::chrono::seconds kServerResponseTimeout{40};
+
+    // With no real traffic going out (a spectator, a Shared Cockpit client
+    // with no switch changes), an empty tagged datagram still goes to every
+    // peer this often, so our side of the NAT mapping gets opened and kept
+    // alive.
+    static constexpr std::chrono::seconds kPunchInterval{1};
+    static constexpr std::chrono::seconds kDirectPathTimeout{5};
 };
 
 } // namespace flytogether

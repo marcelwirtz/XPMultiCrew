@@ -17,6 +17,7 @@ using namespace std::chrono_literals;
 namespace {
 
 constexpr uint16_t kFakeServerPort = 49040;
+constexpr uint16_t kFakeServerPort2 = 49041; // direct-P2P block, own socket so its traffic can't leak into others
 
 // Reads one pending datagram (and the address it came from, so a fake
 // server can reply to a client's ephemeral local port) within a timeout,
@@ -204,6 +205,90 @@ int main() {
         assert(client.InSession());
         assert(!disconnected);
         std::printf("keepalive_ack alone correctly keeps a lone-in-session client connected: OK\n");
+    }
+
+    // --- Direct P2P over the rendezvous socket: SendRelay() also reaches a
+    // known peer directly, a silent peer still punches, strangers are
+    // ignored ---
+    {
+        UdpSocket server2;
+        assert(server2.Open());
+        assert(server2.Bind(kFakeServerPort2));
+        server2.SetNonBlocking(true);
+
+        RendezvousClient a, b;
+        std::vector<std::vector<uint8_t>> b_received;
+        int b_from = -1;
+        b.on_relay_received = [&](int from, const std::vector<uint8_t>& bytes) {
+            b_from = from;
+            b_received.push_back(bytes);
+        };
+        int a_direct_up_from = -1;
+        a.on_direct_path_up = [&](int peer_id) { a_direct_up_from = peer_id; };
+        bool a_got_payload = false;
+        a.on_relay_received = [&](int, const std::vector<uint8_t>&) { a_got_payload = true; };
+
+        assert(a.Start("127.0.0.1", kFakeServerPort2));
+        assert(b.Start("127.0.0.1", kFakeServerPort2));
+        a.CreateSession();
+        std::string a_host, b_host;
+        uint16_t a_port = 0, b_port = 0;
+        RecvOne(server2, 500ms, &a_host, &a_port);
+        b.JoinSession("P2P001");
+        RecvOne(server2, 500ms, &b_host, &b_port);
+        assert(a_port != 0 && b_port != 0);
+
+        const std::string a_ready = R"({"type":"session_created","code":"P2P001","your_id":1})";
+        const std::string b_ready = R"({"type":"session_created","code":"P2P001","your_id":2})";
+        const std::string a_learns_b =
+            R"({"type":"peer_joined","peer_id":2,"peer_addr":"127.0.0.1:)" + std::to_string(b_port) + R"("})";
+        const std::string b_learns_a =
+            R"({"type":"peer_joined","peer_id":1,"peer_addr":"127.0.0.1:)" + std::to_string(a_port) + R"("})";
+        server2.SendTo(a_host, a_port, a_ready.data(), a_ready.size());
+        server2.SendTo(a_host, a_port, a_learns_b.data(), a_learns_b.size());
+        server2.SendTo(b_host, b_port, b_ready.data(), b_ready.size());
+        server2.SendTo(b_host, b_port, b_learns_a.data(), b_learns_a.size());
+        a.PollIncoming(10s);
+        b.PollIncoming(10s);
+        assert(a.InSession() && b.InSession());
+
+        const uint8_t payload[] = {'{', 1, 2, 3}; // leading '{' on purpose: must not be mistaken for JSON
+        a.SendRelay(payload, sizeof(payload));
+        const auto until = std::chrono::steady_clock::now() + 500ms;
+        while (b_received.empty() && std::chrono::steady_clock::now() < until) {
+            b.PollIncoming(10s);
+            std::this_thread::sleep_for(5ms);
+        }
+        assert(b_received.size() == 1);
+        assert(b_received[0] == std::vector<uint8_t>(payload, payload + sizeof(payload)));
+        assert(b_from == 1);
+        assert(b.DirectPeerCount() == 1);
+        const std::string relay_msg = RecvOne(server2, 500ms);
+        assert(relay_msg.find("\"type\":\"relay\"") != std::string::npos);
+        std::printf("SendRelay also delivers directly to a known peer: OK\n");
+
+        // b never sends real traffic - its punch alone must bring up a's
+        // direct path, without surfacing as a payload.
+        const auto punch_until = std::chrono::steady_clock::now() + 2500ms;
+        while (a_direct_up_from == -1 && std::chrono::steady_clock::now() < punch_until) {
+            b.PollIncoming(10s);
+            a.PollIncoming(10s);
+            std::this_thread::sleep_for(20ms);
+        }
+        assert(a_direct_up_from == 2);
+        assert(!a_got_payload);
+        std::printf("A silent peer's hole punch brings up the direct path: OK\n");
+
+        // A tagged datagram from an address the server never announced is
+        // dropped.
+        UdpSocket stranger;
+        assert(stranger.Open());
+        const char forged[] = {'X', 'M', 'C', 'D', 9, 9};
+        stranger.SendTo("127.0.0.1", b_port, forged, sizeof(forged));
+        b_received.clear();
+        PumpFor(b, 200ms);
+        assert(b_received.empty());
+        std::printf("Direct datagrams from unknown addresses are ignored: OK\n");
     }
 
     std::printf("\nALL RENDEZVOUS CLIENT CHECKS PASSED\n");

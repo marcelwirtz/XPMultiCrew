@@ -337,8 +337,12 @@ void SetupRendezvousCallbacksOnce() {
         g_control_listener.SetFormationCode(code);
     };
     g_rendezvous_client.on_peer_joined = [](int peer_id, const std::string& host, uint16_t port) {
+        // Deliberately NOT added to g_formation_sync's direct peers: the
+        // address the server reports belongs to the peer's rendezvous
+        // socket, so direct traffic to it has to go through
+        // g_rendezvous_client too (it does, inside SendRelay) - see
+        // RendezvousClient's class comment.
         g_rendezvous_peers[peer_id] = flytogether::Peer{host, port};
-        g_formation_sync.AddPeer(host, port);
         char buf[256];
         std::snprintf(buf, sizeof(buf),
                       "XPMultiCrew: rendezvous peer %d joined at %s:%u\n", peer_id,
@@ -347,11 +351,7 @@ void SetupRendezvousCallbacksOnce() {
         UpdateFormationStatus();
     };
     g_rendezvous_client.on_peer_left = [](int peer_id) {
-        const auto it = g_rendezvous_peers.find(peer_id);
-        if (it != g_rendezvous_peers.end()) {
-            g_formation_sync.RemovePeer(it->second.host, it->second.port);
-            g_rendezvous_peers.erase(it);
-        }
+        g_rendezvous_peers.erase(peer_id);
         UpdateFormationStatus();
         char buf[128];
         std::snprintf(buf, sizeof(buf), "XPMultiCrew: rendezvous peer %d left\n", peer_id);
@@ -383,6 +383,11 @@ void SetupRendezvousCallbacksOnce() {
         std::memcpy(&packet, opened->data(), std::min(opened->size(), sizeof(packet)));
         g_formation_sync.IngestPacket(packet, XPLMGetElapsedTime());
     };
+    g_rendezvous_client.on_direct_path_up = [](int peer_id) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "XPMultiCrew: direct P2P link to rendezvous peer %d is up\n", peer_id);
+        XPLMDebugString(buf);
+    };
     g_rendezvous_client.on_error = [](const std::string& message) {
         char buf[512];
         std::snprintf(buf, sizeof(buf), "XPMultiCrew: rendezvous error: %s\n", message.c_str());
@@ -391,9 +396,6 @@ void SetupRendezvousCallbacksOnce() {
     };
     g_rendezvous_client.on_disconnected = []() {
         XPLMDebugString("XPMultiCrew: rendezvous connection lost\n");
-        for (const auto& [peer_id, peer] : g_rendezvous_peers) {
-            g_formation_sync.RemovePeer(peer.host, peer.port);
-        }
         g_rendezvous_peers.clear();
         g_last_pushed_formation_peers.clear();
         g_control_listener.SetFormationPeers("");
@@ -486,9 +488,6 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
 // connection and trying again.
 void DisconnectFormation() {
     g_formation_reconnect.wanted = false;
-    for (const auto& [peer_id, peer] : g_rendezvous_peers) {
-        g_formation_sync.RemovePeer(peer.host, peer.port);
-    }
     g_rendezvous_peers.clear();
     g_last_pushed_formation_peers.clear();
     g_rendezvous_client.Stop(); // sends leave_session if we were actually in one
@@ -1245,8 +1244,8 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     g_shared_cockpit.SetCrypto(&*g_shared_cockpit_crypto);
 
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit ready as %s, %zu peer(s)\n",
-                  role == flytogether::SharedCockpitRole::kMaster ? "MASTER" : "CLIENT", peers.size());
+    std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit ready as %s\n",
+                  role == flytogether::SharedCockpitRole::kMaster ? "MASTER" : "CLIENT");
     XPLMDebugString(buf);
     g_control_listener.SetSharedCockpitStatus(role == flytogether::SharedCockpitRole::kMaster
                                               ? "running as MASTER"
@@ -1361,8 +1360,11 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit peer %d found at %s:%u\n", peer_id,
                       host.c_str(), port);
         XPLMDebugString(buf);
-        StartSharedCockpit(g_pending_shared_cockpit_role, {flytogether::Peer{host, port}},
-                            g_pending_shared_cockpit_datarefs);
+        // No direct peers for the sync engines' own sockets: direct P2P runs
+        // over g_shared_cockpit_rendezvous's socket (the address the server
+        // reported), inside the relay senders wired up in
+        // StartSharedCockpit - see RendezvousClient's class comment.
+        StartSharedCockpit(g_pending_shared_cockpit_role, {}, g_pending_shared_cockpit_datarefs);
     };
     g_shared_cockpit_rendezvous.on_peer_left = [](int /*peer_id*/) {
         XPLMDebugString("XPMultiCrew: shared cockpit peer left\n");
@@ -1439,6 +1441,9 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
             g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size());
         }
         // Anything else (wrong magic, too short): not one of ours, ignore.
+    };
+    g_shared_cockpit_rendezvous.on_direct_path_up = [](int /*peer_id*/) {
+        XPLMDebugString("XPMultiCrew: direct P2P link to shared cockpit peer is up\n");
     };
     g_shared_cockpit_rendezvous.on_error = [](const std::string& message) {
         char buf[512];
