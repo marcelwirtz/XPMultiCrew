@@ -40,7 +40,18 @@ namespace flytogether {
 class WeatherSync {
 public:
     bool Start(SharedCockpitRole role, const std::vector<Peer>& peers);
+    // No socket of its own: packets only go out through the relay sender
+    // and come in through IngestRelayedPacket. Used by Formation's time &
+    // weather sync, which runs alongside Shared Cockpit's instance (and so
+    // can't bind kWeatherSyncUdpPort a second time).
+    void StartRelayOnly(SharedCockpitRole role);
     void Stop();
+
+    // Changes who shares and who follows without restarting - Shared
+    // Cockpit's role swap, Formation's host detection. Becoming a client
+    // applies the next received packet immediately.
+    void SetRole(SharedCockpitRole role);
+    SharedCockpitRole role() const { return role_; }
 
     // Master only: reads local weather via XPLMGetWeatherAtLocation at
     // the given position and broadcasts it, throttled internally to

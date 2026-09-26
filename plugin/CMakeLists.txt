@@ -82,6 +82,7 @@ endif()
 add_library(XPMultiCrew SHARED
     src/core/plugin_main.cpp
     src/sync/remote_aircraft.cpp
+    src/sync/time_sync.cpp
     src/net/link_quality.cpp
     src/net/secure_random.cpp
     src/net/session_crypto.cpp

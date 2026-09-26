@@ -66,7 +66,12 @@ constexpr uint8_t kBeacon = 1 << 0;
 constexpr uint8_t kStrobe = 1 << 1;
 constexpr uint8_t kNav = 1 << 2;
 constexpr uint8_t kLanding = 1 << 3;
+constexpr uint8_t kTaxi = 1 << 4; // since protocol_version 2 - older senders just never set it
 } // namespace LightBits
+
+namespace StateFlags {
+constexpr uint8_t kOnGround = 1 << 0;
+} // namespace StateFlags
 
 #pragma pack(push, 1)
 struct AircraftStatePacket {
@@ -103,12 +108,40 @@ struct AircraftStatePacket {
     // = unknown (not measured yet, or a protocol_version 1 sender whose
     // shorter packet never reached this field - it keeps this default).
     float ref_height_agl_m = -1.0f;
+
+    // Shown as the aircraft's label in the sim and in the companion's peer
+    // list. [A-Za-z0-9-] only, null-padded like icao_type; empty = none set.
+    char callsign[8] = {};
+
+    // Velocity in X-Plane's local OpenGL frame (m/s) and body angular
+    // rates P/Q/R (deg/s). Shared Cockpit uses them so a client taking over
+    // control (or losing the master) keeps flying at the master's speed
+    // instead of stopping dead, and so its instruments see real motion
+    // while following.
+    float velocity_x_mps = 0.0f;
+    float velocity_y_mps = 0.0f;
+    float velocity_z_mps = 0.0f;
+    float roll_rate_dps = 0.0f;
+    float pitch_rate_dps = 0.0f;
+    float yaw_rate_dps = 0.0f;
+
+    // Extra CSL animation inputs (XPMP2 dataref names in brackets).
+    float reverser_ratio = 0.0f;      // 0..1 [thrust reverser deploy]
+    float prop_rpm = 0.0f;            // [prop + engine rotation]
+    float tire_rot_rad_s = 0.0f;      // [tire rotation]
+    float nose_wheel_deg = 0.0f;      // [nose wheel steering]
+    float yoke_pitch_ratio = 0.0f;    // -1..1
+    float yoke_roll_ratio = 0.0f;     // -1..1
+    float yoke_heading_ratio = 0.0f;  // -1..1 (rudder)
+    float slat_ratio = 0.0f;          // 0..1
+
+    uint8_t flags = 0; // bitmask of StateFlags::k*
 };
 #pragma pack(pop)
 
 // Size as of protocol_version 2. kAircraftStateMinSize above stays at the
 // version 1 baseline on purpose - see its comment.
-constexpr size_t kAircraftStateV2Size = 81;
+constexpr size_t kAircraftStateV2Size = 146;
 static_assert(sizeof(AircraftStatePacket) == kAircraftStateV2Size,
               "AircraftStatePacket's size changed - add a new kAircraftStateV<N>Size, don't touch "
               "kAircraftStateMinSize (see its comment)");
@@ -122,24 +155,36 @@ static_assert(offsetof(AircraftStatePacket, ref_height_agl_m) == kAircraftStateM
 inline bool IsPlausibleAircraftState(const AircraftStatePacket& p) {
     const bool finite = std::isfinite(p.latitude) && std::isfinite(p.longitude) &&
                         std::isfinite(p.elevation_m) && std::isfinite(p.heading_deg) &&
-                        std::isfinite(p.pitch_deg) && std::isfinite(p.roll_deg);
+                        std::isfinite(p.pitch_deg) && std::isfinite(p.roll_deg) &&
+                        std::isfinite(p.ref_height_agl_m) && std::isfinite(p.velocity_x_mps) &&
+                        std::isfinite(p.velocity_y_mps) && std::isfinite(p.velocity_z_mps) &&
+                        std::isfinite(p.roll_rate_dps) && std::isfinite(p.pitch_rate_dps) &&
+                        std::isfinite(p.yaw_rate_dps) && std::isfinite(p.reverser_ratio) &&
+                        std::isfinite(p.prop_rpm) && std::isfinite(p.tire_rot_rad_s) &&
+                        std::isfinite(p.nose_wheel_deg) && std::isfinite(p.yoke_pitch_ratio) &&
+                        std::isfinite(p.yoke_roll_ratio) && std::isfinite(p.yoke_heading_ratio) &&
+                        std::isfinite(p.slat_ratio);
     return finite && std::fabs(p.latitude) <= 90.0 && std::fabs(p.longitude) <= 180.0 &&
            p.elevation_m > -1000.0 && p.elevation_m < 30000.0;
 }
 
 // Cuts icao_type off at the first character that isn't [A-Za-z0-9] - it
 // ends up in XPMP2 model matching and in the companion app's line-based
-// status text (PEERS id:icao;...), where a stray newline, ';' or ':' from
-// a peer would break or inject lines.
-inline void SanitizeIcaoType(char (&icao)[8]) {
+// status text (PEERS id:icao:callsign;...), where a stray newline, ';' or
+// ':' from a peer would break or inject lines. Callsigns may also contain
+// '-' (registrations like D-EABC).
+inline void SanitizeFixedString(char (&text)[8], bool allowDash) {
     bool cut = false;
-    for (char& c : icao) {
-        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    for (char& c : text) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                        (allowDash && c == '-');
         if (cut || !ok) {
             cut = true;
             c = '\0';
         }
     }
 }
+inline void SanitizeIcaoType(char (&icao)[8]) { SanitizeFixedString(icao, false); }
+inline void SanitizeCallsign(char (&callsign)[8]) { SanitizeFixedString(callsign, true); }
 
 } // namespace flytogether

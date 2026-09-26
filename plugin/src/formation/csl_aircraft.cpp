@@ -1,6 +1,9 @@
 #include "formation/csl_aircraft.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace flytogether {
 
@@ -43,8 +46,20 @@ RemoteAircraftXPMP::RemoteAircraftXPMP(const std::string& icaoType, uint32_t sen
     bClampToGround = true;
 }
 
-void RemoteAircraftXPMP::SetPose(const AircraftPose& pose) {
+void RemoteAircraftXPMP::SetPose(const AircraftPose& pose, const AircraftStatePacket& latest) {
     pose_ = pose;
+    latest_ = latest;
+
+    const std::string callsign(latest.callsign, strnlen(latest.callsign, sizeof(latest.callsign)));
+    if (callsign != applied_callsign_) {
+        applied_callsign_ = callsign;
+        // Label next to the aircraft (and on X-Plane's map): the callsign
+        // if the peer set one, else its type - better than XPMP2's default
+        // of nothing useful.
+        label = callsign.empty() ? requested_icao_ : callsign;
+        std::snprintf(acInfoTexts.tailNum, sizeof(acInfoTexts.tailNum), "%s", callsign.c_str());
+        std::snprintf(acInfoTexts.flightNum, sizeof(acInfoTexts.flightNum), "%s", callsign.c_str());
+    }
 }
 
 void RemoteAircraftXPMP::UpdateIcaoType(const std::string& icaoType) {
@@ -53,9 +68,12 @@ void RemoteAircraftXPMP::UpdateIcaoType(const std::string& icaoType) {
     }
     requested_icao_ = icaoType;
     ChangeModel(icaoType.empty() ? "GENR" : icaoType, "", "");
+    if (applied_callsign_.empty()) {
+        label = requested_icao_;
+    }
 }
 
-void RemoteAircraftXPMP::UpdatePosition(float /*elapsedSinceLastCall*/, int /*flCounter*/) {
+void RemoteAircraftXPMP::UpdatePosition(float elapsedSinceLastCall, int /*flCounter*/) {
     // XPMP2 wants the altitude of the bottom of the gear (it then lifts the
     // model by the CSL's own VERT_OFFSET), but elevation_m is X-Plane's
     // aircraft reference point, which sits metres above that - so subtract
@@ -76,6 +94,28 @@ void RemoteAircraftXPMP::UpdatePosition(float /*elapsedSinceLastCall*/, int /*fl
     SetLightsStrobe((pose_.light_bits & LightBits::kStrobe) != 0);
     SetLightsNav((pose_.light_bits & LightBits::kNav) != 0);
     SetLightsLanding((pose_.light_bits & LightBits::kLanding) != 0);
+    SetLightsTaxi((pose_.light_bits & LightBits::kTaxi) != 0);
+
+    SetOnGrnd((latest_.flags & StateFlags::kOnGround) != 0);
+    SetReversDeployRatio(latest_.reverser_ratio);
+    SetThrustReversRatio(latest_.reverser_ratio);
+    SetNoseWheelAngle(latest_.nose_wheel_deg);
+    SetYokePitchRatio(latest_.yoke_pitch_ratio);
+    SetYokeRollRatio(latest_.yoke_roll_ratio);
+    SetYokeHeadingRatio(latest_.yoke_heading_ratio);
+    SetSlatRatio(latest_.slat_ratio);
+
+    // Rotation speeds are sent; the angles CSL models actually animate
+    // with are integrated here, per drawn frame.
+    const float dt = std::clamp(elapsedSinceLastCall, 0.0f, 0.5f);
+    SetTireRotRad(latest_.tire_rot_rad_s);
+    tire_angle_deg_ = std::fmod(tire_angle_deg_ + latest_.tire_rot_rad_s * 57.29578f * dt, 360.0f);
+    SetTireRotAngle(tire_angle_deg_);
+    SetPropRotRpm(latest_.prop_rpm);
+    SetEngineRotRpm(latest_.prop_rpm);
+    prop_angle_deg_ = std::fmod(prop_angle_deg_ + latest_.prop_rpm * 6.0f * dt, 360.0f); // rpm*360/60
+    SetPropRotAngle(prop_angle_deg_);
+    SetEngineRotAngle(prop_angle_deg_);
 }
 
 } // namespace flytogether

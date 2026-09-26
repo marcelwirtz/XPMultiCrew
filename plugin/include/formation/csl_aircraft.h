@@ -21,7 +21,10 @@ public:
     // regardless of the real type, so this never fails to find a model.
     RemoteAircraftXPMP(const std::string& icaoType, uint32_t senderId);
 
-    void SetPose(const AircraftPose& pose);
+    // `latest` supplies what isn't dead-reckoned: callsign and the extra
+    // animation inputs (protocol_version 2 fields - defaults for older
+    // senders, see aircraft_state.h).
+    void SetPose(const AircraftPose& pose, const AircraftStatePacket& latest);
 
     // Re-matches the CSL model if the peer switched aircraft type
     // mid-session (no-op if unchanged). Matters as soon as a user has a
@@ -32,7 +35,11 @@ public:
 
 private:
     std::string requested_icao_;
+    std::string applied_callsign_;
     AircraftPose pose_;
+    AircraftStatePacket latest_;
+    float tire_angle_deg_ = 0.0f;
+    float prop_angle_deg_ = 0.0f;
 };
 
 } // namespace flytogether

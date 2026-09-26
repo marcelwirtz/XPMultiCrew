@@ -126,6 +126,12 @@ void RendezvousClient::HandleDirectDatagram(const char* data, size_t len, const 
     }
 }
 
+bool RendezvousClient::IsDirectPathUp(int peerId) const {
+    const auto it = direct_peers_.find(peerId);
+    return it != direct_peers_.end() && it->second.path_up &&
+           std::chrono::steady_clock::now() - it->second.last_direct_rx <= kDirectPathTimeout;
+}
+
 size_t RendezvousClient::DirectPeerCount() const {
     const auto now = std::chrono::steady_clock::now();
     return static_cast<size_t>(std::count_if(direct_peers_.begin(), direct_peers_.end(), [&](const auto& entry) {

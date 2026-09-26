@@ -137,6 +137,24 @@ bool WeatherSync::Start(SharedCockpitRole role, const std::vector<Peer>& peers) 
     return true;
 }
 
+void WeatherSync::StartRelayOnly(SharedCockpitRole role) {
+    socket_.Close();
+    peers_.clear();
+    role_ = SharedCockpitRole::kNone;
+    SetRole(role);
+}
+
+void WeatherSync::SetRole(SharedCockpitRole role) {
+    if (role == role_) {
+        return;
+    }
+    role_ = role;
+    next_broadcast_time_s_ = 0.0;
+    next_apply_time_s_ = 0.0;
+    has_pending_packet_ = false;
+    has_applied_once_ = false;
+}
+
 void WeatherSync::Stop() {
     socket_.Close();
     role_ = SharedCockpitRole::kNone;

@@ -42,6 +42,19 @@ public:
 
     SharedCockpitRole role() const { return role_; }
 
+    // Role swap without restarting the session (see plugin_main.cpp's
+    // flight-controls ownership): keeps the socket and peers, and forgets
+    // any master state from an earlier stint as client so a stale pose is
+    // never applied after swapping back.
+    void SetRole(SharedCockpitRole role);
+
+    // Client only: the most recent packet received from the master, or
+    // nullptr before any arrived. Carries the velocity/rates needed to
+    // hand physics back without a jolt.
+    const AircraftStatePacket* LatestMasterPacket() const {
+        return master_state_.HasData() ? &master_state_.latest() : nullptr;
+    }
+
     // Master only: broadcast own state to every configured client. No-op
     // if role() != kMaster.
     void SendOwnState(const AircraftStatePacket& packet);

@@ -17,7 +17,8 @@ namespace flytogether {
 // cutover reasoning (session-auth/encryption, docs/plan.md Phase 4). Must
 // match server/protocol.go's ProtocolVersion exactly; the two are kept in
 // sync by hand like every other part of this hand-rolled protocol.
-constexpr int kRendezvousProtocolVersion = 2;
+// 3 since v0.3.0 - see server/protocol.go's ProtocolVersion comment.
+constexpr int kRendezvousProtocolVersion = 3;
 
 // Client -> server
 struct RendezvousClientMessage {

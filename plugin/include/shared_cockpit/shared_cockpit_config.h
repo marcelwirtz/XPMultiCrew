@@ -16,8 +16,13 @@ enum class DatarefCategory : uint8_t {
     kSystems = 0, // default - electrical, lights, trim, flaps, parking brake
     kEngine = 1,  // throttle, mixture, ignition, fuel pump/selector, primer
     kAvionics = 2, // radios, transponder, OBS, audio panel, autopilot bugs
+    // Not a dataref bucket: whoever owns it flies the aircraft (is MASTER).
+    // Only ever claimed explicitly via CLAIM_OWNERSHIP flight - DATAREF
+    // lines can't use it (see LoadSharedCockpitConfig), so touching a
+    // switch never swaps who's flying.
+    kFlight = 3,
 };
-constexpr int kDatarefCategoryCount = 3;
+constexpr int kDatarefCategoryCount = 4;
 
 // Parses a category name as spelled in the DATAREF grammar's CATEGORY
 // token ("engine", "avionics", "systems") - also reused by

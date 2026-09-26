@@ -104,6 +104,7 @@ public:
     // Peers we've received a direct (non-relayed) datagram from within
     // kDirectPathTimeout - i.e. hole punching towards them worked.
     size_t DirectPeerCount() const;
+    bool IsDirectPathUp(int peerId) const;
 
     // Round-trip time to the rendezvous server, measured from the last
     // keepalive we sent to the "keepalive_ack" the server sends back for

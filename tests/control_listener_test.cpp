@@ -75,6 +75,15 @@ int main() {
     };
 
     callbacks.on_reload_csl = [&]() { reload_csl_called = true; };
+    int prefs_calls = 0;
+    std::string prefs_callsign;
+    bool prefs_labels = false, prefs_env_sync = false;
+    callbacks.on_set_prefs = [&](const std::string& callsign, bool labels, bool env_sync) {
+        ++prefs_calls;
+        prefs_callsign = callsign;
+        prefs_labels = labels;
+        prefs_env_sync = env_sync;
+    };
 
     assert(listener.Start(callbacks));
 
@@ -182,6 +191,21 @@ int main() {
     PumpFor(listener, 200ms);
     assert(reload_csl_called);
     std::printf("RELOAD_CSL parsed correctly: OK\n");
+
+    const std::string cmd_prefs = "SET_PREFS D-EABC 1 0\nSET_PREFS - 0 1\nSET_PREFS\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_prefs.data(), cmd_prefs.size());
+    PumpFor(listener, 200ms);
+    assert(prefs_calls == 2); // the bare SET_PREFS (no callsign token) is ignored
+    assert(prefs_callsign.empty()); // "-" = no callsign
+    assert(!prefs_labels && prefs_env_sync);
+    std::printf("SET_PREFS parsed correctly: OK\n");
+
+    claimed_category = DatarefCategory::kSystems;
+    const std::string cmd_flight = "CLAIM_OWNERSHIP flight\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_flight.data(), cmd_flight.size());
+    PumpFor(listener, 200ms);
+    assert(claimed_category == DatarefCategory::kFlight);
+    std::printf("CLAIM_OWNERSHIP flight parsed correctly: OK\n");
 
     // Status push: SetFormationStatus should immediately send a decodable
     // message to the companion's port.

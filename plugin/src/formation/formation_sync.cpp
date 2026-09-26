@@ -105,6 +105,7 @@ void FormationSync::IngestPacket(const AircraftStatePacket& incoming, double now
     }
     AircraftStatePacket packet = incoming;
     SanitizeIcaoType(packet.icao_type);
+    SanitizeCallsign(packet.callsign);
     remote_aircraft_[packet.sender_id].OnPacketReceived(packet, now_s);
     link_quality_[packet.sender_id].OnPacketReceived(packet.sequence);
 }

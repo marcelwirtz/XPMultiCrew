@@ -209,9 +209,12 @@ int main() {
               "DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine\n"
               "DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz CATEGORY avionics STREAM\n"
               "DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY bogus\n"
-              "DATAREF sim/flightmodel/controls/parkbrake\n");
+              "DATAREF sim/flightmodel/controls/parkbrake\n"
+              "DATAREF sim/cockpit2/controls/yoke_pitch_ratio CATEGORY flight\n");
     const SharedCockpitConfig category_config = LoadSharedCockpitConfig(category_path);
-    assert(category_config.datarefs.size() == 5);
+    assert(category_config.datarefs.size() == 6);
+    // "flight" is the MASTER role, not a dataref bucket - see DatarefCategory::kFlight.
+    assert(category_config.datarefs[5].category == DatarefCategory::kSystems);
     assert(category_config.datarefs[0].category == DatarefCategory::kEngine);
     assert(category_config.datarefs[0].stream == false);
     assert(category_config.datarefs[1].category == DatarefCategory::kEngine);

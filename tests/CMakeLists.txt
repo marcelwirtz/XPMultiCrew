@@ -44,6 +44,14 @@ target_compile_features(remote_aircraft_test PRIVATE cxx_std_17)
 
 add_test(NAME remote_aircraft_test COMMAND remote_aircraft_test)
 
+add_executable(time_sync_test
+    time_sync_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/time_sync.cpp
+)
+target_include_directories(time_sync_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(time_sync_test PRIVATE cxx_std_17)
+add_test(NAME time_sync_test COMMAND time_sync_test)
+
 add_executable(rendezvous_protocol_test
     rendezvous_protocol_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/formation/rendezvous_protocol.cpp

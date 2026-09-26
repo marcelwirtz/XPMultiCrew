@@ -33,7 +33,9 @@
 
 namespace flytogether {
 
-constexpr uint32_t kWeatherStateMagic = 0x46545335; // "FTS5"
+// Was "FTS5" up to v0.2.x - the same value as kOwnershipClaimMagic, which
+// only worked because one travels encrypted and the other in plaintext.
+constexpr uint32_t kWeatherStateMagic = 0x46545731; // "FTW1"
 
 // Same versioning split as aircraft_state.h's
 // kAircraftStateProtocolVersion/kAircraftStateMinProtocolVersion pair -

@@ -49,8 +49,10 @@
 #include "shared_cockpit/shared_cockpit_config.h"
 #include "shared_cockpit/shared_cockpit_sync.h"
 #include "shared_cockpit/weather_sync.h"
+#include "sync/time_sync.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -142,6 +144,63 @@ XPLMDataRef g_on_ground_ref = nullptr; // sim/flightmodel/failures/onground_any,
 // the ground, held while airborne, reset on aircraft change.
 float g_ref_height_agl_m = -1.0f;
 
+// Protocol_version 2 extras - see AircraftStatePacket's field comments.
+XPLMDataRef g_taxi_light_ref = nullptr;
+XPLMDataRef g_local_vx_ref = nullptr; // also written by Shared Cockpit's client, see ApplyMasterPoseToOwnAircraft
+XPLMDataRef g_local_vy_ref = nullptr;
+XPLMDataRef g_local_vz_ref = nullptr;
+XPLMDataRef g_p_ref = nullptr; // roll rate, deg/s
+XPLMDataRef g_q_ref = nullptr; // pitch rate, deg/s
+XPLMDataRef g_r_ref = nullptr; // yaw rate, deg/s
+XPLMDataRef g_reverser_ref = nullptr;   // float[]
+XPLMDataRef g_prop_rpm_ref = nullptr;   // float[]
+XPLMDataRef g_tire_rot_ref = nullptr;   // float[], rad/s per gear
+XPLMDataRef g_tire_steer_ref = nullptr; // float[], deg per gear
+XPLMDataRef g_yoke_pitch_ref = nullptr;
+XPLMDataRef g_yoke_roll_ref = nullptr;
+XPLMDataRef g_yoke_heading_ref = nullptr;
+XPLMDataRef g_slat_ref = nullptr;
+XPLMDataRef g_tailnum_ref = nullptr; // sim/aircraft/view/acf_tailnum - callsign fallback
+
+// Set from the companion app via SET_PREFS (see control_listener.h) and
+// echoed back as PREFS so it can re-send them after an X-Plane restart.
+std::string g_pref_callsign;     // "" = use the aircraft's tail number
+bool g_pref_labels = true;       // XPMP2 labels + map layer
+bool g_pref_env_sync = true;     // Formation: host shares / others follow time & weather
+
+XPLMDataRef g_zulu_time_ref = nullptr;       // sim/time/zulu_time_sec, float
+XPLMDataRef g_local_date_ref = nullptr;      // sim/time/local_date_days, int
+XPLMDataRef g_use_system_time_ref = nullptr; // sim/time/use_system_time, int
+
+flytogether::TimeSyncPacket ReadSimTime() {
+    flytogether::TimeSyncPacket packet;
+    packet.local_date_days = g_local_date_ref ? XPLMGetDatai(g_local_date_ref) : 0;
+    packet.zulu_time_sec = g_zulu_time_ref ? XPLMGetDataf(g_zulu_time_ref) : 0.0f;
+    return packet;
+}
+
+// Jumps the sim clock to `remote` if it's drifted more than
+// kTimeSyncMaxDriftS away (see sync/time_sync.h). "Use system time" has to
+// go off first, or X-Plane snaps straight back to the PC clock.
+void MaybeApplySimTime(const flytogether::TimeSyncPacket& remote) {
+    if (!g_zulu_time_ref || !g_local_date_ref) {
+        return;
+    }
+    if (!flytogether::TimeSyncShouldApply(ReadSimTime(), remote)) {
+        return;
+    }
+    if (g_use_system_time_ref) XPLMSetDatai(g_use_system_time_ref, 0);
+    XPLMSetDatai(g_local_date_ref, remote.local_date_days);
+    XPLMSetDataf(g_zulu_time_ref, remote.zulu_time_sec);
+    XPLMDebugString("XPMultiCrew: sim time synced to the session\n");
+}
+
+// Formation time & weather sync - see control_listener.h's SET_PREFS. The
+// session creator (rendezvous peer 1) shares, everyone else with the
+// preference on follows; relay/direct only, sealed with the Formation key.
+flytogether::WeatherSync g_formation_weather;
+double g_formation_next_time_broadcast_s = 0.0;
+
 flytogether::FormationSync g_formation_sync;
 uint32_t g_sender_id = 0;
 uint32_t g_formation_sequence = 0;
@@ -152,12 +211,22 @@ char g_icao_type[9] = {}; // one extra byte so it's always null-terminated
 bool g_xpmp_initialized = false;
 std::unordered_map<uint32_t, std::unique_ptr<flytogether::RemoteAircraftXPMP>> g_xpmp_aircraft;
 double g_last_formation_log_s = 0.0;
-std::unordered_map<uint32_t, std::string> g_last_pushed_formation_peers; // for change detection only
+// What the companion's peer list shows per sender - change detection only.
+struct PushedPeer {
+    std::string icao;
+    std::string callsign;
+    bool operator==(const PushedPeer& o) const { return icao == o.icao && callsign == o.callsign; }
+    bool operator!=(const PushedPeer& o) const { return !(*this == o); }
+};
+std::unordered_map<uint32_t, PushedPeer> g_last_pushed_formation_peers;
 
 // --- Phase 2: rendezvous/relay client (docs/plan.md section 7) -------------
 
 flytogether::RendezvousClient g_rendezvous_client;
 std::unordered_map<int, flytogether::Peer> g_rendezvous_peers; // peer_id -> addr, for RemovePeer on peer_left
+// Which aircraft (sender_id) each rendezvous peer is, learned from its
+// packets - lets LINK_QUALITY report direct/relay per aircraft.
+std::unordered_map<int, uint32_t> g_formation_sender_by_peer;
 bool g_rendezvous_active = false;
 std::string g_formation_session_code;
 int g_formation_own_peer_id = 0;
@@ -358,13 +427,13 @@ void SetupRendezvousCallbacksOnce() {
     };
     g_rendezvous_client.on_peer_left = [](int peer_id) {
         g_rendezvous_peers.erase(peer_id);
+        g_formation_sender_by_peer.erase(peer_id);
         UpdateFormationStatus();
         char buf[128];
         std::snprintf(buf, sizeof(buf), "XPMultiCrew: rendezvous peer %d left\n", peer_id);
         XPLMDebugString(buf);
     };
-    g_rendezvous_client.on_relay_received = [](int /*from_peer_id*/,
-                                                 const std::vector<uint8_t>& bytes) {
+    g_rendezvous_client.on_relay_received = [](int from_peer_id, const std::vector<uint8_t>& bytes) {
         // Decrypted first (see FormationSync::SetCrypto's comment for why
         // Formation's relay path is handled here rather than inside that
         // class) - dropped silently on failure, same as a malformed/
@@ -378,6 +447,26 @@ void SetupRendezvousCallbacksOnce() {
         if (!opened) {
             return;
         }
+        uint32_t magic = 0;
+        if (opened->size() >= sizeof(magic)) {
+            std::memcpy(&magic, opened->data(), sizeof(magic));
+        }
+        // Time & weather only count from the session creator (peer 1) -
+        // see g_formation_weather's comment.
+        if (magic == flytogether::kWeatherStateMagic) {
+            if (from_peer_id == 1) {
+                g_formation_weather.IngestRelayedPacket(opened->data(), opened->size()); // no-op unless following
+            }
+            return;
+        }
+        if (magic == flytogether::kTimeSyncMagic) {
+            if (from_peer_id == 1 && g_formation_weather.role() == flytogether::SharedCockpitRole::kClient) {
+                if (const auto time = flytogether::DecodeTimeSyncPacket(opened->data(), opened->size())) {
+                    MaybeApplySimTime(*time);
+                }
+            }
+            return;
+        }
         // `<` against the frozen size floor, not exact-match, and copy
         // only min(opened->size(), sizeof(packet)) - same forward-
         // compatibility reasoning as FormationSync::PollIncoming's direct-
@@ -388,6 +477,9 @@ void SetupRendezvousCallbacksOnce() {
         flytogether::AircraftStatePacket packet;
         std::memcpy(&packet, opened->data(), std::min(opened->size(), sizeof(packet)));
         g_formation_sync.IngestPacket(packet, XPLMGetElapsedTime());
+        if (flytogether::IsPlausibleAircraftState(packet)) {
+            g_formation_sender_by_peer[from_peer_id] = packet.sender_id; // for LINK_QUALITY's per-peer path
+        }
     };
     g_rendezvous_client.on_direct_path_up = [](int peer_id) {
         char buf[128];
@@ -403,6 +495,7 @@ void SetupRendezvousCallbacksOnce() {
     g_rendezvous_client.on_disconnected = []() {
         XPLMDebugString("XPMultiCrew: rendezvous connection lost\n");
         g_rendezvous_peers.clear();
+        g_formation_sender_by_peer.clear();
         g_last_pushed_formation_peers.clear();
         g_control_listener.SetFormationPeers("");
         // g_formation_reconnect.wanted stays true here (unless the user
@@ -495,6 +588,7 @@ void StartRendezvous(const std::string& host, uint16_t port, bool create, const 
 void DisconnectFormation() {
     g_formation_reconnect.wanted = false;
     g_rendezvous_peers.clear();
+    g_formation_sender_by_peer.clear();
     g_last_pushed_formation_peers.clear();
     g_rendezvous_client.Stop(); // sends leave_session if we were actually in one
     g_rendezvous_active = false;
@@ -705,6 +799,36 @@ std::string InitXpmpAndLoadCsl() {
 // destroyed before that cleanup - UpdateFormationCallback recreates them
 // on its next frame for every peer that's still active, so remote
 // aircraft only blink out briefly.
+// XPMP2's label + map-layer switches are global; applied after every
+// (re)init and whenever the companion changes the preference.
+void ApplyLabelPrefs() {
+    if (!g_xpmp_initialized) {
+        return;
+    }
+    XPMPEnableAircraftLabels(g_pref_labels);
+    XPMPEnableMap(g_pref_labels, g_pref_labels);
+}
+
+void PushPrefs() {
+    g_control_listener.SetPrefs((g_pref_callsign.empty() ? std::string("-") : g_pref_callsign) + " " +
+                                (g_pref_labels ? "1" : "0") + " " + (g_pref_env_sync ? "1" : "0"));
+}
+
+void SetPrefs(const std::string& callsign, bool labels, bool env_sync) {
+    char sanitized[8] = {};
+    std::memcpy(sanitized, callsign.data(), std::min(callsign.size(), sizeof(sanitized)));
+    flytogether::SanitizeCallsign(sanitized);
+    std::string cs(sanitized, strnlen(sanitized, sizeof(sanitized)));
+    std::transform(cs.begin(), cs.end(), cs.begin(), [](unsigned char c) { return std::toupper(c); });
+    g_pref_callsign = cs;
+    g_pref_env_sync = env_sync;
+    if (labels != g_pref_labels) {
+        g_pref_labels = labels;
+        ApplyLabelPrefs();
+    }
+    PushPrefs();
+}
+
 void ReloadCsl() {
     XPLMDebugString("XPMultiCrew: reloading CSL models...\n");
 
@@ -722,6 +846,7 @@ void ReloadCsl() {
             std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
             XPLMDebugString(buf);
         }
+        ApplyLabelPrefs();
     }
     g_control_listener.SetCslStatus(status);
 }
@@ -736,12 +861,22 @@ float ReadFirstArrayElement(XPLMDataRef ref) {
     return value;
 }
 
+// The light switches are int datarefs - reading them with XPLMGetDataf
+// only works if the dataref also happens to publish a float variant, so
+// pick the accessor by the dataref's actual type.
+bool IsSwitchOn(XPLMDataRef ref) {
+    if (!ref) return false;
+    if (XPLMGetDataRefTypes(ref) & xplmType_Int) return XPLMGetDatai(ref) != 0;
+    return XPLMGetDataf(ref) > 0.5f;
+}
+
 uint8_t ReadLightBits() {
     uint8_t bits = 0;
-    if (g_beacon_ref && XPLMGetDataf(g_beacon_ref) > 0.5f) bits |= flytogether::LightBits::kBeacon;
-    if (g_strobe_ref && XPLMGetDataf(g_strobe_ref) > 0.5f) bits |= flytogether::LightBits::kStrobe;
-    if (g_nav_ref && XPLMGetDataf(g_nav_ref) > 0.5f) bits |= flytogether::LightBits::kNav;
-    if (g_landing_ref && XPLMGetDataf(g_landing_ref) > 0.5f) bits |= flytogether::LightBits::kLanding;
+    if (IsSwitchOn(g_beacon_ref)) bits |= flytogether::LightBits::kBeacon;
+    if (IsSwitchOn(g_strobe_ref)) bits |= flytogether::LightBits::kStrobe;
+    if (IsSwitchOn(g_nav_ref)) bits |= flytogether::LightBits::kNav;
+    if (IsSwitchOn(g_landing_ref)) bits |= flytogether::LightBits::kLanding;
+    if (IsSwitchOn(g_taxi_light_ref)) bits |= flytogether::LightBits::kTaxi;
     return bits;
 }
 
@@ -763,6 +898,7 @@ void RefreshOwnIcaoType() {
     }
     XPLMGetDatab(g_icao_ref, g_icao_type, 0, sizeof(g_icao_type) - 1);
     g_icao_type[sizeof(g_icao_type) - 1] = '\0';
+    g_control_listener.SetOwnIcao(g_icao_type);
 }
 
 // Reads all the datarefs both Formation mode (sending "here's another
@@ -797,6 +933,40 @@ flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id,
         }
     }
     packet.ref_height_agl_m = g_ref_height_agl_m;
+
+    std::string callsign = g_pref_callsign;
+    if (callsign.empty() && g_tailnum_ref) {
+        char tail[41] = {};
+        XPLMGetDatab(g_tailnum_ref, tail, 0, sizeof(tail) - 1);
+        callsign = tail;
+    }
+    std::memcpy(packet.callsign, callsign.data(), std::min(callsign.size(), sizeof(packet.callsign)));
+    flytogether::SanitizeCallsign(packet.callsign);
+
+    packet.velocity_x_mps = g_local_vx_ref ? XPLMGetDataf(g_local_vx_ref) : 0.0f;
+    packet.velocity_y_mps = g_local_vy_ref ? XPLMGetDataf(g_local_vy_ref) : 0.0f;
+    packet.velocity_z_mps = g_local_vz_ref ? XPLMGetDataf(g_local_vz_ref) : 0.0f;
+    packet.roll_rate_dps = g_p_ref ? XPLMGetDataf(g_p_ref) : 0.0f;
+    packet.pitch_rate_dps = g_q_ref ? XPLMGetDataf(g_q_ref) : 0.0f;
+    packet.yaw_rate_dps = g_r_ref ? XPLMGetDataf(g_r_ref) : 0.0f;
+
+    packet.reverser_ratio = ReadFirstArrayElement(g_reverser_ref);
+    packet.prop_rpm = ReadFirstArrayElement(g_prop_rpm_ref);
+    if (g_tire_rot_ref) {
+        float tires[3] = {};
+        const int n = XPLMGetDatavf(g_tire_rot_ref, tires, 0, 3);
+        for (int i = 0; i < n; ++i) {
+            packet.tire_rot_rad_s = std::max(packet.tire_rot_rad_s, tires[i]);
+        }
+    }
+    packet.nose_wheel_deg = ReadFirstArrayElement(g_tire_steer_ref);
+    packet.yoke_pitch_ratio = g_yoke_pitch_ref ? XPLMGetDataf(g_yoke_pitch_ref) : 0.0f;
+    packet.yoke_roll_ratio = g_yoke_roll_ref ? XPLMGetDataf(g_yoke_roll_ref) : 0.0f;
+    packet.yoke_heading_ratio = g_yoke_heading_ref ? XPLMGetDataf(g_yoke_heading_ref) : 0.0f;
+    packet.slat_ratio = g_slat_ref ? XPLMGetDataf(g_slat_ref) : 0.0f;
+    if (g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0) {
+        packet.flags |= flytogether::StateFlags::kOnGround;
+    }
     return packet;
 }
 
@@ -856,26 +1026,28 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
     MaybeReconnectFormation();
 
     std::unordered_map<uint32_t, std::string> active;
+    std::unordered_map<uint32_t, PushedPeer> peer_info;
     g_formation_sync.ForEachRemoteAircraft(
         now, [&](uint32_t sender_id, const flytogether::AircraftPose& /*pose*/,
                  const flytogether::AircraftStatePacket& latest) {
-            active.emplace(sender_id,
-                            std::string(latest.icao_type,
-                                        strnlen(latest.icao_type, sizeof(latest.icao_type))));
+            std::string icao(latest.icao_type, strnlen(latest.icao_type, sizeof(latest.icao_type)));
+            std::string callsign(latest.callsign, strnlen(latest.callsign, sizeof(latest.callsign)));
+            active.emplace(sender_id, icao);
+            peer_info.emplace(sender_id, PushedPeer{std::move(icao), std::move(callsign)});
         });
 
     // Push the peer list to the companion app (for its "connected peers"
     // list) only when it actually changed - this runs every frame, and
     // SetFormationPeers() sends a UDP packet, so unconditionally calling
     // it here would flood the socket for no reason.
-    if (active != g_last_pushed_formation_peers) {
-        g_last_pushed_formation_peers = active;
+    if (peer_info != g_last_pushed_formation_peers) {
+        g_last_pushed_formation_peers = peer_info;
         std::string encoded;
-        for (const auto& [sender_id, icao] : active) {
+        for (const auto& [sender_id, info] : peer_info) {
             if (!encoded.empty()) {
                 encoded += ";";
             }
-            encoded += std::to_string(sender_id) + ":" + icao;
+            encoded += std::to_string(sender_id) + ":" + info.icao + ":" + info.callsign;
         }
         g_control_listener.SetFormationPeers(encoded);
     }
@@ -915,10 +1087,10 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
     // Push this frame's dead-reckoned pose into each aircraft still tracked.
     g_formation_sync.ForEachRemoteAircraft(
         now, [](uint32_t sender_id, const flytogether::AircraftPose& pose,
-                const flytogether::AircraftStatePacket& /*latest*/) {
+                const flytogether::AircraftStatePacket& latest) {
             const auto it = g_xpmp_aircraft.find(sender_id);
             if (it != g_xpmp_aircraft.end()) {
-                it->second->SetPose(pose);
+                it->second->SetPose(pose, latest);
             }
         });
 
@@ -950,13 +1122,11 @@ XPLMDataRef g_local_x_ref = nullptr;
 XPLMDataRef g_local_y_ref = nullptr;
 XPLMDataRef g_local_z_ref = nullptr;
 XPLMDataRef g_quaternion_ref = nullptr; // float[4]
-XPLMDataRef g_local_vx_ref = nullptr;
-XPLMDataRef g_local_vy_ref = nullptr;
-XPLMDataRef g_local_vz_ref = nullptr;
 
 flytogether::SharedCockpitSync g_shared_cockpit;
 flytogether::DatarefSync g_dataref_sync;
 flytogether::WeatherSync g_weather_sync;
+double g_shared_cockpit_next_time_broadcast_s = 0.0;
 uint32_t g_shared_cockpit_sequence = 0;
 bool g_physics_override_active = false;
 bool g_shared_cockpit_active = false;
@@ -1040,7 +1210,8 @@ void SetPhysicsOverride(bool enabled) {
     g_physics_override_active = enabled;
 }
 
-void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose) {
+void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose,
+                                   const flytogether::AircraftStatePacket* latest) {
     if (!g_physics_override_active) {
         SetPhysicsOverride(true);
     }
@@ -1054,15 +1225,32 @@ void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose) {
     if (g_heading_ref) XPLMSetDataf(g_heading_ref, pose.heading_deg);
     if (g_pitch_ref) XPLMSetDataf(g_pitch_ref, pose.pitch_deg);
     if (g_roll_ref) XPLMSetDataf(g_roll_ref, pose.roll_deg);
+
+    // The flight model isn't integrating while overridden, but instruments
+    // (airspeed, VSI, turn coordinator) still read these - without them the
+    // client's panel shows a parked aircraft. Also what ReleasePhysicsOverride
+    // hands back on a role swap.
+    if (latest && latest->protocol_version >= 2) {
+        if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, latest->velocity_x_mps);
+        if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, latest->velocity_y_mps);
+        if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, latest->velocity_z_mps);
+        if (g_p_ref) XPLMSetDataf(g_p_ref, latest->roll_rate_dps);
+        if (g_q_ref) XPLMSetDataf(g_q_ref, latest->pitch_rate_dps);
+        if (g_r_ref) XPLMSetDataf(g_r_ref, latest->yaw_rate_dps);
+    }
 }
 
 // Hands physics control back cleanly (see "Transitioning From Disabled to
 // Enabled Flight Model" in the same X-Plane dev article): reconstruct the
 // quaternion from the orientation we were last driving so re-enabling
-// doesn't snap the model to some stale rotation, and zero the velocity
-// vector as a safe default (a brief settle is expected and acceptable per
-// docs/plan.md section 9's "notfalls mit leichtem Snap statt Drift").
-// Called on disable/stop so a user is never left with a frozen aircraft.
+// doesn't snap the model to some stale rotation, and continue with the
+// master's last reported velocity and rotation rates - what makes taking
+// over the controls mid-flight (or the master dropping out) keep flying
+// instead of stopping dead in the air. Zero velocity only when there's
+// nothing to go on (no master packet yet, or a pre-velocity sender).
+// Called on disable/stop/role swap so a user is never left with a frozen
+// aircraft. Must run BEFORE g_shared_cockpit.SetRole() on a swap, which
+// forgets the master state.
 void ReleasePhysicsOverride() {
     if (!g_physics_override_active) {
         return;
@@ -1077,9 +1265,14 @@ void ReleasePhysicsOverride() {
         float q_array[4] = {q.q0, q.q1, q.q2, q.q3};
         XPLMSetDatavf(g_quaternion_ref, q_array, 0, 4);
     }
-    if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, 0.0f);
-    if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, 0.0f);
-    if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, 0.0f);
+    const flytogether::AircraftStatePacket* latest = g_shared_cockpit.LatestMasterPacket();
+    const bool has_velocity = latest && latest->protocol_version >= 2;
+    if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, has_velocity ? latest->velocity_x_mps : 0.0f);
+    if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, has_velocity ? latest->velocity_y_mps : 0.0f);
+    if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, has_velocity ? latest->velocity_z_mps : 0.0f);
+    if (g_p_ref) XPLMSetDataf(g_p_ref, has_velocity ? latest->roll_rate_dps : 0.0f);
+    if (g_q_ref) XPLMSetDataf(g_q_ref, has_velocity ? latest->pitch_rate_dps : 0.0f);
+    if (g_r_ref) XPLMSetDataf(g_r_ref, has_velocity ? latest->yaw_rate_dps : 0.0f);
 
     SetPhysicsOverride(false);
 }
@@ -1128,7 +1321,8 @@ float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
 
     if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
         if (g_shared_cockpit.HasMasterState() && !g_shared_cockpit.IsMasterStale(now)) {
-            ApplyMasterPoseToOwnAircraft(g_shared_cockpit.ComputeMasterPose(now));
+            ApplyMasterPoseToOwnAircraft(g_shared_cockpit.ComputeMasterPose(now),
+                                         g_shared_cockpit.LatestMasterPacket());
         } else if (g_physics_override_active) {
             // Master's gone quiet - hand control back rather than freezing
             // the client's aircraft in place indefinitely.
@@ -1158,11 +1352,57 @@ float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
     return -1.0f; // every frame, same reasoning as UpdateFormationCallback
 }
 
+void SetSharedCockpitRunningStatus() {
+    g_control_listener.SetSharedCockpitStatus(g_shared_cockpit.role() == flytogether::SharedCockpitRole::kMaster
+                                                  ? "running as MASTER (you are flying)"
+                                                  : "running as CLIENT (co-pilot is flying)");
+}
+
+// Whoever owns the "flight" ownership category is MASTER (flies the
+// aircraft, broadcasts position/weather/time), the other side follows as
+// CLIENT - so taking over the controls is just CLAIM_OWNERSHIP flight,
+// delivered by the same claim-and-tell mechanism as the switch
+// categories. Called every PollDatarefSyncCallback tick; a no-op unless
+// ownership and role disagree.
+void SyncSharedCockpitRoleWithFlightOwnership() {
+    if (!g_shared_cockpit_active) {
+        return;
+    }
+    const bool owns_flight = g_dataref_sync.Owns(flytogether::DatarefCategory::kFlight);
+    const auto wanted = owns_flight ? flytogether::SharedCockpitRole::kMaster : flytogether::SharedCockpitRole::kClient;
+    if (g_shared_cockpit.role() == wanted) {
+        return;
+    }
+
+    if (wanted == flytogether::SharedCockpitRole::kMaster) {
+        // Hand physics back with the master's last velocity first - see
+        // ReleasePhysicsOverride's comment for why the order matters.
+        ReleasePhysicsOverride();
+        if (!g_last_pushed_aircraft_mismatch.empty()) {
+            g_last_pushed_aircraft_mismatch.clear();
+            g_control_listener.SetSharedCockpitAircraftMismatch("");
+        }
+        XPLMDebugString("XPMultiCrew: shared cockpit - you have control (now MASTER)\n");
+    } else {
+        // Physics gets overridden as soon as the new master's first packet
+        // arrives (UpdateSharedCockpitCallback); until then this side just
+        // keeps flying on its own flight model for those few milliseconds.
+        XPLMDebugString("XPMultiCrew: shared cockpit - co-pilot took control (now CLIENT)\n");
+    }
+    g_shared_cockpit.SetRole(wanted);
+    g_weather_sync.SetRole(wanted);
+    // A rendezvous rejoin restarts the sync engines with this role - keep
+    // it matching who's actually flying now.
+    g_pending_shared_cockpit_role = wanted;
+    SetSharedCockpitRunningStatus();
+}
+
 float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
                                float /*elapsedTimeSinceLastFlightLoop*/,
                                int /*counter*/,
                                void* /*refcon*/) {
     g_dataref_sync.Poll();
+    SyncSharedCockpitRoleWithFlightOwnership();
     // Catches the peer claiming a category over the network, which (unlike
     // a local ClaimOwnership() call) has no other point in this plugin
     // that would notice and push an update - see the function's comment.
@@ -1184,6 +1424,15 @@ float PollWeatherSyncCallback(float /*elapsedSinceLastCall*/,
     const double elevation_m = g_elevation_ref ? XPLMGetDatad(g_elevation_ref) : 0.0;
     g_weather_sync.MaybeBroadcast(latitude, longitude, elevation_m, now); // no-op unless MASTER
     g_weather_sync.PollIncoming(latitude, longitude, elevation_m, now);   // no-op unless CLIENT
+
+    // Sim time rides along, master -> client, sealed like position/datarefs.
+    if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kMaster && g_shared_cockpit_crypto &&
+        now >= g_shared_cockpit_next_time_broadcast_s) {
+        g_shared_cockpit_next_time_broadcast_s = now + flytogether::kTimeSyncBroadcastIntervalS;
+        const flytogether::TimeSyncPacket time = ReadSimTime();
+        const auto envelope = g_shared_cockpit_crypto->Seal(reinterpret_cast<const uint8_t*>(&time), sizeof(time));
+        g_shared_cockpit_rendezvous.SendRelay(envelope.data(), envelope.size());
+    }
     return 1.0f; // 1 Hz - plenty to service a 30s internal interval
 }
 
@@ -1267,9 +1516,7 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit ready as %s\n",
                   role == flytogether::SharedCockpitRole::kMaster ? "MASTER" : "CLIENT");
     XPLMDebugString(buf);
-    g_control_listener.SetSharedCockpitStatus(role == flytogether::SharedCockpitRole::kMaster
-                                              ? "running as MASTER"
-                                              : "running as CLIENT");
+    SetSharedCockpitRunningStatus();
 
     XPLMRegisterFlightLoopCallback(SendSharedCockpitStateCallback, 1.0f / 20.0f, nullptr);
     XPLMRegisterFlightLoopCallback(UpdateSharedCockpitCallback, -1.0f, nullptr);
@@ -1447,7 +1694,13 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         if (plain.size() >= sizeof(magic)) {
             std::memcpy(&magic, plain.data(), sizeof(magic));
         }
-        if (magic == flytogether::kAircraftStateMagic) {
+        if (magic == flytogether::kTimeSyncMagic) {
+            if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
+                if (const auto time = flytogether::DecodeTimeSyncPacket(plain.data(), plain.size())) {
+                    MaybeApplySimTime(*time);
+                }
+            }
+        } else if (magic == flytogether::kAircraftStateMagic) {
             g_shared_cockpit.IngestRelayedPacket(plain.data(), plain.size(), now);
         } else if (magic == flytogether::kDatarefSyncMagic || magic == flytogether::kOwnershipClaimMagic) {
             // Both land on the same DatarefSync UDP channel and
@@ -1595,6 +1848,19 @@ void MaybePushLinkQuality(double now) {
         out << sender_id << ":" << static_cast<int>(loss_ratio * 100.0 + 0.5);
     });
 
+    out << " formation_peer_path:";
+    bool first_path = true;
+    for (const auto& [peer_id, sender_id] : g_formation_sender_by_peer) {
+        if (g_rendezvous_peers.find(peer_id) == g_rendezvous_peers.end()) {
+            continue;
+        }
+        if (!first_path) {
+            out << ";";
+        }
+        first_path = false;
+        out << sender_id << ":" << (g_rendezvous_client.IsDirectPathUp(peer_id) ? "direct" : "relay");
+    }
+
     out << " sc_server_rtt_ms:";
     if (g_shared_cockpit_rendezvous.HasRtt()) {
         out << g_shared_cockpit_rendezvous.Rtt().count();
@@ -1609,7 +1875,48 @@ void MaybePushLinkQuality(double now) {
         out << "?";
     }
 
+    out << " sc_path:";
+    if (!g_shared_cockpit_active) {
+        out << "?";
+    } else {
+        out << (g_shared_cockpit_rendezvous.DirectPeerCount() > 0 ? "direct" : "relay");
+    }
+
     g_control_listener.SetLinkQuality(out.str());
+}
+
+// Formation time & weather sync, 1 Hz - see g_formation_weather. Works out
+// each tick whether this side currently shares (session creator), follows
+// (everyone else) or neither (preference off, not in a rendezvous session,
+// LAN-direct), so joining/leaving/toggling needs no extra bookkeeping.
+float PollFormationEnvCallback(float /*elapsedSinceLastCall*/,
+                               float /*elapsedTimeSinceLastFlightLoop*/,
+                               int /*counter*/,
+                               void* /*refcon*/) {
+    using flytogether::SharedCockpitRole;
+    const bool in_session = g_rendezvous_client.InSession() && g_formation_crypto && g_pref_env_sync;
+    SharedCockpitRole role = SharedCockpitRole::kNone;
+    if (in_session) {
+        role = g_formation_own_peer_id == 1 ? SharedCockpitRole::kMaster : SharedCockpitRole::kClient;
+    }
+    g_formation_weather.SetRole(role);
+
+    const double now = XPLMGetElapsedTime();
+    const double latitude = g_latitude_ref ? XPLMGetDatad(g_latitude_ref) : 0.0;
+    const double longitude = g_longitude_ref ? XPLMGetDatad(g_longitude_ref) : 0.0;
+    const double elevation_m = g_elevation_ref ? XPLMGetDatad(g_elevation_ref) : 0.0;
+    g_formation_weather.MaybeBroadcast(latitude, longitude, elevation_m, now); // host only
+    g_formation_weather.PollIncoming(latitude, longitude, elevation_m, now);   // followers only
+
+    if (role == SharedCockpitRole::kMaster && now >= g_formation_next_time_broadcast_s) {
+        g_formation_next_time_broadcast_s = now + flytogether::kTimeSyncBroadcastIntervalS;
+        const flytogether::TimeSyncPacket time = ReadSimTime();
+        const auto envelope = g_formation_crypto->Seal(reinterpret_cast<const uint8_t*>(&time), sizeof(time));
+        g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
+    } else if (role != SharedCockpitRole::kMaster) {
+        g_formation_next_time_broadcast_s = 0.0; // share right away if this side becomes host
+    }
+    return 1.0f;
 }
 
 float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
@@ -1674,6 +1981,22 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_icao_ref = XPLMFindDataRef("sim/aircraft/view/acf_ICAO");
     g_y_agl_ref = XPLMFindDataRef("sim/flightmodel/position/y_agl");
     g_on_ground_ref = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
+    g_taxi_light_ref = XPLMFindDataRef("sim/cockpit/electrical/taxi_light_on");
+    g_p_ref = XPLMFindDataRef("sim/flightmodel/position/P");
+    g_q_ref = XPLMFindDataRef("sim/flightmodel/position/Q");
+    g_r_ref = XPLMFindDataRef("sim/flightmodel/position/R");
+    g_reverser_ref = XPLMFindDataRef("sim/flightmodel2/engines/thrust_reverser_deploy_ratio");
+    g_prop_rpm_ref = XPLMFindDataRef("sim/cockpit2/engine/indicators/prop_speed_rpm");
+    g_tire_rot_ref = XPLMFindDataRef("sim/flightmodel2/gear/tire_rotation_speed_rad_sec");
+    g_tire_steer_ref = XPLMFindDataRef("sim/flightmodel2/gear/tire_steer_actual_deg");
+    g_yoke_pitch_ref = XPLMFindDataRef("sim/cockpit2/controls/yoke_pitch_ratio");
+    g_yoke_roll_ref = XPLMFindDataRef("sim/cockpit2/controls/yoke_roll_ratio");
+    g_yoke_heading_ref = XPLMFindDataRef("sim/cockpit2/controls/yoke_heading_ratio");
+    g_slat_ref = XPLMFindDataRef("sim/flightmodel2/controls/slat1_deploy_ratio");
+    g_tailnum_ref = XPLMFindDataRef("sim/aircraft/view/acf_tailnum");
+    g_zulu_time_ref = XPLMFindDataRef("sim/time/zulu_time_sec");
+    g_local_date_ref = XPLMFindDataRef("sim/time/local_date_days");
+    g_use_system_time_ref = XPLMFindDataRef("sim/time/use_system_time");
     RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
     std::random_device rd;
@@ -1753,6 +2076,9 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
     control_callbacks.on_reload_csl = []() { ReloadCsl(); };
+    control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync) {
+        SetPrefs(callsign, labels, env_sync);
+    };
     control_callbacks.on_claim_ownership = [](flytogether::DatarefCategory category) {
         g_dataref_sync.ClaimOwnership(category);
         PushSharedCockpitOwnershipIfChanged();
@@ -1760,6 +2086,7 @@ PLUGIN_API int XPluginEnable() {
     if (g_control_listener.Start(control_callbacks)) {
         XPLMRegisterFlightLoopCallback(PollControlListenerCallback, -1.0f, nullptr);
         g_control_listener.SetPluginVersion(XPMULTICREW_VERSION);
+        PushPrefs();
     } else {
         XPLMDebugString("XPMultiCrew: failed to start control listener (UDP port busy?), "
                          "companion app won't be reachable\n");
@@ -1772,6 +2099,16 @@ PLUGIN_API int XPluginEnable() {
     XPLMRegisterFlightLoopCallback(PollSharedCockpitRendezvousCallback, -1.0f, nullptr);
 
     XPLMRegisterFlightLoopCallback(LogPositionCallback, 5.0f, nullptr);
+
+    g_formation_weather.StartRelayOnly(flytogether::SharedCockpitRole::kNone);
+    g_formation_weather.SetRelaySender([](const void* data, size_t len) {
+        if (!g_formation_crypto) {
+            return;
+        }
+        const auto envelope = g_formation_crypto->Seal(static_cast<const uint8_t*>(data), len);
+        g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
+    });
+    XPLMRegisterFlightLoopCallback(PollFormationEnvCallback, 1.0f, nullptr);
 
     if (g_udp_socket.Open()) {
         XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
@@ -1805,6 +2142,7 @@ PLUGIN_API int XPluginEnable() {
             std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
             XPLMDebugString(buf);
         }
+        ApplyLabelPrefs();
     }
 
     // Formation's internet play (rendezvous/relay) also only ever starts
@@ -1822,6 +2160,8 @@ PLUGIN_API void XPluginDisable() {
     g_control_listener.Stop();
 
     XPLMUnregisterFlightLoopCallback(LogPositionCallback, nullptr);
+    XPLMUnregisterFlightLoopCallback(PollFormationEnvCallback, nullptr);
+    g_formation_weather.Stop();
     XPLMUnregisterFlightLoopCallback(SendPositionOverUdpCallback, nullptr);
     g_udp_socket.Close();
 

@@ -15,6 +15,8 @@ bool ParseDatarefCategoryName(const std::string& name, DatarefCategory& out) {
         out = DatarefCategory::kAvionics;
     } else if (name == "systems") {
         out = DatarefCategory::kSystems;
+    } else if (name == "flight") {
+        out = DatarefCategory::kFlight;
     } else {
         return false; // unrecognized - leave `out` untouched, caller keeps the default
     }
@@ -29,6 +31,8 @@ std::string DatarefCategoryName(DatarefCategory category) {
             return "avionics";
         case DatarefCategory::kSystems:
             return "systems";
+        case DatarefCategory::kFlight:
+            return "flight";
     }
     return "systems";
 }
@@ -69,7 +73,11 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
                     } else if (token == "CATEGORY") {
                         std::string category_name;
                         tokens >> category_name;
-                        ParseDatarefCategoryName(category_name, spec.category); // invalid -> keeps the default
+                        DatarefCategory parsed = spec.category;
+                        // "flight" is the MASTER role, not a dataref bucket - see kFlight.
+                        if (ParseDatarefCategoryName(category_name, parsed) && parsed != DatarefCategory::kFlight) {
+                            spec.category = parsed;
+                        }
                     }
                     // Unrecognized tokens are ignored, same "forward
                     // compatible, don't hard-fail on the unknown" spirit

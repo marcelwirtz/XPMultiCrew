@@ -27,6 +27,15 @@ void SharedCockpitSync::Stop() {
     master_link_quality_ = LinkQualityTracker();
 }
 
+void SharedCockpitSync::SetRole(SharedCockpitRole role) {
+    if (role == role_) {
+        return;
+    }
+    role_ = role;
+    master_state_ = RemoteAircraft();
+    master_link_quality_ = LinkQualityTracker();
+}
+
 std::string SharedCockpitSync::MasterIcaoType() const {
     if (!master_state_.HasData()) {
         return "";
@@ -133,6 +142,7 @@ void SharedCockpitSync::ProcessIncomingPacket(const AircraftStatePacket& incomin
     }
     AircraftStatePacket packet = incoming;
     SanitizeIcaoType(packet.icao_type);
+    SanitizeCallsign(packet.callsign);
     master_state_.OnPacketReceived(packet, now_s);
     master_link_quality_.OnPacketReceived(packet.sequence);
 }

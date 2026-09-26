@@ -52,6 +52,22 @@ std::string RecvOne(UdpSocket& sock, std::chrono::milliseconds timeout) {
 } // namespace
 
 int main() {
+    // --- SetRole: swapping roles forgets the old master state, so swapping
+    // back never applies a stale pose ---
+    {
+        SharedCockpitSync sync;
+        sync.SetRole(SharedCockpitRole::kClient);
+        const AircraftStatePacket packet = MakePacket(/*sender_id=*/7, /*sequence=*/1);
+        sync.IngestRelayedPacket(&packet, sizeof(packet), 1.0);
+        assert(sync.HasMasterState());
+        assert(sync.LatestMasterPacket() && sync.LatestMasterPacket()->sender_id == 7);
+        sync.SetRole(SharedCockpitRole::kMaster);
+        sync.SetRole(SharedCockpitRole::kClient);
+        assert(!sync.HasMasterState());
+        assert(sync.LatestMasterPacket() == nullptr);
+        std::printf("SetRole forgets master state across a swap: OK\n");
+    }
+
     // --- CLIENT: direct-socket receive, staleness, role-gated SendOwnState ---
     {
         SharedCockpitSync client;

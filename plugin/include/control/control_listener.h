@@ -30,11 +30,18 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   JOIN_SESSION <host:port> <code> [SPECTATOR]
 //   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
 //   LAN_CONNECT_FORMATION <host:port> <code>
-//   CLAIM_OWNERSHIP <engine|avionics|systems>
+//   CLAIM_OWNERSHIP <engine|avionics|systems|flight>
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   RELOAD_CSL
+//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   GET_STATUS
+// SET_PREFS carries the companion app's settings: the callsign shown to
+// others ("-" = use the aircraft's tail number), whether XPMP2 draws
+// labels/map icons for remote aircraft, and whether Formation time &
+// weather sync is on (the session creator shares, everyone else follows).
+// Echoed back as PREFS, so the companion re-sends them whenever the plugin
+// lost them (X-Plane restart).
 // The optional trailing SPECTATOR token on CREATE_SESSION/JOIN_SESSION
 // (Formation only - Shared Cockpit has no spectator mode, see
 // docs/plan.md) means this side never broadcasts its own aircraft state
@@ -90,13 +97,17 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   FORMATION_CODE <code, empty if none yet>
 //   SHARED_COCKPIT <status text>
 //   SHARED_COCKPIT_CODE <code, empty if none yet (CLIENT never has one)>
-//   SHARED_COCKPIT_OWNERSHIP <engine>:<state> <avionics>:<state> <systems>:<state>
+//   SHARED_COCKPIT_OWNERSHIP <engine>:<state> <avionics>:<state> <systems>:<state> <flight>:<state>
+//     (flight = who flies the aircraft, i.e. who is MASTER right now)
 //     <state> is one of:
 //       me   - this side owns it
 //       peer - the peer owns it
-//   PEERS <sender_id>:<icao>;<sender_id>:<icao>;... (Formation only, empty if none)
+//   PEERS <sender_id>:<icao>:<callsign>;... (Formation only, empty if none)
 //   LINK_QUALITY formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
-//                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?>
+//                formation_peer_path:<id>:<direct|relay>;...
+//                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
+//   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+//   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
 //   SHARED_COCKPIT_AIRCRAFT_MISMATCH <own icao>:<master icao> (empty if matching/unknown)
 //   SIM_READY <0|1>
 //   PLUGIN_VERSION <version>
@@ -151,6 +162,7 @@ public:
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_claim_ownership;
         std::function<void()> on_reload_csl;
+        std::function<void(const std::string& callsign, bool labels, bool envSync)> on_set_prefs;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -189,6 +201,9 @@ public:
     bool IsSimReady() const { return sim_ready_; }
     void SetPluginVersion(const std::string& version);
     void SetCslStatus(const std::string& text);
+    // `encoded` = "<callsign|-> <0|1> <0|1>", see PREFS above.
+    void SetPrefs(const std::string& encoded);
+    void SetOwnIcao(const std::string& icao);
 
 private:
     void HandleLine(const std::string& line);
@@ -207,6 +222,8 @@ private:
     bool sim_ready_ = false;
     std::string plugin_version_ = "unknown";
     std::string csl_status_;
+    std::string prefs_;
+    std::string own_icao_;
 };
 
 } // namespace flytogether

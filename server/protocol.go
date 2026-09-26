@@ -41,7 +41,11 @@ const (
 // wire change - see aircraft_state.h's kAircraftStateMinProtocolVersion
 // for the same "only bump for a real break" discipline on a different
 // protocol in this project.
-const ProtocolVersion = 2
+//
+// 3 (v0.3.0): Shared Cockpit's "flight" ownership category (role swap),
+// time sync messages and a new weather magic - a v0.2.x peer would
+// misread those, so mixed sessions are refused instead.
+const ProtocolVersion = 3
 
 // ClientMessage is anything a client sends to the server.
 type ClientMessage struct {

@@ -285,6 +285,7 @@ int main() {
 
         AircraftStatePacket odd = MakePacket(/*sender_id=*/3, /*sequence=*/1);
         std::memcpy(odd.icao_type, "C1\n;X", 6);
+        std::memcpy(odd.callsign, "D-E;X", 5);
         sync.IngestPacket(odd, 1.0);
         assert(sync.tracked_aircraft_count() == 1);
         std::string seen_icao;
@@ -292,6 +293,11 @@ int main() {
             seen_icao.assign(latest.icao_type, strnlen(latest.icao_type, sizeof(latest.icao_type)));
         });
         assert(seen_icao == "C1");
+        std::string seen_callsign;
+        sync.ForEachRemoteAircraft(1.0, [&](uint32_t, const AircraftPose&, const AircraftStatePacket& latest) {
+            seen_callsign.assign(latest.callsign, strnlen(latest.callsign, sizeof(latest.callsign)));
+        });
+        assert(seen_callsign == "D-E");
         std::printf("IngestPacket drops implausible poses and sanitizes icao_type: OK\n");
     }
 
