@@ -108,6 +108,10 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
 //   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
+//   TCAS_STATUS <ok|remote|blocked:<plugin name>> (empty before XPMP2 was enabled)
+//     Who owns X-Plane's TCAS/AI planes: us, the XPMP2 Remote Client (fine,
+//     it shows everyone's planes) or another plugin such as LiveTraffic
+//     (then our peers are drawn but missing from TCAS and X-Plane's map).
 //   SELF_POS <lat> <lon> <alt_ft> <heading_deg> <groundspeed_kt>
 //   PEER_POS <sender_id>:<lat>:<lon>:<alt_ft>:<heading_deg>;... (Formation, dead-reckoned)
 //     Both pushed about once a second, for the companion's map page.
@@ -207,6 +211,7 @@ public:
     // `encoded` = "<callsign|-> <0|1> <0|1>", see PREFS above.
     void SetPrefs(const std::string& encoded);
     void SetOwnIcao(const std::string& icao);
+    void SetTcasStatus(const std::string& status);
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
@@ -230,6 +235,7 @@ private:
     std::string csl_status_;
     std::string prefs_;
     std::string own_icao_;
+    std::string tcas_status_;
     std::string self_pos_;
     std::string peer_pos_;
 };

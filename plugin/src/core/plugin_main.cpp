@@ -800,6 +800,39 @@ std::string InitXpmpAndLoadCsl() {
 // destroyed before that cleanup - UpdateFormationCallback recreates them
 // on its next frame for every peer that's still active, so remote
 // aircraft only blink out briefly.
+// Set by OnPlanesAvailable (X-Plane calls it when the plugin that held the
+// AI/TCAS planes - typically LiveTraffic - releases them); acted on from the
+// next PollControlListenerCallback tick rather than inside X-Plane's own
+// callback.
+bool g_retry_tcas_control = false;
+
+void OnPlanesAvailable(void* /*refcon*/) {
+    g_retry_tcas_control = true;
+}
+
+// XPMPMultiplayerEnable plus reporting who controls TCAS (TCAS_STATUS, see
+// control_listener.h). Only one plugin can own X-Plane's AI/TCAS planes;
+// if another one does, our peers are still drawn but missing from TCAS and
+// X-Plane's own map - which used to only show up as a Log.txt line.
+void EnableXpmpMultiplayer() {
+    const char* err = XPMPMultiplayerEnable(OnPlanesAvailable, nullptr);
+    const std::string message = err ? err : "";
+    std::string status;
+    if (XPMPHasControlOfAIAircraft()) {
+        status = "ok";
+    } else if (message.find("Remote Client") != std::string::npos) {
+        status = "remote"; // XPMP2 Remote Client merges everyone's planes onto TCAS
+    } else {
+        // XPMP2's text: "<plugin> controls TCAS / AI. ..."
+        const auto pos = message.find(" controls TCAS");
+        status = "blocked:" + (pos != std::string::npos ? message.substr(0, pos) : std::string("another plugin"));
+    }
+    if (!message.empty()) {
+        XPLMDebugString(("XPMultiCrew: " + message + "\n").c_str());
+    }
+    g_control_listener.SetTcasStatus(status);
+}
+
 // XPMP2's label + map-layer switches are global; applied after every
 // (re)init and whenever the companion changes the preference.
 void ApplyLabelPrefs() {
@@ -851,12 +884,7 @@ void ReloadCsl() {
 
     const std::string status = InitXpmpAndLoadCsl();
     if (g_xpmp_initialized) {
-        const char* err = XPMPMultiplayerEnable();
-        if (err && err[0]) {
-            char buf[512];
-            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
-            XPLMDebugString(buf);
-        }
+        EnableXpmpMultiplayer();
         ApplyLabelPrefs();
     }
     g_control_listener.SetCslStatus(status);
@@ -1971,6 +1999,13 @@ float PollControlListenerCallback(float /*elapsedSinceLastCall*/,
         RefreshOwnIcaoType();
     }
     g_control_listener.Poll();
+    if (g_retry_tcas_control) {
+        g_retry_tcas_control = false;
+        if (g_xpmp_initialized && !XPMPHasControlOfAIAircraft()) {
+            XPLMDebugString("XPMultiCrew: TCAS/AI planes were released by another plugin - taking them over\n");
+            EnableXpmpMultiplayer();
+        }
+    }
     MaybePushLinkQuality(XPLMGetElapsedTime());
     return -1.0f; // every frame, so the companion app feels responsive
 }
@@ -2174,12 +2209,7 @@ PLUGIN_API int XPluginEnable() {
     XPLMRegisterFlightLoopCallback(UpdateFormationCallback, -1.0f, nullptr);
 
     if (g_xpmp_initialized) {
-        const char* err = XPMPMultiplayerEnable();
-        if (err && err[0]) {
-            char buf[512];
-            std::snprintf(buf, sizeof(buf), "XPMultiCrew: XPMPMultiplayerEnable failed: %s\n", err);
-            XPLMDebugString(buf);
-        }
+        EnableXpmpMultiplayer();
         ApplyLabelPrefs();
     }
 

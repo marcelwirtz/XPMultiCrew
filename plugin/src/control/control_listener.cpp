@@ -103,7 +103,8 @@ void ControlListener::SendStatus() {
                              "\nSHARED_COCKPIT_AIRCRAFT_MISMATCH " + shared_cockpit_aircraft_mismatch_ +
                              "\nSIM_READY " + (sim_ready_ ? "1" : "0") + "\nPLUGIN_VERSION " + plugin_version_ +
                              "\nCSL_STATUS " + csl_status_ + "\nPREFS " + prefs_ + "\nOWN_ICAO " + own_icao_ +
-                             "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ + "\n";
+                             "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
+                             "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -182,6 +183,12 @@ void ControlListener::SetPrefs(const std::string& encoded) {
 void ControlListener::SetOwnIcao(const std::string& icao) {
     if (icao == own_icao_) return;
     own_icao_ = icao;
+    SendStatus();
+}
+
+void ControlListener::SetTcasStatus(const std::string& status) {
+    if (status == tcas_status_) return;
+    tcas_status_ = status;
     SendStatus();
 }
 

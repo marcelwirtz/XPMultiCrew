@@ -81,6 +81,7 @@ type PluginClient struct {
 	cslStatus              string // "" until the plugin has pushed one - see control_listener.h's CSL_STATUS
 	prefsEncoded           string // raw PREFS value, "" until pushed
 	ownIcao                string
+	tcasStatus             string // see control_listener.h's TCAS_STATUS
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 }
@@ -222,6 +223,14 @@ func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
 	return &self, peers
 }
 
+// TcasStatus returns control_listener.h's TCAS_STATUS ("ok", "remote",
+// "blocked:<plugin>" or "" before the plugin reported it).
+func (c *PluginClient) TcasStatus() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tcasStatus
+}
+
 // OwnIcao returns the ICAO type of the aircraft currently loaded in
 // X-Plane, "" if unknown.
 func (c *PluginClient) OwnIcao() string {
@@ -297,6 +306,8 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.prefsEncoded = value
 		case "OWN_ICAO":
 			c.ownIcao = value
+		case "TCAS_STATUS":
+			c.tcasStatus = value
 		case "SELF_POS":
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":

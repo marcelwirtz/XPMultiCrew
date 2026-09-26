@@ -18,7 +18,16 @@
     --err: #ff6b6b;
   }
   * { box-sizing: border-box; }
+  /* App-style layout: the window never scrolls as a whole - the header
+     and sidebar stay put and only the content column scrolls. That's also
+     what lets the map page fill exactly the space that's left (it used to
+     be sized as "window height minus a guess" and stuck out at the bottom
+     whenever a banner was showing). */
+  html, body { height: 100%; }
   body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     margin: 0;
     background: var(--bg);
     color: var(--text);
@@ -46,10 +55,11 @@
      unboundedly tall. */
   .app-layout {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0;
-    padding: 16px 24px 24px;
-    min-height: calc(100vh - 70px);
+    padding: 16px 0 0 24px;
+    flex: 1;
+    min-height: 0;
   }
   @media (max-width: 640px) {
     .app-layout { flex-direction: column; }
@@ -64,8 +74,7 @@
     gap: 2px;
     border-right: 1px solid var(--border);
     padding-right: 14px;
-    position: sticky;
-    top: 16px;
+    align-self: flex-start;
   }
   .sidebar button {
     display: flex;
@@ -99,7 +108,19 @@
   .content {
     flex: 1;
     min-width: 0;
-    padding-left: 22px;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 0 24px 24px 22px;
+  }
+  /* The map page is the one page that fills the content column instead of
+     growing with its content. */
+  #page-map.active {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
   .page {
     display: none;
@@ -440,8 +461,8 @@
   .map-toolbar label.checkbox-row { margin: 0; }
   .map-toolbar button { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; }
   #map {
-    height: calc(100vh - 190px);
-    min-height: 260px;
+    flex: 1;
+    min-height: 220px;
     border-radius: 10px;
     border: 1px solid var(--border);
     overflow: hidden;
@@ -523,6 +544,13 @@
             <input type="text" id="profile-icao" placeholder="ICAO" maxlength="8">
             <button id="profile-open-btn" class="secondary" type="button">Open</button>
             <button id="profile-current-btn" class="secondary" type="button" style="display: none;"></button>
+            <button id="profile-new-btn" type="button">New profile…</button>
+          </div>
+          <div class="profile-toolbar" id="profile-new-form" style="display: none; margin-top: 10px;">
+            <input type="text" id="profile-new-icao" placeholder="ICAO" maxlength="8">
+            <select id="profile-new-template" title="Start from"><option value="">Start empty</option></select>
+            <button id="profile-new-create" type="button">Create</button>
+            <button id="profile-new-cancel" class="secondary" type="button">Cancel</button>
           </div>
           <div id="profile-editor" style="display: none;">
             <div class="status" id="profile-status"><span class="dot"></span><span id="profile-status-text"></span></div>
@@ -635,6 +663,9 @@
                 <label>Aircraft models (CSL): <b id="csl-status">—</b></label>
                 <button id="reload-csl-btn" class="secondary" type="button" disabled>Reload CSL</button>
               </div>
+              <!-- See control_listener.h's TCAS_STATUS - shown only when
+                   something needs attention. -->
+              <div class="mismatch-warning" id="tcas-warning"></div>
             </div>
           </div>
         </div>

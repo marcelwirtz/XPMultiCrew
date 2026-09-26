@@ -83,6 +83,21 @@ release files, "Update & Restart" from v0.2.x should now install the
 update, but on Linux you'll have to start the app again yourself that one
 time.
 
+## Using it together with LiveTraffic (or other XPMP2 plugins)
+
+XPMultiCrew and LiveTraffic
+both use XPMP2 to draw other aircraft, and that works side by side - you
+see real-world traffic and your fellow pilots at the same time. But only
+**one** plugin can own X-Plane's TCAS/AI planes: whichever gets them
+first puts its aircraft on TCAS and X-Plane's own map, the other one's
+aircraft are drawn but missing there. The companion shows a warning when
+another plugin holds them, and XPMultiCrew takes TCAS over automatically
+as soon as that plugin releases it.
+
+To get **both** on TCAS, install the free **XPMP2 Remote Client** plugin
+(by LiveTraffic's author) - it collects the aircraft of every XPMP2-based
+plugin onto TCAS, and XPMultiCrew recognises it.
+
 ## Repo layout
 
 - `plugin/` — the X-Plane plugin (C++17, XPLM SDK), builds on Windows and

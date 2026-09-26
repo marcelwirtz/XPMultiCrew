@@ -36,6 +36,7 @@ type statusEvent struct {
 	RunningVersion         string            `json:"runningVersion"`
 	CslStatus              string            `json:"cslStatus"`
 	OwnIcao                string            `json:"ownIcao"`
+	TcasStatus             string            `json:"tcasStatus"`
 	SelfPos                *MapPosition      `json:"selfPos"`
 	PeerPos                []MapPosition     `json:"peerPos"`
 }
@@ -108,6 +109,7 @@ func (a *App) pollStatus() {
 			RunningVersion:         a.plugin.RunningVersion(),
 			CslStatus:              a.plugin.CslStatus(),
 			OwnIcao:                a.plugin.OwnIcao(),
+			TcasStatus:             a.plugin.TcasStatus(),
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 		})

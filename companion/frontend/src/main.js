@@ -489,6 +489,22 @@ function renderAircraftMismatch(mismatch) {
   el.classList.add('visible');
 }
 
+// Only one plugin can own X-Plane's TCAS/AI planes. When another one has
+// them (typically LiveTraffic), peers are still drawn but missing from
+// TCAS and X-Plane's own map - say so instead of leaving it to Log.txt.
+function renderTcasStatus(status) {
+  const el = document.getElementById('tcas-warning');
+  if (!status || !status.startsWith('blocked:')) {
+    el.classList.remove('visible');
+    return;
+  }
+  const owner = status.slice('blocked:'.length) || 'another plugin';
+  el.textContent = `TCAS is controlled by ${owner}: other pilots are shown in the sim, but not on TCAS or ` +
+    `X-Plane's map. Install the "XPMP2 Remote Client" plugin to see both on TCAS. XPMultiCrew takes TCAS ` +
+    `over automatically as soon as ${owner} releases it.`;
+  el.classList.add('visible');
+}
+
 // Only overwrites the code field when the plugin actually has a code for
 // us (i.e. we're the one who just created or joined that session) and the
 // field doesn't already show it - avoids fighting with someone mid-typing
@@ -561,6 +577,7 @@ EventsOn('status', (data) => {
   document.getElementById('disconnect-formation-btn').disabled = formationIdle;
   document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
+  renderTcasStatus(data.tcasStatus);
   document.getElementById('reload-csl-btn').disabled = !data.simReady || Date.now() < cslReloadBlockedUntil;
 
   // Only meaningful while a Shared Cockpit session is actually running,
@@ -663,6 +680,9 @@ function setProfileStatus(text, kind) {
 }
 
 function describeSource(profile) {
+  if (profile.unsaved) {
+    return `New profile for ${profile.icao} - not saved yet.`;
+  }
   switch (profile.source) {
     case 'user':
       return `Your profile for ${profile.icao} (overrides the bundled one, if any).`;
@@ -715,10 +735,13 @@ function renderProfile(profile) {
   document.getElementById('profile-revert-btn').disabled = profile.source !== 'user';
 }
 
+let knownProfiles = [];
+
 async function refreshProfileList(selectIcao) {
   const select = document.getElementById('profile-select');
   try {
     const list = await ListProfiles();
+    knownProfiles = list;
     select.innerHTML = '<option value="">Profiles…</option>' +
       list
         .map((p) => `<option value="${escapeHtml(p.icao)}">${escapeHtml(p.icao)}${p.hasUser ? ' (yours)' : ' (bundled)'}</option>`)
@@ -751,6 +774,62 @@ function renderCurrentAircraftButton(ownIcao) {
 }
 
 document.getElementById('profile-current-btn').addEventListener('click', () => openProfile(lastOwnIcao));
+
+// "New profile…": ICAO (prefilled with the current aircraft) plus an
+// optional existing profile to copy as a starting point. Nothing is
+// written until "Save my profile".
+function showNewProfileForm(show) {
+  document.getElementById('profile-new-form').style.display = show ? '' : 'none';
+  if (!show) return;
+  const template = document.getElementById('profile-new-template');
+  template.innerHTML = '<option value="">Start empty</option>' +
+    knownProfiles.map((p) => `<option value="${escapeHtml(p.icao)}">Copy of ${escapeHtml(p.icao)}</option>`).join('');
+  const icao = document.getElementById('profile-new-icao');
+  icao.value = lastOwnIcao && !knownProfiles.some((p) => p.icao === lastOwnIcao) ? lastOwnIcao : '';
+  icao.focus();
+}
+
+async function createNewProfile() {
+  const icao = document.getElementById('profile-new-icao').value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,8}$/.test(icao)) {
+    alert('Enter the aircraft\'s ICAO type (2-8 letters/digits, e.g. C172).');
+    return;
+  }
+  const existing = knownProfiles.find((p) => p.icao === icao);
+  if (existing && existing.hasUser) {
+    alert(`You already have a profile for ${icao} - it's opened for editing instead.`);
+    showNewProfileForm(false);
+    openProfile(icao);
+    return;
+  }
+  const templateIcao = document.getElementById('profile-new-template').value;
+  let entries = [];
+  let validated = false;
+  try {
+    if (templateIcao) {
+      const template = await LoadProfile(templateIcao);
+      entries = template.entries;
+      validated = template.validated;
+    } else {
+      validated = (await LoadProfile(icao)).validated;
+    }
+  } catch (e) {
+    alert(e);
+    return;
+  }
+  showNewProfileForm(false);
+  renderProfile({ icao, source: existing ? 'bundled' : 'new', entries, validated, unsaved: true });
+}
+
+document.getElementById('profile-new-btn').addEventListener('click', async () => {
+  await refreshProfileList();
+  showNewProfileForm(true);
+});
+document.getElementById('profile-new-cancel').addEventListener('click', () => showNewProfileForm(false));
+document.getElementById('profile-new-create').addEventListener('click', createNewProfile);
+document.getElementById('profile-new-icao').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') createNewProfile();
+});
 document.getElementById('profile-select').addEventListener('change', (e) => openProfile(e.target.value));
 document.getElementById('profile-open-btn').addEventListener('click', () =>
   openProfile(document.getElementById('profile-icao').value));

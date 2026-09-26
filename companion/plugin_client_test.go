@@ -320,3 +320,11 @@ func TestApplyStatusMessagePositions(t *testing.T) {
 		t.Fatalf("empty lines should clear positions, got %+v %+v", self, peers)
 	}
 }
+
+func TestApplyStatusMessageTcasStatus(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("TCAS_STATUS blocked:LiveTraffic\n")
+	if c.TcasStatus() != "blocked:LiveTraffic" {
+		t.Fatalf("got %q", c.TcasStatus())
+	}
+}
