@@ -18,6 +18,10 @@ export function ClaimOwnership(arg1) {
   return window['go']['main']['App']['ClaimOwnership'](arg1);
 }
 
+export function ClearSharedRoute() {
+  return window['go']['main']['App']['ClearSharedRoute']();
+}
+
 export function CreateSession(arg1, arg2) {
   return window['go']['main']['App']['CreateSession'](arg1, arg2);
 }
@@ -38,8 +42,20 @@ export function DisconnectSharedCockpit() {
   return window['go']['main']['App']['DisconnectSharedCockpit']();
 }
 
+export function ExportFms(arg1) {
+  return window['go']['main']['App']['ExportFms'](arg1);
+}
+
+export function GetAirportInfo(arg1) {
+  return window['go']['main']['App']['GetAirportInfo'](arg1);
+}
+
 export function GetAirports() {
   return window['go']['main']['App']['GetAirports']();
+}
+
+export function GetAirspaces(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetAirspaces'](arg1, arg2, arg3, arg4);
 }
 
 export function GetAvailablePluginVersion() {
@@ -48,6 +64,10 @@ export function GetAvailablePluginVersion() {
 
 export function GetInstalledPluginVersion() {
   return window['go']['main']['App']['GetInstalledPluginVersion']();
+}
+
+export function GetNavData() {
+  return window['go']['main']['App']['GetNavData']();
 }
 
 export function GetPrefs() {
@@ -100,6 +120,10 @@ export function SearchDatarefs(arg1) {
 
 export function SetPrefs(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3);
+}
+
+export function ShareRoute(arg1) {
+  return window['go']['main']['App']['ShareRoute'](arg1);
 }
 
 export function StartLearn() {

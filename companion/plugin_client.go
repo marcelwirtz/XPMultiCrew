@@ -102,6 +102,7 @@ type PluginClient struct {
 	ownIcao                string
 	tcasStatus             string // see control_listener.h's TCAS_STATUS
 	learn                  LearnStatus
+	sharedRoute            *SharedRoute
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 }
@@ -243,6 +244,36 @@ func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
 	return &self, peers
 }
 
+// SharedRoute returns the route shared in the Multiplayer session (nil if
+// none) - see control_listener.h's ROUTE_SHARED.
+func (c *PluginClient) SharedRoute() *SharedRoute {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sharedRoute == nil {
+		return nil
+	}
+	r := *c.sharedRoute
+	return &r
+}
+
+// parseSharedRoute decodes ROUTE_SHARED "<sender_id> <payload>" (empty =
+// none).
+func parseSharedRoute(value string) *SharedRoute {
+	idStr, payload, ok := strings.Cut(strings.TrimSpace(value), " ")
+	if !ok {
+		return nil
+	}
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		return nil
+	}
+	route, ok := decodeRoute(strings.TrimSpace(payload))
+	if !ok {
+		return nil
+	}
+	return &SharedRoute{FromSenderID: uint32(id), Route: route}
+}
+
 // Learn returns the latest learn-from-the-cockpit status (a copy).
 func (c *PluginClient) Learn() LearnStatus {
 	c.mu.Lock()
@@ -365,6 +396,8 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			}
 		case "LEARN_CHANGES":
 			c.learn.Changes = parseLearnChanges(value)
+		case "ROUTE_SHARED":
+			c.sharedRoute = parseSharedRoute(value)
 		case "SELF_POS":
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":

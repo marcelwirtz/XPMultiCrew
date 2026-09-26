@@ -36,7 +36,11 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   RELOAD_CSL
 //   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   LEARN_START / LEARN_STOP
+//   ROUTE_SHARE <payload> / ROUTE_CLEAR
 //   GET_STATUS
+// ROUTE_SHARE sends a planned route (the companion's own text encoding,
+// passed through untouched, no spaces, at most kMaxRoutePayload bytes) to
+// everyone in the Multiplayer session; ROUTE_CLEAR withdraws it.
 // LEARN_START starts "learn from the cockpit" for the profile editor: the
 // plugin watches every writable dataref, ignores what moves on its own for
 // the first seconds, then reports what the user changes by flipping
@@ -113,6 +117,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
 //   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
+//   ROUTE_SHARED <sender_id> <payload> (empty if none; sender_id 0 = our own)
 //   LEARN <idle|baseline|watching> <candidates> <noisy>
 //   LEARN_CHANGES <name>|<before>|<after>;... (see LEARN_START; at most 40)
 //   TCAS_STATUS <ok|remote|blocked:<plugin name>> (empty before XPMP2 was enabled)
@@ -163,6 +168,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // buttons while SIM_READY is 0, so a click doesn't just appear to do
 // nothing for a while - see companion/README.md for the frontend side of
 // this and companion/main.go for the status-listening side.
+constexpr size_t kMaxRoutePayload = 2000;
+
 class ControlListener {
 public:
     struct Callbacks {
@@ -178,6 +185,7 @@ public:
         std::function<void()> on_reload_csl;
         std::function<void(const std::string& callsign, bool labels, bool envSync)> on_set_prefs;
         std::function<void(bool start)> on_learn;
+        std::function<void(const std::string& payload)> on_route_share; // "" = clear
     };
 
     bool Start(const Callbacks& callbacks);
@@ -221,6 +229,7 @@ public:
     void SetOwnIcao(const std::string& icao);
     void SetTcasStatus(const std::string& status);
     void SetLearn(const std::string& state, const std::string& changes);
+    void SetSharedRoute(const std::string& encoded);
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
@@ -247,6 +256,7 @@ private:
     std::string tcas_status_;
     std::string learn_state_ = "idle 0 0";
     std::string learn_changes_;
+    std::string shared_route_;
     std::string self_pos_;
     std::string peer_pos_;
 };

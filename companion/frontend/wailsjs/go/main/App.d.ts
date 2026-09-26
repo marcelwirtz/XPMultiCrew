@@ -10,6 +10,8 @@ export function ChooseXPlanePath():Promise<main.ChooseXPlaneResult>;
 
 export function ClaimOwnership(arg1:string):Promise<void>;
 
+export function ClearSharedRoute():Promise<void>;
+
 export function CreateSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
@@ -20,11 +22,19 @@ export function DisconnectFormation():Promise<void>;
 
 export function DisconnectSharedCockpit():Promise<void>;
 
+export function ExportFms(arg1:main.PlannedRoute):Promise<string>;
+
+export function GetAirportInfo(arg1:string):Promise<main.AirportInfo>;
+
 export function GetAirports():Promise<main.AirportData>;
+
+export function GetAirspaces(arg1:number,arg2:number,arg3:number,arg4:number):Promise<Array<main.Airspace>>;
 
 export function GetAvailablePluginVersion():Promise<string>;
 
 export function GetInstalledPluginVersion():Promise<string>;
+
+export function GetNavData():Promise<main.NavData>;
 
 export function GetPrefs():Promise<main.PluginPrefs>;
 
@@ -51,6 +61,8 @@ export function SaveServer(arg1:string,arg2:string):Promise<void>;
 export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
 
 export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean):Promise<main.PluginPrefs>;
+
+export function ShareRoute(arg1:main.PlannedRoute):Promise<void>;
 
 export function StartLearn():Promise<void>;
 

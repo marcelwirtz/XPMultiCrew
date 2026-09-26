@@ -492,6 +492,53 @@ function renderAircraftMismatch(mismatch) {
   el.classList.add('visible');
 }
 
+// Airspace warning banner (companion/navdata.go's airspaceAlert): shown on
+// every page while flying. Prohibited/restricted/danger areas in red, the
+// rest (CTR, C, D - "needs a clearance") in amber.
+const kAirspaceWarningsKey = 'xpmulticrew.airspaceWarnings';
+const kAirspaceClassNames = { CTR: 'Control zone', A: 'Class A', B: 'Class B', C: 'Class C', D: 'Class D',
+  P: 'Prohibited area', R: 'Restricted area', Q: 'Danger area' };
+function airspaceWarningsEnabled() {
+  try {
+    return localStorage.getItem(kAirspaceWarningsKey) !== '0';
+  } catch (e) {
+    return true;
+  }
+}
+document.getElementById('airspace-warnings').checked = airspaceWarningsEnabled();
+document.getElementById('airspace-warnings').addEventListener('change', (e) => {
+  try {
+    localStorage.setItem(kAirspaceWarningsKey, e.target.checked ? '1' : '0');
+  } catch (err) {
+    // per-viewer convenience only
+  }
+});
+
+function describeAirspace(a) {
+  return `${a.name} (${kAirspaceClassNames[a.class] || a.class}, ${a.lower}–${a.upper})`;
+}
+
+function renderAirspaceBanner(alert) {
+  const el = document.getElementById('airspace-banner');
+  const inside = (alert && alert.inside) || [];
+  const ahead = alert && alert.ahead;
+  if (!airspaceWarningsEnabled() || (inside.length === 0 && !ahead)) {
+    el.classList.remove('visible');
+    return;
+  }
+  const parts = [];
+  if (inside.length) parts.push(`In: ${inside.map(describeAirspace).join(', ')}`);
+  if (ahead) {
+    const m = Math.floor(ahead.etaSecs / 60);
+    const s = String(ahead.etaSecs % 60).padStart(2, '0');
+    parts.push(`Ahead in ${m}:${s}: ${describeAirspace(ahead)}`);
+  }
+  const danger = [...inside, ...(ahead ? [ahead] : [])].some((a) => ['P', 'R', 'Q'].includes(a.class));
+  el.textContent = '⚠ ' + parts.join(' · ');
+  el.classList.toggle('danger', danger);
+  el.classList.add('visible');
+}
+
 // Only one plugin can own X-Plane's TCAS/AI planes. When another one has
 // them (typically LiveTraffic), peers are still drawn but missing from
 // TCAS and X-Plane's own map - say so instead of leaving it to Log.txt.
@@ -581,6 +628,7 @@ EventsOn('status', (data) => {
   document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
   renderTcasStatus(data.tcasStatus);
+  renderAirspaceBanner(data.airspaceAlert);
   lastSimReady = data.simReady;
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
   renderLearn(data.learn);

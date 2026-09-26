@@ -162,6 +162,16 @@ parsed once and cached in the user cache dir until that file changes) -
 nothing from X-Plane is bundled. MapLibre's web worker is built as its own
 asset and set via `setWorkerUrl`, because MapLibre only derives the worker
 URL itself for http(s) pages and Wails uses its own scheme on Linux.
+VFR chart layers (`navdata.go`): VFR reporting points from
+`earth_fix.dat` (ARINC 424 waypoint type 'V'), VORs/NDBs from
+`earth_nav.dat`, airspaces from `airspaces/airspace.txt` (fetched per
+visible area via `GetAirspaces`, ~24k worldwide). The same airspaces feed
+the airspace warning (`airspaceAlert`, computed on every status tick from
+`SELF_POS`, 2-minute look-ahead along the track). Route planner:
+`routes.go` (`.fms` v1100 export into `Output/FMS plans`, and the
+`ROUTE_SHARE` encoding the plugin relays to the session as-is) plus
+`frontend/src/route-math.js`.
+
 Third-party licenses: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Profiles page

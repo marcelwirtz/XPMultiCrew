@@ -203,6 +203,16 @@ void MaybeApplySimTime(const flytogether::TimeSyncPacket& remote) {
 flytogether::WeatherSync g_formation_weather;
 double g_formation_next_time_broadcast_s = 0.0;
 
+// Route sharing (ROUTE_SHARE/ROUTE_CLEAR, see control_listener.h): the
+// companion's encoded route travels as-is behind this magic, sealed with
+// the Formation key. Re-sent every kRouteResendS while shared so pilots
+// joining later get it too; "-" withdraws it.
+constexpr uint32_t kRouteMagic = 0x46545231; // "FTR1"
+constexpr double kRouteResendS = 20.0;
+std::string g_own_route;
+double g_own_route_next_send_s = 0.0;
+
+
 flytogether::FormationSync g_formation_sync;
 uint32_t g_sender_id = 0;
 uint32_t g_formation_sequence = 0;
@@ -350,6 +360,17 @@ void UpdateFormationStatus() {
     g_control_listener.SetFormationStatus(status);
 }
 
+void SendRouteMessage(const std::string& payload) {
+    if (!g_formation_crypto || !g_rendezvous_client.InSession()) {
+        return;
+    }
+    std::vector<uint8_t> plain(sizeof(kRouteMagic) + payload.size());
+    std::memcpy(plain.data(), &kRouteMagic, sizeof(kRouteMagic));
+    std::memcpy(plain.data() + sizeof(kRouteMagic), payload.data(), payload.size());
+    const auto envelope = g_formation_crypto->Seal(plain);
+    g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
+}
+
 // Wires up g_rendezvous_client's callbacks exactly once - called from
 // StartRendezvous() below, itself only ever triggered by the companion
 // app's "Create Session"/"Join Session" requests.
@@ -461,6 +482,21 @@ void SetupRendezvousCallbacksOnce() {
             }
             return;
         }
+        if (magic == kRouteMagic) {
+            std::string payload(opened->begin() + sizeof(magic), opened->end());
+            if (payload.size() > flytogether::kMaxRoutePayload ||
+                payload.find_first_of(" \r\n") != std::string::npos) {
+                return;
+            }
+            if (payload == "-") {
+                g_control_listener.SetSharedRoute(g_own_route.empty() ? "" : "0 " + g_own_route);
+                return;
+            }
+            const auto sender = g_formation_sender_by_peer.find(from_peer_id);
+            const uint32_t sender_id = sender != g_formation_sender_by_peer.end() ? sender->second : 0xFFFFFFFFu;
+            g_control_listener.SetSharedRoute(std::to_string(sender_id) + " " + payload);
+            return;
+        }
         if (magic == flytogether::kTimeSyncMagic) {
             if (from_peer_id == 1 && g_formation_weather.role() == flytogether::SharedCockpitRole::kClient) {
                 if (const auto time = flytogether::DecodeTimeSyncPacket(opened->data(), opened->size())) {
@@ -500,6 +536,9 @@ void SetupRendezvousCallbacksOnce() {
         g_formation_sender_by_peer.clear();
         g_last_pushed_formation_peers.clear();
         g_control_listener.SetFormationPeers("");
+        // Someone else's route is gone with the session; our own is re-sent
+        // after the reconnect.
+        g_control_listener.SetSharedRoute(g_own_route.empty() ? "" : "0 " + g_own_route);
         // g_formation_reconnect.wanted stays true here (unless the user
         // explicitly disconnected, in which case Stop() already made this
         // moot) - UpdateFormationCallback's reconnect scheduler picks this
@@ -591,6 +630,8 @@ void DisconnectFormation() {
     g_formation_reconnect.wanted = false;
     g_rendezvous_peers.clear();
     g_formation_sender_by_peer.clear();
+    g_own_route.clear();
+    g_control_listener.SetSharedRoute("");
     g_last_pushed_formation_peers.clear();
     g_rendezvous_client.Stop(); // sends leave_session if we were actually in one
     g_rendezvous_active = false;
@@ -2120,6 +2161,11 @@ float PollFormationEnvCallback(float /*elapsedSinceLastCall*/,
     g_formation_weather.MaybeBroadcast(latitude, longitude, elevation_m, now); // host only
     g_formation_weather.PollIncoming(latitude, longitude, elevation_m, now);   // followers only
 
+    if (!g_own_route.empty() && g_rendezvous_client.InSession() && now >= g_own_route_next_send_s) {
+        g_own_route_next_send_s = now + kRouteResendS;
+        SendRouteMessage(g_own_route);
+    }
+
     if (role == SharedCockpitRole::kMaster && now >= g_formation_next_time_broadcast_s) {
         g_formation_next_time_broadcast_s = now + flytogether::kTimeSyncBroadcastIntervalS;
         const flytogether::TimeSyncPacket time = ReadSimTime();
@@ -2298,6 +2344,17 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_reload_csl = []() { ReloadCsl(); };
     control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync) {
         SetPrefs(callsign, labels, env_sync);
+    };
+    control_callbacks.on_route_share = [](const std::string& payload) {
+        if (payload.empty()) {
+            if (!g_own_route.empty()) SendRouteMessage("-");
+            g_own_route.clear();
+            g_control_listener.SetSharedRoute("");
+            return;
+        }
+        g_own_route = payload;
+        g_own_route_next_send_s = 0.0; // sent on the next 1 Hz env tick, and then every kRouteResendS
+        g_control_listener.SetSharedRoute("0 " + payload);
     };
     control_callbacks.on_learn = [](bool start) {
         if (start) {

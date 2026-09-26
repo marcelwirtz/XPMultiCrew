@@ -38,6 +38,8 @@ type statusEvent struct {
 	OwnIcao                string            `json:"ownIcao"`
 	TcasStatus             string            `json:"tcasStatus"`
 	Learn                  LearnStatus       `json:"learn"`
+	AirspaceAlert          *AirspaceAlert    `json:"airspaceAlert,omitempty"`
+	SharedRoute            *SharedRoute      `json:"sharedRoute,omitempty"`
 	SelfPos                *MapPosition      `json:"selfPos"`
 	PeerPos                []MapPosition     `json:"peerPos"`
 }
@@ -112,6 +114,8 @@ func (a *App) pollStatus() {
 			OwnIcao:                a.plugin.OwnIcao(),
 			TcasStatus:             a.plugin.TcasStatus(),
 			Learn:                  a.describedLearnStatus(),
+			AirspaceAlert:          a.airspaceAlertFor(selfPos),
+			SharedRoute:            a.plugin.SharedRoute(),
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 		})
@@ -633,4 +637,116 @@ func (a *App) SearchDatarefs(query string) []DatarefInfo {
 		return []DatarefInfo{}
 	}
 	return searchDatarefs(root, query, 20)
+}
+
+// --- Map: VFR data, airspace warnings, route planning (navdata.go, routes.go) ---
+
+var navLoading sync.Mutex // held while a background loadNav runs
+
+// GetNavData returns VFR reporting points, VORs and NDBs from the chosen
+// X-Plane installation.
+func (a *App) GetNavData() (NavData, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return NavData{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	c, err := loadNav(root)
+	if err != nil {
+		return NavData{}, err
+	}
+	return NavData{Points: c.points}, nil
+}
+
+// GetAirspaces returns the airspaces overlapping the visible map area.
+func (a *App) GetAirspaces(minLon, minLat, maxLon, maxLat float64) ([]Airspace, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return []Airspace{}, nil
+	}
+	c, err := loadNav(root)
+	if err != nil {
+		return []Airspace{}, err
+	}
+	return airspacesInBox(c.airspaces, minLon, minLat, maxLon, maxLat, 3000), nil
+}
+
+// AirportInfo is the map's airport popup.
+type AirportInfo struct {
+	Ident  string        `json:"ident"`
+	Detail AirportDetail `json:"detail"`
+	Vrps   []NavPoint    `json:"vrps"`
+}
+
+// GetAirportInfo returns elevation, runways, frequencies and the VFR
+// reporting points belonging to an airport.
+func (a *App) GetAirportInfo(ident string) (AirportInfo, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return AirportInfo{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	data, err := loadAirports(root)
+	if err != nil {
+		return AirportInfo{}, err
+	}
+	info := AirportInfo{Ident: ident, Detail: data.Details[ident], Vrps: []NavPoint{}}
+	if c, err := loadNav(root); err == nil {
+		for _, p := range c.points {
+			if p.Kind == "VRP" && p.Airport == ident {
+				info.Vrps = append(info.Vrps, p)
+			}
+		}
+	}
+	return info, nil
+}
+
+// airspaceAlertFor computes the map's airspace warning for the latest own
+// position. Nav data is loaded in the background the first time a
+// position arrives, so warnings work without opening the map first.
+func (a *App) airspaceAlertFor(self *MapPosition) *AirspaceAlert {
+	if self == nil {
+		return nil
+	}
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return nil
+	}
+	navMu.Lock()
+	c := navState
+	navMu.Unlock()
+	if c == nil {
+		if navLoading.TryLock() {
+			go func() {
+				defer navLoading.Unlock()
+				_, _ = loadNav(root)
+			}()
+		}
+		return nil
+	}
+	alert := airspaceAlert(c.airspaces, self.Lat, self.Lon, self.AltFt, self.Heading, self.GroundspeedKt, 120)
+	return &alert
+}
+
+// ExportFms writes the route as an X-Plane .fms flight plan into
+// <X-Plane>/Output/FMS plans, where the G1000/GNS/FMS load it from.
+// Returns the file name.
+func (a *App) ExportFms(route PlannedRoute) (string, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return "", errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return exportFms(root, route)
+}
+
+// ShareRoute sends the route to everyone in the Multiplayer session.
+func (a *App) ShareRoute(route PlannedRoute) error {
+	payload, err := encodeRoute(route)
+	if err != nil {
+		return err
+	}
+	return a.plugin.Send("ROUTE_SHARE " + payload)
+}
+
+// ClearSharedRoute stops sharing / removes it for everyone.
+func (a *App) ClearSharedRoute() error {
+	return a.plugin.Send("ROUTE_CLEAR")
 }

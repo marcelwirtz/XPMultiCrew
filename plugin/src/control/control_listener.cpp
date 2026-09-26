@@ -26,7 +26,7 @@ void ControlListener::Stop() {
 }
 
 void ControlListener::Poll() {
-    char buf[2048];
+    char buf[8192]; // ROUTE_SHARE lines can be a couple of KB
     while (true) {
         const int received = socket_.ReceiveFrom(buf, sizeof(buf) - 1);
         if (received < 0) {
@@ -90,6 +90,14 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_set_prefs && !callsign.empty()) {
             callbacks_.on_set_prefs(callsign == "-" ? "" : callsign, labels != "0", env_sync != "0");
         }
+    } else if (cmd == "ROUTE_SHARE") {
+        std::string payload;
+        ls >> payload;
+        if (callbacks_.on_route_share && !payload.empty() && payload.size() <= kMaxRoutePayload) {
+            callbacks_.on_route_share(payload);
+        }
+    } else if (cmd == "ROUTE_CLEAR") {
+        if (callbacks_.on_route_share) callbacks_.on_route_share("");
     } else if (cmd == "LEARN_START" || cmd == "LEARN_STOP") {
         if (callbacks_.on_learn) callbacks_.on_learn(cmd == "LEARN_START");
     } else if (cmd == "GET_STATUS") {
@@ -106,7 +114,8 @@ void ControlListener::SendStatus() {
                              "\nSIM_READY " + (sim_ready_ ? "1" : "0") + "\nPLUGIN_VERSION " + plugin_version_ +
                              "\nCSL_STATUS " + csl_status_ + "\nPREFS " + prefs_ + "\nOWN_ICAO " + own_icao_ +
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
-                             "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ + "\n";
+                             "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ +
+                             "\nROUTE_SHARED " + shared_route_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -191,6 +200,12 @@ void ControlListener::SetOwnIcao(const std::string& icao) {
 void ControlListener::SetTcasStatus(const std::string& status) {
     if (status == tcas_status_) return;
     tcas_status_ = status;
+    SendStatus();
+}
+
+void ControlListener::SetSharedRoute(const std::string& encoded) {
+    if (encoded == shared_route_) return;
+    shared_route_ = encoded;
     SendStatus();
 }
 

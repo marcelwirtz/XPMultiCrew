@@ -25,14 +25,32 @@ type AirportData struct {
 	Airports [][]interface{} `json:"airports"`
 	// [lat1, lon1, lat2, lon2] per land runway
 	Runways [][4]float64 `json:"runways"`
+	// Per-airport details for the map's info popup - kept on the Go side
+	// (GetAirportInfo), not sent with the bulk list.
+	Details map[string]AirportDetail `json:"-"`
 }
 
-const airportCacheVersion = 1
+// AirportDetail is what the map shows when an airport is clicked.
+type AirportDetail struct {
+	ElevationFt int         `json:"elevationFt"`
+	Runways     []string    `json:"runways"`
+	Frequencies []Frequency `json:"frequencies"`
+}
+
+// Frequency is one apt.dat 50-56 / 1050-1056 row.
+type Frequency struct {
+	Type string `json:"type"` // ATIS, UNICOM, DEL, GND, TWR, APP, DEP
+	MHz  string `json:"mhz"`
+	Name string `json:"name"`
+}
+
+const airportCacheVersion = 2
 
 type airportCacheFile struct {
-	Version int         `json:"version"`
-	Key     string      `json:"key"`
-	Data    AirportData `json:"data"`
+	Version int                      `json:"version"`
+	Key     string                   `json:"key"`
+	Data    AirportData              `json:"data"`
+	Details map[string]AirportDetail `json:"details"`
 }
 
 func aptDatPath(xplaneRoot string) string {
@@ -62,6 +80,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 		if raw, err := os.ReadFile(cachePath); err == nil {
 			var cached airportCacheFile
 			if json.Unmarshal(raw, &cached) == nil && cached.Version == airportCacheVersion && cached.Key == key {
+				cached.Data.Details = cached.Details
 				return cached.Data, nil
 			}
 		}
@@ -78,7 +97,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 	}
 
 	if cachePath != "" {
-		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data}); err == nil {
+		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data, Details: data.Details}); err == nil {
 			_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
 			tmp := cachePath + ".tmp"
 			if os.WriteFile(tmp, raw, 0644) == nil {
@@ -95,11 +114,13 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 // when present), 100 land runway, 101 water runway, 102 helipad. Airports
 // without a datum get the midpoint of their first runway/helipad.
 func parseAptDat(r io.Reader) (AirportData, error) {
-	data := AirportData{Airports: [][]interface{}{}, Runways: [][4]float64{}}
+	data := AirportData{Airports: [][]interface{}{}, Runways: [][4]float64{}, Details: map[string]AirportDetail{}}
+	freqTypes := map[int]string{50: "ATIS", 51: "UNICOM", 52: "DEL", 53: "GND", 54: "TWR", 55: "APP", 56: "DEP"}
 
 	type current struct {
 		ident, name        string
 		kind               int
+		detail             AirportDetail
 		datumLat, datumLon float64
 		hasDatumLat        bool
 		hasDatumLon        bool
@@ -118,6 +139,7 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 		}
 		if ok {
 			data.Airports = append(data.Airports, []interface{}{cur.ident, cur.name, round6(lat), round6(lon), cur.kind})
+			data.Details[cur.ident] = cur.detail
 		}
 		cur = nil
 	}
@@ -143,7 +165,9 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 			}
 			flush()
 			kind, _ := strconv.Atoi(f[0])
-			cur = &current{ident: f[4], name: strings.Join(f[5:], " "), kind: kind}
+			elev, _ := strconv.Atoi(f[1])
+			cur = &current{ident: f[4], name: strings.Join(f[5:], " "), kind: kind,
+				detail: AirportDetail{ElevationFt: elev, Runways: []string{}, Frequencies: []Frequency{}}}
 		case cur == nil:
 			continue
 		case strings.HasPrefix(line, "1302 datum_lat "):
@@ -167,6 +191,7 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 				continue
 			}
 			data.Runways = append(data.Runways, [4]float64{round6(lat1), round6(lon1), round6(lat2), round6(lon2)})
+			cur.detail.Runways = append(cur.detail.Runways, f[8]+"/"+f[17])
 			if !cur.hasFallback {
 				cur.fallbackLat, cur.fallbackLon, cur.hasFallback = (lat1+lat2)/2, (lon1+lon2)/2, true
 			}
@@ -194,6 +219,29 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 			}
 		case strings.HasPrefix(line, "99"):
 			flush()
+		case line[0] == '5' || strings.HasPrefix(line, "105"):
+			// 50-56: frequency in 10 kHz; 1050-1056: in kHz (8.33 spacing).
+			f := strings.Fields(line)
+			if len(f) < 2 {
+				continue
+			}
+			code, err1 := strconv.Atoi(f[0])
+			freq, err2 := strconv.Atoi(f[1])
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			mhz := ""
+			switch {
+			case code >= 50 && code <= 56:
+				mhz = fmt.Sprintf("%.2f", float64(freq)/100)
+			case code >= 1050 && code <= 1056:
+				code -= 1000
+				mhz = fmt.Sprintf("%.3f", float64(freq)/1000)
+			default:
+				continue
+			}
+			cur.detail.Frequencies = append(cur.detail.Frequencies,
+				Frequency{Type: freqTypes[code], MHz: mhz, Name: strings.Join(f[2:], " ")})
 		}
 	}
 	flush()

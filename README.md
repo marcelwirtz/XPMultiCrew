@@ -34,6 +34,27 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## Map: VFR chart, airspace warnings, route planning (next release)
+
+All read at runtime from your own X-Plane (`Resources/default data`, the
+Navigraph data X-Plane ships - for simulator use only), nothing bundled:
+
+- **VFR layers:** VFR reporting points (triangles with their names, e.g.
+  NOVEMBER 1), VORs and NDBs with frequency, and airspaces coloured by
+  class with their limits (CTR dashed red, C/D blue, prohibited/restricted/
+  danger areas red). Click an airport for elevation, runways, frequencies
+  and its reporting points.
+- **Airspace warnings** on every companion page: which controlled/
+  restricted airspace you're in, and the next one on your track within two
+  minutes ("Ahead in 0:50: FRANKFURT MAIN CTR, GND-2500 ft").
+- **Route planner:** click the map to build a route - airports, reporting
+  points, VORs and NDBs snap in, anything else becomes a lat/lon waypoint.
+  Magnetic course, distance and time per leg at your TAS (no wind; the
+  variation comes from the nearest VOR). **Export to GPS** writes an X-Plane
+  `.fms` flight plan to `Output/FMS plans` (G1000, GNS 430/530, FMS).
+  **Share with group** shows it on everyone's map in your Multiplayer
+  session, where they can take it over as their own.
+
 ## What's new in v0.3.2
 
 - **No more looking up dataref names** in the Shared Cockpit profile editor:

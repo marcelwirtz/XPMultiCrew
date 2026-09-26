@@ -15,6 +15,8 @@ const sampleAptDat = `I
 1302 datum_lat 50.033333
 1302 datum_lon 8.570556
 100 60.00 1 0 0.25 1 1 1 07C  50.03253798  8.53459410    0.00  150.00 3 10 1 1 25C  50.04499797  8.58696597    0.00  150.00 3 10 1 1
+1050 118025 ATIS
+54 11990 TOWER
 1   1 0 0 XNOD No Datum Strip
 100 20.00 3 0 0.25 0 0 0 09  10.0 20.0 0 0 0 0 0 0 27  10.0 20.2 0 0 0 0 0 0
 16  0 0 0 SEA1 Some Seaplane Base
@@ -44,6 +46,11 @@ func TestParseAptDat(t *testing.T) {
 	}
 	if heli := data.Airports[3]; heli[2] != 33.5 || heli[3] != -117.5 || heli[4] != 17 {
 		t.Fatalf("heliport parsed wrong: %+v", heli)
+	}
+	d := data.Details["EDDF"]
+	if d.ElevationFt != 364 || len(d.Runways) != 1 || d.Runways[0] != "07C/25C" || len(d.Frequencies) != 2 ||
+		d.Frequencies[0] != (Frequency{Type: "ATIS", MHz: "118.025", Name: "ATIS"}) || d.Frequencies[1].MHz != "119.90" {
+		t.Fatalf("EDDF details wrong: %+v", d)
 	}
 	if len(data.Runways) != 2 || data.Runways[0] != [4]float64{50.032538, 8.534594, 50.044998, 8.586966} {
 		t.Fatalf("unexpected runways: %+v", data.Runways)
