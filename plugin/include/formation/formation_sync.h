@@ -24,8 +24,13 @@ namespace flytogether {
 // appear/go stale, independent of how many entries are in the peer list.
 class FormationSync {
 public:
+    // False if the LAN listen port (kFormationUdpPort, or the peer list's
+    // PORT line) couldn't be bound. Peers are loaded either way and the
+    // rest keeps working - rendezvous sessions don't use this socket - so
+    // callers treat that as "LAN direct unavailable", not "Formation off".
     bool Start(const std::string& peer_list_path);
     void Stop();
+    uint16_t listen_port() const { return listen_port_; }
 
     void SendOwnState(const AircraftStatePacket& packet);
 
@@ -81,6 +86,7 @@ public:
 
 private:
     UdpSocket socket_;
+    uint16_t listen_port_ = kFormationUdpPort;
     std::vector<Peer> peers_;
     std::unordered_map<uint32_t, RemoteAircraft> remote_aircraft_;
     std::unordered_map<uint32_t, LinkQualityTracker> link_quality_;

@@ -592,3 +592,18 @@ func TestCreateOrJoinOtherSessionLeavesOldOne(t *testing.T) {
 		t.Fatal("empty session A should have been deleted")
 	}
 }
+
+func TestCreateSessionIsRateLimitedPerIP(t *testing.T) {
+	sender := &mockSender{}
+	server := NewServer(sender)
+	for i := 0; i < maxCreateAttemptsPerWindow+1; i++ {
+		server.HandleMessage(addrFor(20000+i), ClientMessage{Type: MsgCreateSession})
+	}
+	last := sender.messagesTo(addrFor(20000 + maxCreateAttemptsPerWindow))
+	if len(last) != 1 || last[0].Type != MsgError {
+		t.Fatalf("expected the create over the limit to be refused, got %+v", last)
+	}
+	if n := len(server.sessions); n != maxCreateAttemptsPerWindow {
+		t.Fatalf("expected %d sessions, got %d", maxCreateAttemptsPerWindow, n)
+	}
+}

@@ -11,10 +11,12 @@ bool RendezvousClient::Start(const std::string& serverHost, uint16_t serverPort)
     server_host_ = serverHost;
     server_port_ = serverPort;
     direct_peers_.clear();
+    queued_.clear();
     if (!socket_.Open()) {
         return false;
     }
     if (!socket_.Bind(0)) { // ephemeral local port
+        socket_.Close(); // see SharedCockpitSync::Start - never leave a blocking unbound socket around
         return false;
     }
     socket_.SetNonBlocking(true);
@@ -30,19 +32,59 @@ void RendezvousClient::Stop() {
     socket_.Close();
     in_session_ = false;
     direct_peers_.clear();
+    queued_.clear();
 }
 
 void RendezvousClient::Send(const RendezvousClientMessage& msg) {
     const std::string json = EncodeClientMessage(msg);
-    if (!socket_.SendTo(server_host_, server_port_, json.data(), json.size())) {
-        // Most likely cause: DNS resolution of server_host_ failed (see
-        // UdpSocket::ResolveHostPort) - this used to fail completely
-        // silently, leaving the caller stuck thinking a session might still
-        // come through when the request never actually left the machine.
-        if (on_error) {
-            on_error("failed to send to " + server_host_ + ":" + std::to_string(server_port_) +
-                      " (DNS resolution or network error)");
+    if (!queued_.empty()) {
+        // Keep order behind whatever is still waiting on the lookup.
+        if (queued_.size() < kMaxQueued) queued_.push_back(json);
+        return;
+    }
+    SendOrQueue(json);
+}
+
+void RendezvousClient::SendOrQueue(const std::string& json) {
+    switch (socket_.SendToAsync(server_host_, server_port_, json.data(), json.size())) {
+        case SendStatus::kSent:
+            return;
+        case SendStatus::kResolving:
+            // The server's host name is still being looked up off the main
+            // thread (see UdpSocket::SendToAsync) - sent from PollIncoming
+            // once that finishes.
+            if (queued_.size() < kMaxQueued) queued_.push_back(json);
+            return;
+        case SendStatus::kFailed:
+            ReportSendFailure();
+            return;
+    }
+}
+
+void RendezvousClient::ReportSendFailure() {
+    // Most likely cause: DNS resolution of server_host_ failed - this used
+    // to fail completely silently, leaving the caller stuck thinking a
+    // session might still come through when the request never actually
+    // left the machine.
+    if (on_error) {
+        on_error("failed to send to " + server_host_ + ":" + std::to_string(server_port_) +
+                  " (DNS resolution or network error)");
+    }
+}
+
+void RendezvousClient::FlushQueued() {
+    while (!queued_.empty()) {
+        const std::string& json = queued_.front();
+        const SendStatus status = socket_.SendToAsync(server_host_, server_port_, json.data(), json.size());
+        if (status == SendStatus::kResolving) {
+            return;
         }
+        if (status == SendStatus::kFailed) {
+            queued_.clear();
+            ReportSendFailure();
+            return;
+        }
+        queued_.pop_front();
     }
 }
 
@@ -158,6 +200,7 @@ void RendezvousClient::MaybeSendKeepalive() {
 }
 
 void RendezvousClient::PollIncoming(std::chrono::steady_clock::duration timeout) {
+    FlushQueued();
     char buf[4096];
     while (true) {
         std::string from_host;

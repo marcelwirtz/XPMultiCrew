@@ -88,6 +88,15 @@ int main() {
     assert(ResolvePeerListPath("default.txt") == "default.txt");
     std::printf("ResolvePeerListPath: env var override wins, falls back otherwise: OK\n");
 
+    // PORT line: overrides the LAN listen port and isn't mistaken for a peer.
+    WriteFile("port.txt", "# comment\nPORT 49102\n192.168.1.5:49102\n");
+    assert(LoadPeerListListenPort("port.txt", 49002) == 49102);
+    assert(LoadPeerList("port.txt").size() == 1);
+    WriteFile("badport.txt", "PORT 99999\nPORT abc\n");
+    assert(LoadPeerListListenPort("badport.txt", 49002) == 49002);
+    assert(LoadPeerListListenPort("missing.txt", 49002) == 49002);
+    std::printf("LoadPeerListListenPort: PORT line honoured, invalid/missing falls back: OK\n");
+
     fs::current_path(old_cwd);
     fs::remove_all(tmp_dir);
 

@@ -7,7 +7,11 @@
 # Copy this file to "XPMultiCrew_peers.txt" next to where you start
 # X-Plane from (its working directory), or point the plugin at it via the
 # XPMULTICREW_PEERS_FILE environment variable, and fill in real LAN IPs.
-# All peers use UDP port 49002 (flytogether::kFormationUdpPort).
+# Formation listens for LAN peers on UDP port 49002 by default. If another
+# program already uses it (ForeFlight/EFB tools often do), pick another one
+# with a PORT line - and use that port in the other pilots' entries for you:
+#
+# PORT 49102
 #
 # 192.168.1.42:49002
 # 192.168.1.77:49002

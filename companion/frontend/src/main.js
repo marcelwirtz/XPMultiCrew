@@ -315,7 +315,12 @@ document.getElementById('disconnect-sc-btn').addEventListener('click', async () 
 
 // See control_listener.h's RELOAD_CSL - the new model count arrives with
 // the next status push (CSL_STATUS), not as this call's result.
+// Held off for 5s after a click - the plugin ignores reloads closer
+// together than that anyway (see plugin_main.cpp's ReloadCsl).
+let cslReloadBlockedUntil = 0;
 document.getElementById('reload-csl-btn').addEventListener('click', async () => {
+  if (Date.now() < cslReloadBlockedUntil) return;
+  cslReloadBlockedUntil = Date.now() + 5000;
   try {
     await ReloadCsl();
   } catch (e) {
@@ -540,7 +545,7 @@ EventsOn('status', (data) => {
   document.getElementById('disconnect-formation-btn').disabled = formationIdle;
   document.getElementById('disconnect-sc-btn').disabled = sharedCockpitIdle;
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
-  document.getElementById('reload-csl-btn').disabled = !data.simReady;
+  document.getElementById('reload-csl-btn').disabled = !data.simReady || Date.now() < cslReloadBlockedUntil;
 
   // Only meaningful while a Shared Cockpit session is actually running,
   // and pointless to click on a category already owned by this side (see

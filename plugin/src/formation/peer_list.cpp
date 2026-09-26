@@ -45,6 +45,28 @@ std::vector<Peer> LoadPeerList(const std::string& path) {
     return peers;
 }
 
+uint16_t LoadPeerListListenPort(const std::string& path, uint16_t fallback) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return fallback;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        line = TrimConfigLine(line);
+        if (line.rfind("PORT ", 0) != 0) {
+            continue;
+        }
+        try {
+            const int port = std::stoi(line.substr(5));
+            if (port > 0 && port <= 0xFFFF) {
+                return static_cast<uint16_t>(port);
+            }
+        } catch (...) {
+        }
+    }
+    return fallback;
+}
+
 std::string ResolvePeerListPath(const std::string& default_path) {
     if (const char* env = std::getenv("XPMULTICREW_PEERS_FILE")) {
         return env;

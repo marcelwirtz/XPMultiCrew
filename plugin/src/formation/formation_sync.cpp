@@ -8,11 +8,13 @@ namespace flytogether {
 
 bool FormationSync::Start(const std::string& peer_list_path) {
     peers_ = LoadPeerList(peer_list_path);
+    listen_port_ = LoadPeerListListenPort(peer_list_path, kFormationUdpPort);
 
     if (!socket_.Open()) {
         return false;
     }
-    if (!socket_.Bind(kFormationUdpPort)) {
+    if (!socket_.Bind(listen_port_)) {
+        socket_.Close();
         return false;
     }
     socket_.SetNonBlocking(true);

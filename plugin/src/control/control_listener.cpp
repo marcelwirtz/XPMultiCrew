@@ -12,6 +12,9 @@ bool ControlListener::Start(const Callbacks& callbacks) {
     // Loopback only: these commands start/stop sessions and reload CSL, so
     // nothing but the companion app on this same machine may send them.
     if (!socket_.Bind(kControlUdpPort, /*loopbackOnly=*/true)) {
+        // Closed rather than left open-but-unbound: that socket is still in
+        // blocking mode, so a later ReceiveFrom() would hang the sim.
+        socket_.Close();
         return false;
     }
     socket_.SetNonBlocking(true);

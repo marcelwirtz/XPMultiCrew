@@ -291,6 +291,40 @@ int main() {
         std::printf("Direct datagrams from unknown addresses are ignored: OK\n");
     }
 
+    // --- A host NAME (not a dotted address) is resolved off the calling
+    // thread: create_session is queued, then delivered from PollIncoming ---
+    {
+        RendezvousClient client;
+        assert(client.Start("localhost", kFakeServerPort));
+        const auto before = std::chrono::steady_clock::now();
+        client.CreateSession();
+        assert(std::chrono::steady_clock::now() - before < 50ms); // never blocks on DNS
+        std::string msg;
+        const auto until = std::chrono::steady_clock::now() + 3s;
+        while (msg.empty() && std::chrono::steady_clock::now() < until) {
+            client.PollIncoming();
+            msg = RecvOne(fake_server, 20ms);
+        }
+        assert(msg.find("\"type\":\"create_session\"") != std::string::npos);
+        std::printf("A server host name is resolved in the background and the queued message sent: OK\n");
+    }
+
+    // --- An unresolvable host name reports on_error instead of hanging ---
+    {
+        RendezvousClient client;
+        std::string error;
+        client.on_error = [&](const std::string& message) { error = message; };
+        assert(client.Start("no-such-host.invalid", kFakeServerPort));
+        client.CreateSession();
+        const auto until = std::chrono::steady_clock::now() + 15s;
+        while (error.empty() && std::chrono::steady_clock::now() < until) {
+            client.PollIncoming();
+            std::this_thread::sleep_for(20ms);
+        }
+        assert(error.find("DNS") != std::string::npos);
+        std::printf("An unresolvable server host name reports an error: OK\n");
+    }
+
     std::printf("\nALL RENDEZVOUS CLIENT CHECKS PASSED\n");
     return 0;
 }

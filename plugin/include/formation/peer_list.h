@@ -18,6 +18,12 @@ struct Peer {
 // opened.
 std::vector<Peer> LoadPeerList(const std::string& path);
 
+// Optional "PORT <n>" line in the same file: the local UDP port Formation
+// listens on for LAN peers (default kFormationUdpPort, 49002 - which
+// ForeFlight and some EFB tools also use). Returns `fallback` if the file
+// has no valid PORT line or can't be opened.
+uint16_t LoadPeerListListenPort(const std::string& path, uint16_t fallback);
+
 // Resolves the peer list file path: $XPMULTICREW_PEERS_FILE if set,
 // otherwise `default_path`.
 std::string ResolvePeerListPath(const std::string& default_path);

@@ -131,6 +131,9 @@ bool WeatherSync::Start(SharedCockpitRole role, const std::vector<Peer>& peers) 
         return false;
     }
     if (!socket_.Bind(kWeatherSyncUdpPort)) {
+        // Closed rather than left open-but-unbound: that socket is still in
+        // blocking mode, so a later ReceiveFrom() would hang the sim.
+        socket_.Close();
         return false;
     }
     socket_.SetNonBlocking(true);

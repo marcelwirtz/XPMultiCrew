@@ -830,6 +830,16 @@ void SetPrefs(const std::string& callsign, bool labels, bool env_sync) {
 }
 
 void ReloadCsl() {
+    // A full XPMP2 cleanup while it's still loading objects asynchronously
+    // from the previous init leaks those objects (its load callback can't
+    // find the model any more) - a double click shouldn't do that.
+    static double last_reload_s = -1000.0;
+    const double now = XPLMGetElapsedTime();
+    if (now - last_reload_s < 5.0) {
+        XPLMDebugString("XPMultiCrew: CSL reload ignored - the previous one was less than 5s ago\n");
+        return;
+    }
+    last_reload_s = now;
     XPLMDebugString("XPMultiCrew: reloading CSL models...\n");
 
     g_xpmp_aircraft.clear();
@@ -1493,10 +1503,12 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
         StopSharedCockpit();
     }
 
+    // The engines' own fixed-port sockets only matter for direct peers
+    // passed in here (none on the rendezvous path, which goes through
+    // g_shared_cockpit_rendezvous's socket) - a port another program holds
+    // is logged, not fatal.
     if (!g_shared_cockpit.Start(role, peers)) {
-        XPLMDebugString("XPMultiCrew: failed to start shared cockpit sync (UDP port busy?)\n");
-        g_control_listener.SetSharedCockpitStatus("failed to start (UDP port busy?)");
-        return;
+        XPLMDebugString("XPMultiCrew: shared cockpit position port busy - relay/P2P via the rendezvous socket only\n");
     }
     g_shared_cockpit_active = true;
 
@@ -1533,7 +1545,10 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     // CLIENT starts owning none until it claims one via the companion
     // app - see DatarefSync::Start's comment and ownership_tracker.h.
     const bool starts_owning_all_categories = role == flytogether::SharedCockpitRole::kMaster;
-    if (g_dataref_sync.Start(datarefs, peers, seed_from_current_values, starts_owning_all_categories)) {
+    if (!g_dataref_sync.Start(datarefs, peers, seed_from_current_values, starts_owning_all_categories)) {
+        XPLMDebugString("XPMultiCrew: dataref sync port busy - relay/P2P via the rendezvous socket only\n");
+    }
+    {
         g_dataref_sync.SetRelaySender([](const void* data, size_t len) {
             g_shared_cockpit_rendezvous.SendRelay(data, len);
         });
@@ -1550,18 +1565,15 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
         // happened to end in the same state.
         g_has_pushed_ownership = false;
         PushSharedCockpitOwnershipIfChanged();
-    } else {
-        XPLMDebugString("XPMultiCrew: failed to start dataref sync (UDP port busy?)\n");
     }
 
-    if (g_weather_sync.Start(role, peers)) {
-        g_weather_sync.SetRelaySender([](const void* data, size_t len) {
-            g_shared_cockpit_rendezvous.SendRelay(data, len);
-        });
-        XPLMRegisterFlightLoopCallback(PollWeatherSyncCallback, 1.0f, nullptr);
-    } else {
-        XPLMDebugString("XPMultiCrew: failed to start weather sync (UDP port busy?)\n");
+    if (!g_weather_sync.Start(role, peers)) {
+        XPLMDebugString("XPMultiCrew: weather sync port busy - relay/P2P via the rendezvous socket only\n");
     }
+    g_weather_sync.SetRelaySender([](const void* data, size_t len) {
+        g_shared_cockpit_rendezvous.SendRelay(data, len);
+    });
+    XPLMRegisterFlightLoopCallback(PollWeatherSyncCallback, 1.0f, nullptr);
 }
 
 // Wires up g_shared_cockpit_rendezvous's callbacks exactly once. Mirrors
@@ -2119,21 +2131,25 @@ PLUGIN_API int XPluginEnable() {
 
     const std::string peer_list_path =
         flytogether::ResolvePeerListPath("XPMultiCrew_peers.txt");
+    char formation_buf[320];
     if (g_formation_sync.Start(peer_list_path)) {
-        char buf[256];
-        std::snprintf(buf, sizeof(buf),
-                      "XPMultiCrew: formation sync ready, sender_id=%u, "
+        std::snprintf(formation_buf, sizeof(formation_buf),
+                      "XPMultiCrew: formation sync ready, sender_id=%u, LAN port %u, "
                       "%zu peer(s) loaded from '%s'\n",
-                      g_sender_id, g_formation_sync.peer_count(),
+                      g_sender_id, g_formation_sync.listen_port(), g_formation_sync.peer_count(),
                       peer_list_path.c_str());
-        XPLMDebugString(buf);
-
-        XPLMRegisterFlightLoopCallback(SendFormationStateCallback, 1.0f / 20.0f, nullptr);
-        XPLMRegisterFlightLoopCallback(UpdateFormationCallback, -1.0f, nullptr);
     } else {
-        XPLMDebugString("XPMultiCrew: failed to start formation sync (UDP "
-                         "port busy?), Formation mode disabled\n");
+        // Only LAN-direct needs this port; internet sessions run over the
+        // rendezvous socket - so this no longer switches Formation off.
+        std::snprintf(formation_buf, sizeof(formation_buf),
+                      "XPMultiCrew: UDP port %u is in use by another program - LAN-direct Formation "
+                      "peers won't reach you (internet sessions still work). Set another port with a "
+                      "'PORT <n>' line in '%s'\n",
+                      g_formation_sync.listen_port(), peer_list_path.c_str());
     }
+    XPLMDebugString(formation_buf);
+    XPLMRegisterFlightLoopCallback(SendFormationStateCallback, 1.0f / 20.0f, nullptr);
+    XPLMRegisterFlightLoopCallback(UpdateFormationCallback, -1.0f, nullptr);
 
     if (g_xpmp_initialized) {
         const char* err = XPMPMultiplayerEnable();
@@ -2173,6 +2189,16 @@ PLUGIN_API void XPluginDisable() {
     g_rendezvous_peers.clear();
     g_rendezvous_active = false;
     g_formation_reconnect.wanted = false; // don't reconnect into a disabled plugin
+    // Forget the whole Formation link (LAN-direct included) so a later
+    // re-enable starts clean instead of believing a LAN group with a stale
+    // key is still active - same teardown order as DisconnectFormation.
+    ClearLanFormation();
+    g_formation_sync.SetCrypto(nullptr);
+    g_formation_crypto.reset();
+    g_formation_session_code.clear();
+    g_formation_own_peer_id = 0;
+    g_formation_sender_by_peer.clear();
+    g_last_pushed_formation_peers.clear();
 
     g_xpmp_aircraft.clear();
     if (g_xpmp_initialized) {
@@ -2187,6 +2213,9 @@ PLUGIN_API void XPluginDisable() {
     // Never leave the user's aircraft frozen under an active physics
     // override just because the plugin got disabled.
     StopSharedCockpit();
+    g_shared_cockpit.SetCrypto(nullptr);
+    g_dataref_sync.SetCrypto(nullptr);
+    g_shared_cockpit_crypto.reset();
 }
 
 PLUGIN_API void XPluginReceiveMessage(XPLMPluginID /*inFrom*/, int inMsg, void* inParam) {

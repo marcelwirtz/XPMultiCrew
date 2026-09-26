@@ -52,8 +52,18 @@ const (
 	maxJoinAttemptsPerWindow = 8
 )
 
-// joinAttemptCounter tracks one source IP's join_session requests within
-// the current joinAttemptWindow.
+// create_session is cheap for a client but allocates a session each time,
+// so it gets its own (looser) per-IP limit plus a global cap - otherwise a
+// single script could grow s.sessions without bound until the 120s sweep.
+// A real pilot creates a session a handful of times per evening.
+const (
+	createAttemptWindow        = 60 * time.Second
+	maxCreateAttemptsPerWindow = 10
+	maxSessions                = 5000
+)
+
+// joinAttemptCounter tracks one source IP's join_session (or, in
+// createAttemptsByIP, create_session) requests within the current window.
 type joinAttemptCounter struct {
 	count       int
 	windowStart time.Time
@@ -111,18 +121,20 @@ type Sender interface {
 type Server struct {
 	sender Sender
 
-	mu               sync.Mutex
-	sessions         map[string]*Session
-	clientsByAddr    map[string]*ClientState
-	joinAttemptsByIP map[string]*joinAttemptCounter
+	mu                 sync.Mutex
+	sessions           map[string]*Session
+	clientsByAddr      map[string]*ClientState
+	joinAttemptsByIP   map[string]*joinAttemptCounter
+	createAttemptsByIP map[string]*joinAttemptCounter
 }
 
 func NewServer(sender Sender) *Server {
 	return &Server{
-		sender:           sender,
-		sessions:         make(map[string]*Session),
-		clientsByAddr:    make(map[string]*ClientState),
-		joinAttemptsByIP: make(map[string]*joinAttemptCounter),
+		sender:             sender,
+		sessions:           make(map[string]*Session),
+		clientsByAddr:      make(map[string]*ClientState),
+		joinAttemptsByIP:   make(map[string]*joinAttemptCounter),
+		createAttemptsByIP: make(map[string]*joinAttemptCounter),
 	}
 }
 
@@ -130,14 +142,24 @@ func NewServer(sender Sender) *Server {
 // limit, incrementing its counter (creating/resetting it if its window has
 // elapsed) as a side effect. Caller must hold s.mu.
 func (s *Server) allowJoinAttempt(ip string) bool {
+	return allowAttempt(s.joinAttemptsByIP, ip, joinAttemptWindow, maxJoinAttemptsPerWindow)
+}
+
+// allowCreateAttempt is allowJoinAttempt's create_session counterpart.
+// Caller must hold s.mu.
+func (s *Server) allowCreateAttempt(ip string) bool {
+	return allowAttempt(s.createAttemptsByIP, ip, createAttemptWindow, maxCreateAttemptsPerWindow)
+}
+
+func allowAttempt(counters map[string]*joinAttemptCounter, ip string, window time.Duration, max int) bool {
 	now := time.Now()
-	c, ok := s.joinAttemptsByIP[ip]
-	if !ok || now.Sub(c.windowStart) >= joinAttemptWindow {
-		s.joinAttemptsByIP[ip] = &joinAttemptCounter{count: 1, windowStart: now}
+	c, ok := counters[ip]
+	if !ok || now.Sub(c.windowStart) >= window {
+		counters[ip] = &joinAttemptCounter{count: 1, windowStart: now}
 		return true
 	}
 	c.count++
-	return c.count <= maxJoinAttemptsPerWindow
+	return c.count <= max
 }
 
 func randomSessionCode() (string, error) {
@@ -179,6 +201,15 @@ func (s *Server) handleCreateSession(addr *net.UDPAddr, clientVersion int, isSpe
 	// (it's no longer reachable through clientsByAddr, so neither
 	// leave_session nor SweepStaleClients could ever remove it).
 	s.detachAddr(addr)
+
+	if !s.allowCreateAttempt(addr.IP.String()) {
+		s.sender.SendTo(addr, ServerMessage{Type: MsgError, Message: "too many new sessions, please wait a minute and try again"})
+		return
+	}
+	if len(s.sessions) >= maxSessions {
+		s.sender.SendTo(addr, ServerMessage{Type: MsgError, Message: "server is full, please try again later"})
+		return
+	}
 
 	var code string
 	for {
@@ -400,6 +431,11 @@ func (s *Server) SweepStaleClients(now time.Time) {
 	for ip, c := range s.joinAttemptsByIP {
 		if now.Sub(c.windowStart) > joinAttemptWindow {
 			delete(s.joinAttemptsByIP, ip)
+		}
+	}
+	for ip, c := range s.createAttemptsByIP {
+		if now.Sub(c.windowStart) > createAttemptWindow {
+			delete(s.createAttemptsByIP, ip)
 		}
 	}
 }

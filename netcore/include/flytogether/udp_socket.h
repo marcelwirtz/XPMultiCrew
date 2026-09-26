@@ -5,9 +5,12 @@
 // - the real transport (QUIC/ENet, reliable+unreliable channels, see
 // docs/plan.md section 7) replaces this in a later phase.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <future>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -28,6 +31,13 @@ constexpr socket_t kInvalidSocket = -1;
 #endif
 
 namespace flytogether {
+
+// Outcome of SendToAsync - see there.
+enum class SendStatus {
+    kSent,      // handed to the OS
+    kResolving, // host name still being looked up in the background, nothing sent
+    kFailed,    // lookup failed (retried after kResolveRetryDelay) or sendto() failed
+};
 
 class UdpSocket {
 public:
@@ -72,16 +82,31 @@ public:
 #endif
     }
 
-    bool SendTo(const std::string& host, uint16_t port, const void* data, size_t len) {
+    // Never blocks on DNS: a dotted IPv4 address is used directly, a host
+    // name is looked up on a background thread and kResolving returned
+    // (nothing sent) until that finishes. Callers that must not lose the
+    // datagram (RendezvousClient) queue it and retry; everything sent at
+    // frame rate goes to numeric peer addresses anyway. getaddrinfo used to
+    // run right here on X-Plane's main thread, stalling the sim for as long
+    // as a slow or broken DNS server took to answer.
+    SendStatus SendToAsync(const std::string& host, uint16_t port, const void* data, size_t len) {
         sockaddr_in addr{};
-        if (!ResolveHostPort(host, port, addr)) {
-            return false;
+        const SendStatus resolved = ResolveHostPort(host, port, addr);
+        if (resolved != SendStatus::kSent) {
+            return resolved;
         }
         const auto sent = sendto(socket_, reinterpret_cast<const char*>(data),
                                   static_cast<int>(len), 0,
                                   reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        return sent >= 0 && static_cast<size_t>(sent) == len;
+        return sent >= 0 && static_cast<size_t>(sent) == len ? SendStatus::kSent : SendStatus::kFailed;
     }
+
+    bool SendTo(const std::string& host, uint16_t port, const void* data, size_t len) {
+        return SendToAsync(host, port, data, len) == SendStatus::kSent;
+    }
+
+    // How long a failed lookup is remembered before the next attempt.
+    static constexpr std::chrono::seconds kResolveRetryDelay{30};
 
     // Returns bytes received, 0 on orderly close, or a negative value if
     // nothing was available (non-blocking) or on error.
@@ -134,41 +159,90 @@ public:
 private:
     // Resolves "host" (a dotted IPv4 address or a DNS name - e.g. a VPS's
     // hostname for the rendezvous server, see formation/rendezvous_client.h)
-    // to a sockaddr_in, caching the result per "host:port" so repeated
-    // sends (this can be called at 20 Hz, see plugin_main.cpp) don't each
-    // trigger a fresh DNS lookup. Doesn't re-resolve on a cache hit even if
-    // the underlying DNS record changed - fine for a VPS with a stable IP,
-    // not for a host whose address changes while the plugin is running.
-    bool ResolveHostPort(const std::string& host, uint16_t port, sockaddr_in& out) {
+    // to a sockaddr_in, caching the result per "host:port". Returns kSent
+    // once `out` is filled. Doesn't re-resolve on a cache hit even if the
+    // underlying DNS record changed - fine for a VPS with a stable IP.
+    SendStatus ResolveHostPort(const std::string& host, uint16_t port, sockaddr_in& out) {
         const std::string key = host + ":" + std::to_string(port);
         const auto cached = resolve_cache_.find(key);
         if (cached != resolve_cache_.end()) {
             out = cached->second;
-            return true;
+            return SendStatus::kSent;
         }
 
+        sockaddr_in numeric{};
+        numeric.sin_family = AF_INET;
+        numeric.sin_port = htons(port);
+        if (inet_pton(AF_INET, host.c_str(), &numeric.sin_addr) == 1) {
+            resolve_cache_.emplace(key, numeric);
+            out = numeric;
+            return SendStatus::kSent;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto failed = failed_until_.find(key);
+        if (failed != failed_until_.end()) {
+            if (now < failed->second) {
+                return SendStatus::kFailed;
+            }
+            failed_until_.erase(failed);
+        }
+
+        auto pending = pending_.find(key);
+        if (pending == pending_.end()) {
+            pending_.emplace(key, std::async(std::launch::async, &UdpSocket::BlockingResolve, host, port));
+            return SendStatus::kResolving;
+        }
+        if (pending->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return SendStatus::kResolving;
+        }
+        const std::optional<sockaddr_in> result = pending->second.get();
+        pending_.erase(pending);
+        if (!result) {
+            failed_until_[key] = now + kResolveRetryDelay;
+            return SendStatus::kFailed;
+        }
+        resolve_cache_.emplace(key, *result);
+        out = *result;
+        return SendStatus::kSent;
+    }
+
+    // Runs on its own thread (see ResolveHostPort), so it takes its own
+    // Winsock reference instead of relying on this socket staying open.
+    static std::optional<sockaddr_in> BlockingResolve(std::string host, uint16_t port) {
+#if defined(_WIN32)
+        WSADATA wsaData;
+        const bool wsa = WSAStartup(MAKEWORD(2, 2), &wsaData) == 0;
+#endif
         addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_DGRAM;
         hints.ai_protocol = IPPROTO_UDP;
 
+        std::optional<sockaddr_in> resolved;
         addrinfo* result = nullptr;
         const std::string port_str = std::to_string(port);
-        if (getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result) != 0 || !result) {
-            return false;
+        if (getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result) == 0 && result) {
+            sockaddr_in addr{};
+            std::memcpy(&addr, result->ai_addr, sizeof(addr));
+            resolved = addr;
         }
-
-        sockaddr_in resolved{};
-        std::memcpy(&resolved, result->ai_addr, sizeof(resolved));
-        freeaddrinfo(result);
-
-        resolve_cache_.emplace(key, resolved);
-        out = resolved;
-        return true;
+        if (result) {
+            freeaddrinfo(result);
+        }
+#if defined(_WIN32)
+        if (wsa) WSACleanup();
+#endif
+        return resolved;
     }
 
     socket_t socket_ = kInvalidSocket;
     std::unordered_map<std::string, sockaddr_in> resolve_cache_;
+    // In-flight lookups. A std::async future's destructor waits for its
+    // thread, so destroying the socket (plugin unload) never leaves a
+    // thread running in code that's about to be unmapped.
+    std::unordered_map<std::string, std::future<std::optional<sockaddr_in>>> pending_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> failed_until_;
 #if defined(_WIN32)
     bool wsa_initialized_ = false;
 #endif

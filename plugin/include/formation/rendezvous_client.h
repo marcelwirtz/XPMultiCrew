@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -134,6 +135,9 @@ public:
 
 private:
     void Send(const RendezvousClientMessage& msg);
+    void SendOrQueue(const std::string& json);
+    void FlushQueued();
+    void ReportSendFailure();
     void SendKeepaliveNow();
     void MaybeSendKeepalive();
     void SendDirectToPeers(const void* data, size_t len);
@@ -149,6 +153,11 @@ private:
 
     UdpSocket socket_;
     std::unordered_map<int, DirectPeer> direct_peers_; // peer_id -> observed addr
+    // Messages waiting for the server's host name to resolve (create/join
+    // right after Start()); small cap - keepalives/relay are pointless to
+    // pile up, the create/join at the front is what matters.
+    std::deque<std::string> queued_;
+    static constexpr size_t kMaxQueued = 16;
     std::chrono::steady_clock::time_point last_direct_tx_{};
     std::string server_host_;
     uint16_t server_port_ = 0;

@@ -49,16 +49,20 @@ func main() {
 		}
 	}()
 
+	// Anyone can send garbage to a public UDP port; logging every datagram
+	// would let them fill the disk/journal. At most a few lines a minute,
+	// plus a count of what was suppressed.
+	logLimiter := newLogLimiter(10, time.Minute)
 	buf := make([]byte, 4096)
 	for {
 		n, clientAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Printf("read error: %v", err)
+			logLimiter.Printf("read error: %v", err)
 			continue
 		}
 		var msg ClientMessage
 		if err := json.Unmarshal(buf[:n], &msg); err != nil {
-			log.Printf("bad message from %s: %v", clientAddr, err)
+			logLimiter.Printf("bad message from %s: %v", clientAddr, err)
 			continue
 		}
 		server.HandleMessage(clientAddr, msg)
