@@ -23,9 +23,15 @@ public:
 
     void SetPose(const AircraftPose& pose);
 
+    // Re-matches the CSL model if the peer switched aircraft type
+    // mid-session (no-op if unchanged). Matters as soon as a user has a
+    // real CSL package installed next to the generic model.
+    void UpdateIcaoType(const std::string& icaoType);
+
     void UpdatePosition(float elapsedSinceLastCall, int flCounter) override;
 
 private:
+    std::string requested_icao_;
     AircraftPose pose_;
 };
 

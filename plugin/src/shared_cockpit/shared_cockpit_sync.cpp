@@ -121,13 +121,18 @@ void SharedCockpitSync::IngestRelayedPacket(const void* data, size_t len, double
     ProcessIncomingPacket(packet, now_s);
 }
 
-void SharedCockpitSync::ProcessIncomingPacket(const AircraftStatePacket& packet, double now_s) {
+void SharedCockpitSync::ProcessIncomingPacket(const AircraftStatePacket& incoming, double now_s) {
     // `<` against the frozen floor, not `!=`/exact-match - see
     // aircraft_state.h's kAircraftStateMinProtocolVersion comment.
-    if (packet.magic != kAircraftStateMagic ||
-        packet.protocol_version < kAircraftStateMinProtocolVersion) {
+    // Plausibility matters most here: the client writes this pose straight
+    // into its own aircraft's position (override_planepath).
+    if (incoming.magic != kAircraftStateMagic ||
+        incoming.protocol_version < kAircraftStateMinProtocolVersion ||
+        !IsPlausibleAircraftState(incoming)) {
         return;
     }
+    AircraftStatePacket packet = incoming;
+    SanitizeIcaoType(packet.icao_type);
     master_state_.OnPacketReceived(packet, now_s);
     master_link_quality_.OnPacketReceived(packet.sequence);
 }

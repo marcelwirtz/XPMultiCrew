@@ -29,7 +29,8 @@ XPMPPlaneID ToModeS(uint32_t senderId) {
 } // namespace
 
 RemoteAircraftXPMP::RemoteAircraftXPMP(const std::string& icaoType, uint32_t senderId)
-    : XPMP2::Aircraft(icaoType.empty() ? "GENR" : icaoType, "", "", ToModeS(senderId))
+    : XPMP2::Aircraft(icaoType.empty() ? "GENR" : icaoType, "", "", ToModeS(senderId)),
+      requested_icao_(icaoType)
 {
     // Without this, a peer's aircraft has zero protection against
     // appearing to sink into or float above terrain/scenery when the two
@@ -44,6 +45,14 @@ RemoteAircraftXPMP::RemoteAircraftXPMP(const std::string& icaoType, uint32_t sen
 
 void RemoteAircraftXPMP::SetPose(const AircraftPose& pose) {
     pose_ = pose;
+}
+
+void RemoteAircraftXPMP::UpdateIcaoType(const std::string& icaoType) {
+    if (icaoType == requested_icao_) {
+        return;
+    }
+    requested_icao_ = icaoType;
+    ChangeModel(icaoType.empty() ? "GENR" : icaoType, "", "");
 }
 
 void RemoteAircraftXPMP::UpdatePosition(float /*elapsedSinceLastCall*/, int /*flCounter*/) {

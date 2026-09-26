@@ -14,10 +14,12 @@
 #include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#include <string>
 #include <vector>
 
 using namespace flytogether;
@@ -268,6 +270,29 @@ int main() {
         }
         assert(encrypted_sync.tracked_aircraft_count() == 0);
         std::printf("SetCrypto(): PollIncoming rejects an envelope sealed with a different key: OK\n");
+    }
+
+    // --- IngestPacket drops implausible poses and sanitizes icao_type ---
+    {
+        FormationSync sync;
+        AircraftStatePacket bad = MakePacket(/*sender_id=*/1, /*sequence=*/1);
+        bad.elevation_m = std::nan("");
+        sync.IngestPacket(bad, 1.0);
+        bad = MakePacket(/*sender_id=*/2, /*sequence=*/1);
+        bad.latitude = 123.0;
+        sync.IngestPacket(bad, 1.0);
+        assert(sync.tracked_aircraft_count() == 0);
+
+        AircraftStatePacket odd = MakePacket(/*sender_id=*/3, /*sequence=*/1);
+        std::memcpy(odd.icao_type, "C1\n;X", 6);
+        sync.IngestPacket(odd, 1.0);
+        assert(sync.tracked_aircraft_count() == 1);
+        std::string seen_icao;
+        sync.ForEachRemoteAircraft(1.0, [&](uint32_t, const AircraftPose&, const AircraftStatePacket& latest) {
+            seen_icao.assign(latest.icao_type, strnlen(latest.icao_type, sizeof(latest.icao_type)));
+        });
+        assert(seen_icao == "C1");
+        std::printf("IngestPacket drops implausible poses and sanitizes icao_type: OK\n");
     }
 
     fs::current_path(old_cwd);

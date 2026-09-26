@@ -94,14 +94,17 @@ void FormationSync::PollIncoming(double now_s) {
     }
 }
 
-void FormationSync::IngestPacket(const AircraftStatePacket& packet, double now_s) {
+void FormationSync::IngestPacket(const AircraftStatePacket& incoming, double now_s) {
     // `<` against the frozen floor, not `!=`/exact-match against this
     // build's own kAircraftStateProtocolVersion - see aircraft_state.h's
     // kAircraftStateMinProtocolVersion comment for why.
-    if (packet.magic != kAircraftStateMagic ||
-        packet.protocol_version < kAircraftStateMinProtocolVersion) {
+    if (incoming.magic != kAircraftStateMagic ||
+        incoming.protocol_version < kAircraftStateMinProtocolVersion ||
+        !IsPlausibleAircraftState(incoming)) {
         return;
     }
+    AircraftStatePacket packet = incoming;
+    SanitizeIcaoType(packet.icao_type);
     remote_aircraft_[packet.sender_id].OnPacketReceived(packet, now_s);
     link_quality_[packet.sender_id].OnPacketReceived(packet.sequence);
 }

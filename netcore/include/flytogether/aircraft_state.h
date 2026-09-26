@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -113,5 +114,32 @@ static_assert(sizeof(AircraftStatePacket) == kAircraftStateV2Size,
               "kAircraftStateMinSize (see its comment)");
 static_assert(offsetof(AircraftStatePacket, ref_height_agl_m) == kAircraftStateMinSize,
               "protocol_version 2 fields must start right after the version 1 baseline");
+
+// Rejects poses no real aircraft can have (NaN/Inf, out-of-range lat/lon,
+// absurd altitude) before they reach XPMP2 or - in Shared Cockpit - the
+// client's own physics override. Encryption authenticates who sent a
+// packet, not that the sender's sim produced sane numbers.
+inline bool IsPlausibleAircraftState(const AircraftStatePacket& p) {
+    const bool finite = std::isfinite(p.latitude) && std::isfinite(p.longitude) &&
+                        std::isfinite(p.elevation_m) && std::isfinite(p.heading_deg) &&
+                        std::isfinite(p.pitch_deg) && std::isfinite(p.roll_deg);
+    return finite && std::fabs(p.latitude) <= 90.0 && std::fabs(p.longitude) <= 180.0 &&
+           p.elevation_m > -1000.0 && p.elevation_m < 30000.0;
+}
+
+// Cuts icao_type off at the first character that isn't [A-Za-z0-9] - it
+// ends up in XPMP2 model matching and in the companion app's line-based
+// status text (PEERS id:icao;...), where a stray newline, ';' or ':' from
+// a peer would break or inject lines.
+inline void SanitizeIcaoType(char (&icao)[8]) {
+    bool cut = false;
+    for (char& c : icao) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (cut || !ok) {
+            cut = true;
+            c = '\0';
+        }
+    }
+}
 
 } // namespace flytogether

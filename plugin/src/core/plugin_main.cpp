@@ -890,9 +890,15 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
     }
 
     // Create XPMP2 aircraft for newly-seen peers (not while XPMP2 is down,
-    // e.g. after a failed ReloadCsl - there'd be nothing to draw them with).
+    // e.g. after a failed ReloadCsl - there'd be nothing to draw them with),
+    // and re-match the model of existing ones whose type changed.
     for (const auto& [sender_id, icao] : active) {
-        if (g_xpmp_initialized && g_xpmp_aircraft.find(sender_id) == g_xpmp_aircraft.end()) {
+        const auto existing = g_xpmp_aircraft.find(sender_id);
+        if (existing != g_xpmp_aircraft.end()) {
+            existing->second->UpdateIcaoType(icao);
+            continue;
+        }
+        if (g_xpmp_initialized) {
             try {
                 g_xpmp_aircraft.emplace(
                     sender_id, std::make_unique<flytogether::RemoteAircraftXPMP>(icao, sender_id));
