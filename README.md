@@ -34,6 +34,20 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.3.1
+
+- **Map page** in the companion: your aircraft and every Formation peer
+  (callsign, altitude, heading) on an [OpenFreeMap](https://openfreemap.org)
+  base map, with airports and runways read from your own X-Plane
+  installation. Follow-my-aircraft, "show everyone", dark/light style. Needs
+  an internet connection for the base map.
+- **Stability:** server host names are resolved in the background instead
+  of stalling X-Plane; a UDP port another program already uses no longer
+  switches Formation off (only LAN-direct needs it, and its port can be
+  changed with a `PORT <n>` line in `XPMultiCrew_peers.txt`); disabling
+  the plugin cleans up fully; CSL reloads are limited to one per 5s; the
+  rendezvous server rate-limits new sessions and caps its log output.
+
 ## What's new in v0.3
 
 - **Callsigns:** set yours on the Multiplayer page (empty = your aircraft's

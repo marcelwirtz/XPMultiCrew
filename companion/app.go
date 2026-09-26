@@ -36,6 +36,8 @@ type statusEvent struct {
 	RunningVersion         string            `json:"runningVersion"`
 	CslStatus              string            `json:"cslStatus"`
 	OwnIcao                string            `json:"ownIcao"`
+	SelfPos                *MapPosition      `json:"selfPos"`
+	PeerPos                []MapPosition     `json:"peerPos"`
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -92,6 +94,7 @@ func (a *App) pollStatus() {
 		}
 		a.maybeSyncPrefs()
 
+		selfPos, peerPos := a.plugin.Positions()
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
 			Formation:              formation,
 			FormationCode:          formationCode,
@@ -105,6 +108,8 @@ func (a *App) pollStatus() {
 			RunningVersion:         a.plugin.RunningVersion(),
 			CslStatus:              a.plugin.CslStatus(),
 			OwnIcao:                a.plugin.OwnIcao(),
+			SelfPos:                selfPos,
+			PeerPos:                peerPos,
 		})
 	}
 }
@@ -579,4 +584,15 @@ func (a *App) DeleteUserProfile(icao string) error {
 		return errors.New("choose your X-Plane folder first (Setup)")
 	}
 	return deleteUserProfile(root, icao)
+}
+
+// GetAirports returns airports and runways from the chosen X-Plane
+// installation for the map page (see airports.go). The first call parses
+// apt.dat (a few seconds), later ones hit the cache.
+func (a *App) GetAirports() (AirportData, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return AirportData{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return loadAirports(root)
 }

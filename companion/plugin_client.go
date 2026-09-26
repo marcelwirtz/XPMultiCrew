@@ -28,6 +28,17 @@ type FormationPeer struct {
 	Callsign string `json:"callsign"`
 }
 
+// MapPosition is one aircraft on the map page - see control_listener.h's
+// SELF_POS/PEER_POS lines. ID is 0 for your own aircraft.
+type MapPosition struct {
+	ID            uint32  `json:"id"`
+	Lat           float64 `json:"lat"`
+	Lon           float64 `json:"lon"`
+	AltFt         float64 `json:"altFt"`
+	Heading       float64 `json:"heading"`
+	GroundspeedKt float64 `json:"groundspeedKt,omitempty"`
+}
+
 // PluginPrefs mirrors control_listener.h's PREFS line / SET_PREFS command.
 type PluginPrefs struct {
 	Callsign   string `json:"callsign"` // "" = aircraft tail number
@@ -70,6 +81,8 @@ type PluginClient struct {
 	cslStatus              string // "" until the plugin has pushed one - see control_listener.h's CSL_STATUS
 	prefsEncoded           string // raw PREFS value, "" until pushed
 	ownIcao                string
+	selfPos                *MapPosition
+	peerPos                []MapPosition
 }
 
 // LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
@@ -195,6 +208,20 @@ func (c *PluginClient) PrefsEncoded() string {
 	return c.prefsEncoded
 }
 
+// Positions returns your own aircraft (nil if unknown) and the Formation
+// peers' dead-reckoned positions for the map page.
+func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	peers := make([]MapPosition, len(c.peerPos))
+	copy(peers, c.peerPos)
+	if c.selfPos == nil {
+		return nil, peers
+	}
+	self := *c.selfPos
+	return &self, peers
+}
+
 // OwnIcao returns the ICAO type of the aircraft currently loaded in
 // X-Plane, "" if unknown.
 func (c *PluginClient) OwnIcao() string {
@@ -270,6 +297,10 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.prefsEncoded = value
 		case "OWN_ICAO":
 			c.ownIcao = value
+		case "SELF_POS":
+			c.selfPos = parseSelfPos(value)
+		case "PEER_POS":
+			c.peerPos = parsePeerPos(value)
 		}
 	}
 }
@@ -376,6 +407,57 @@ func parseOptionalPct(value string) *int {
 		return nil
 	}
 	return &pct
+}
+
+// parseSelfPos decodes SELF_POS "<lat> <lon> <alt_ft> <heading> <gs_kt>",
+// nil if empty or malformed.
+func parseSelfPos(value string) *MapPosition {
+	f := strings.Fields(value)
+	if len(f) != 5 {
+		return nil
+	}
+	var v [5]float64
+	for i := range f {
+		x, err := strconv.ParseFloat(f[i], 64)
+		if err != nil {
+			return nil
+		}
+		v[i] = x
+	}
+	return &MapPosition{Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3], GroundspeedKt: v[4]}
+}
+
+// parsePeerPos decodes PEER_POS "<id>:<lat>:<lon>:<alt_ft>:<heading>;...".
+// Never nil, malformed entries skipped.
+func parsePeerPos(value string) []MapPosition {
+	out := []MapPosition{}
+	if value == "" {
+		return out
+	}
+	for _, entry := range strings.Split(value, ";") {
+		f := strings.Split(entry, ":")
+		if len(f) != 5 {
+			continue
+		}
+		id, err := strconv.ParseUint(f[0], 10, 32)
+		if err != nil {
+			continue
+		}
+		var v [4]float64
+		ok := true
+		for i := 0; i < 4; i++ {
+			x, err := strconv.ParseFloat(f[i+1], 64)
+			if err != nil {
+				ok = false
+				break
+			}
+			v[i] = x
+		}
+		if ok {
+			out = append(out, MapPosition{ID: uint32(id), Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3]})
+		}
+	}
+	return out
 }
 
 // parsePeerPath decodes formation_peer_path's "<sender_id>:<direct|relay>;..."

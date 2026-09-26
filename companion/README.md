@@ -150,6 +150,20 @@ X-Plane instance on the same machine, not a remote one):
 (`frontend/src/main.js` listens via `EventsOn`) - no HTTP polling loop in
 the browser anymore.
 
+## Map page
+
+`frontend/src/map.js` (loaded on first use - MapLibre GL JS is ~1 MB):
+base map from OpenFreeMap (free, no API key; attribution shown on the
+map), your own position (`SELF_POS`) and the Formation peers' dead-reckoned
+positions (`PEER_POS`), pushed by the plugin once a second. Airports and
+runways come from the chosen X-Plane installation's
+`Global Scenery/Global Airports/Earth nav data/apt.dat` (`airports.go`,
+parsed once and cached in the user cache dir until that file changes) -
+nothing from X-Plane is bundled. MapLibre's web worker is built as its own
+asset and set via `setWorkerUrl`, because MapLibre only derives the worker
+URL itself for http(s) pages and Wails uses its own scheme on Linux.
+Third-party licenses: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Profiles page
 
 Edits Shared Cockpit dataref profiles (`profiles.go`): lists the profiles

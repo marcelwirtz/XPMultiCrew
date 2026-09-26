@@ -32,6 +32,17 @@ function escapeHtml(text) {
 }
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
+// The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
+let mapModule = null;
+let lastStatusForMap = null;
+function openMapPage() {
+  import('./map.js').then((m) => {
+    mapModule = m;
+    if (lastStatusForMap) m.updateMap(lastStatusForMap);
+    m.showMap();
+  });
+}
+
 // Sidebar navigation - one .page shown at a time (see index.html's
 // .app-layout comment for why this replaced one long stacked page).
 // Persists the last-open page in localStorage purely as a per-viewer
@@ -47,6 +58,9 @@ function showPage(page) {
   document.querySelectorAll('.page').forEach((el) => {
     el.classList.toggle('active', el.id === `page-${page}`);
   });
+  // MapLibre needs a visible container to size itself, so the map is only
+  // created the first time its page is actually shown.
+  if (page === 'map') openMapPage();
   try {
     localStorage.setItem(kLastPageStorageKey, page);
   } catch (e) {
@@ -512,6 +526,8 @@ EventsOn('status', (data) => {
 
   renderPeerList(data.peers, data.linkQuality);
   renderCurrentAircraftButton(data.ownIcao);
+  lastStatusForMap = data;
+  if (mapModule) mapModule.updateMap(data);
   renderOwnership(data.sharedCockpitOwnership);
   renderFormationLinkQuality(data.linkQuality, data.peers);
   renderSharedCockpitLinkQuality(data.linkQuality);

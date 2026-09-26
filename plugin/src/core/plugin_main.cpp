@@ -146,6 +146,7 @@ float g_ref_height_agl_m = -1.0f;
 
 // Protocol_version 2 extras - see AircraftStatePacket's field comments.
 XPLMDataRef g_taxi_light_ref = nullptr;
+XPLMDataRef g_groundspeed_ref = nullptr; // sim/flightmodel/position/groundspeed, m/s - map page only
 XPLMDataRef g_local_vx_ref = nullptr; // also written by Shared Cockpit's client, see ApplyMasterPoseToOwnAircraft
 XPLMDataRef g_local_vy_ref = nullptr;
 XPLMDataRef g_local_vz_ref = nullptr;
@@ -1895,6 +1896,26 @@ void MaybePushLinkQuality(double now) {
     }
 
     g_control_listener.SetLinkQuality(out.str());
+
+    // Map page positions, same once-a-second cadence.
+    constexpr double kFeetPerMeter = 3.28084;
+    char self_buf[160] = {};
+    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+        const double groundspeed_mps = g_groundspeed_ref ? XPLMGetDataf(g_groundspeed_ref) : 0.0;
+        std::snprintf(self_buf, sizeof(self_buf), "%.6f %.6f %.0f %.0f %.0f", XPLMGetDatad(g_latitude_ref),
+                      XPLMGetDatad(g_longitude_ref), XPLMGetDatad(g_elevation_ref) * kFeetPerMeter,
+                      g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0f, groundspeed_mps * 1.94384);
+    }
+    std::string peer_pos;
+    g_formation_sync.ForEachRemoteAircraft(
+        now, [&](uint32_t sender_id, const flytogether::AircraftPose& pose,
+                 const flytogether::AircraftStatePacket& /*latest*/) {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "%s%u:%.6f:%.6f:%.0f:%.0f", peer_pos.empty() ? "" : ";", sender_id,
+                          pose.latitude, pose.longitude, pose.elevation_m * kFeetPerMeter, pose.heading_deg);
+            peer_pos += buf;
+        });
+    g_control_listener.SetPositions(self_buf, peer_pos);
 }
 
 // Formation time & weather sync, 1 Hz - see g_formation_weather. Works out
@@ -1994,6 +2015,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_y_agl_ref = XPLMFindDataRef("sim/flightmodel/position/y_agl");
     g_on_ground_ref = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
     g_taxi_light_ref = XPLMFindDataRef("sim/cockpit/electrical/taxi_light_on");
+    g_groundspeed_ref = XPLMFindDataRef("sim/flightmodel/position/groundspeed");
     g_p_ref = XPLMFindDataRef("sim/flightmodel/position/P");
     g_q_ref = XPLMFindDataRef("sim/flightmodel/position/Q");
     g_r_ref = XPLMFindDataRef("sim/flightmodel/position/R");

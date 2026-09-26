@@ -1,5 +1,19 @@
 export namespace main {
 	
+	export class AirportData {
+	    airports: any[][];
+	    runways: number[][];
+	
+	    static createFrom(source: any = {}) {
+	        return new AirportData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.airports = source["airports"];
+	        this.runways = source["runways"];
+	    }
+	}
 	export class ChooseXPlaneResult {
 	    path: string;
 	    warning?: string;

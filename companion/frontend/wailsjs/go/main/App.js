@@ -38,6 +38,10 @@ export function DisconnectSharedCockpit() {
   return window['go']['main']['App']['DisconnectSharedCockpit']();
 }
 
+export function GetAirports() {
+  return window['go']['main']['App']['GetAirports']();
+}
+
 export function GetAvailablePluginVersion() {
   return window['go']['main']['App']['GetAvailablePluginVersion']();
 }

@@ -303,3 +303,20 @@ func TestPluginPrefsDefaultsAndEncoding(t *testing.T) {
 		t.Fatalf("sanitizeCallsign: got %q", got)
 	}
 }
+
+func TestApplyStatusMessagePositions(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("SELF_POS 50.04 8.56 3500 250 120\nPEER_POS 1111:50.045:8.51:3600:245;bad;2222:1:2:3:4\n")
+	self, peers := c.Positions()
+	if self == nil || self.Lat != 50.04 || self.GroundspeedKt != 120 {
+		t.Fatalf("unexpected self position: %+v", self)
+	}
+	if len(peers) != 2 || peers[0].ID != 1111 || peers[0].Heading != 245 || peers[1].ID != 2222 {
+		t.Fatalf("unexpected peer positions: %+v", peers)
+	}
+	c.applyStatusMessage("SELF_POS \nPEER_POS \n")
+	self, peers = c.Positions()
+	if self != nil || len(peers) != 0 {
+		t.Fatalf("empty lines should clear positions, got %+v %+v", self, peers)
+	}
+}

@@ -20,6 +20,8 @@ export function DisconnectFormation():Promise<void>;
 
 export function DisconnectSharedCockpit():Promise<void>;
 
+export function GetAirports():Promise<main.AirportData>;
+
 export function GetAvailablePluginVersion():Promise<string>;
 
 export function GetInstalledPluginVersion():Promise<string>;

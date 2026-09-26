@@ -428,6 +428,26 @@
   .profile-table td.warn { color: var(--err); font-size: 11px; }
   .profile-table button.row-delete { background: transparent; color: var(--err); font-weight: 700; padding: 4px 8px; flex: none; }
   .profile-table input.has-warning { border-color: var(--err); }
+  .map-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .map-toolbar select {
+    background: #101317;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 6px;
+  }
+  .map-toolbar label.checkbox-row { margin: 0; }
+  .map-toolbar button { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; }
+  #map {
+    height: calc(100vh - 190px);
+    min-height: 260px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  #map-message { margin-bottom: 10px; }
+  .maplibregl-ctrl-attrib { font-size: 10px; }
 </style>
 </head>
 <body>
@@ -447,6 +467,7 @@
     <nav class="sidebar" id="sidebar">
       <button type="button" data-page="formation"><span class="nav-dot" id="nav-dot-formation"></span>Multiplayer</button>
       <button type="button" data-page="shared-cockpit"><span class="nav-dot" id="nav-dot-shared-cockpit"></span>Shared Cockpit</button>
+      <button type="button" data-page="map"><span class="nav-dot"></span>Map</button>
       <button type="button" data-page="profiles"><span class="nav-dot"></span>Profiles</button>
       <button type="button" data-page="setup"><span class="nav-dot"></span>Setup</button>
       <button type="button" data-page="diagnostics"><span class="nav-dot"></span>Diagnostics</button>
@@ -474,6 +495,19 @@
       <div class="status ok" id="update-banner" style="display: none; margin-bottom: 20px;">
         <span><span class="dot"></span><span id="update-banner-text"></span></span>
         <button id="update-btn">Update &amp; Restart</button>
+      </div>
+
+      <div class="page" id="page-map">
+        <div class="map-toolbar">
+          <select id="map-style" title="Map style">
+            <option value="dark">Dark</option>
+            <option value="liberty">Light</option>
+          </select>
+          <label class="checkbox-row"><input type="checkbox" id="map-follow"><span>Follow my aircraft</span></label>
+          <button id="map-fit" class="secondary" type="button">Show everyone</button>
+        </div>
+        <div class="status" id="map-message" style="display: none;"></div>
+        <div id="map"></div>
       </div>
 
       <div class="page" id="page-profiles">
