@@ -17,7 +17,7 @@ import (
 
 // RouteWaypoint is one point of a planned route.
 type RouteWaypoint struct {
-	Kind  string  `json:"kind"` // APT, VRP, VOR, NDB, USR
+	Kind  string  `json:"kind"` // APT, VRP, VOR, NDB, FIX (named fix, e.g. from an imported plan), USR
 	Ident string  `json:"ident"`
 	Name  string  `json:"name"`
 	Lat   float64 `json:"lat"`
@@ -44,7 +44,7 @@ const (
 	maxRoutePayloadSize = 2000 // one relay datagram, see the plugin's ROUTE_SHARE
 )
 
-var routeKinds = map[string]bool{"APT": true, "VRP": true, "VOR": true, "NDB": true, "USR": true}
+var routeKinds = map[string]bool{"APT": true, "VRP": true, "VOR": true, "NDB": true, "FIX": true, "USR": true}
 
 // cleanRouteText keeps route text safe for the line-based plugin protocol
 // and the encoding below (no separators, no newlines).
@@ -160,7 +160,7 @@ func fmsRoute(r PlannedRoute, cycle string) (string, error) {
 	}
 	fmt.Fprintf(&b, "NUMENR %d\n", len(r.Waypoints))
 	for i, w := range r.Waypoints {
-		code := map[string]int{"APT": 1, "NDB": 2, "VOR": 3, "VRP": 11}[w.Kind]
+		code := map[string]int{"APT": 1, "NDB": 2, "VOR": 3, "VRP": 11, "FIX": 11}[w.Kind]
 		if code == 0 {
 			code = 28
 		}
@@ -209,4 +209,47 @@ func exportFms(xplaneRoot string, r PlannedRoute) (string, error) {
 		return "", err
 	}
 	return file, nil
+}
+
+// parseFms reads an X-Plane .fms flight plan - v1100 ("type ident via alt
+// lat lon", as written by X-Plane 11/12, SimBrief and exportFms) and the
+// older v3 ("type ident alt lat lon"). Type 1 airport, 2 NDB, 3 VOR,
+// 11 fix, anything else (28/13 lat/lon) a user waypoint. The cruise
+// altitude is the highest enroute altitude in the file.
+func parseFms(text, name string) (PlannedRoute, error) {
+	r := PlannedRoute{Name: name, TasKt: 100, Waypoints: []RouteWaypoint{}}
+	kinds := map[int]string{1: "APT", 2: "NDB", 3: "VOR", 11: "FIX"}
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", ""), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 5 && len(f) != 6 {
+			continue
+		}
+		code, err := strconv.Atoi(f[0])
+		if err != nil || code <= 0 || code > 99 {
+			continue
+		}
+		off := len(f) - 5 // v1100 has the extra "via" column
+		alt, err1 := strconv.ParseFloat(f[2+off], 64)
+		lat, err2 := strconv.ParseFloat(f[3+off], 64)
+		lon, err3 := strconv.ParseFloat(f[4+off], 64)
+		if err1 != nil || err2 != nil || err3 != nil || lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+			continue
+		}
+		kind, ok := kinds[code]
+		ident := f[1]
+		if !ok {
+			kind, ident = "USR", ""
+		}
+		if kind != "APT" && int(alt) > r.CruiseFt {
+			r.CruiseFt = int(alt)
+		}
+		r.Waypoints = append(r.Waypoints, RouteWaypoint{Kind: kind, Ident: ident, Name: ident, Lat: lat, Lon: lon})
+	}
+	if len(r.Waypoints) < 2 {
+		return PlannedRoute{}, errors.New("no usable waypoints found - is this an X-Plane .fms flight plan?")
+	}
+	if r.CruiseFt == 0 {
+		r.CruiseFt = 3500
+	}
+	return r, nil
 }

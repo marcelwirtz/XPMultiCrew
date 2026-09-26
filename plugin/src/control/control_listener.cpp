@@ -115,7 +115,7 @@ void ControlListener::SendStatus() {
                              "\nCSL_STATUS " + csl_status_ + "\nPREFS " + prefs_ + "\nOWN_ICAO " + own_icao_ +
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
                              "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ +
-                             "\nROUTE_SHARED " + shared_route_ + "\n";
+                             "\nROUTE_SHARED " + shared_route_ + "\nWIND " + wind_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -200,6 +200,12 @@ void ControlListener::SetOwnIcao(const std::string& icao) {
 void ControlListener::SetTcasStatus(const std::string& status) {
     if (status == tcas_status_) return;
     tcas_status_ = status;
+    SendStatus();
+}
+
+void ControlListener::SetWind(const std::string& encoded) {
+    if (encoded == wind_) return;
+    wind_ = encoded;
     SendStatus();
 }
 

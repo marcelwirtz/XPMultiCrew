@@ -34,7 +34,7 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
-## Map: VFR chart, airspace warnings, route planning (next release)
+## What's new in v0.3.3: VFR chart, airspace warnings, route planning
 
 All read at runtime from your own X-Plane (`Resources/default data`, the
 Navigraph data X-Plane ships - for simulator use only), nothing bundled:
@@ -54,6 +54,15 @@ Navigraph data X-Plane ships - for simulator use only), nothing bundled:
   `.fms` flight plan to `Output/FMS plans` (G1000, GNS 430/530, FMS).
   **Share with group** shows it on everyone's map in your Multiplayer
   session, where they can take it over as their own.
+- **Flying the route:** a banner on every page shows the next waypoint
+  with magnetic course, distance and ETA plus what's left to the
+  destination; waypoints are ticked off automatically when reached or
+  passed (or pick one by hand with ▶).
+- **Wind:** leg headings (MH) and ground speeds use X-Plane's current wind
+  at your planned cruise altitude.
+- **Import .fms** flight plans (e.g. from `Output/FMS plans` or SimBrief),
+  **flown tracks** behind every aircraft, and a **measure** tool (two
+  clicks: course, distance, time).
 
 ## What's new in v0.3.2
 

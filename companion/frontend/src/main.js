@@ -34,6 +34,8 @@ function escapeHtml(text) {
   return String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { updateProgress } from './route-progress.js';
+import { recordTracks } from './tracks.js';
 
 // The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
 let mapModule = null;
@@ -539,6 +541,31 @@ function renderAirspaceBanner(alert) {
   el.classList.add('visible');
 }
 
+// Route progress (route-progress.js): next waypoint, course, distance and
+// ETA while flying the route planned on the Map page - on every page.
+function formatMin(min) {
+  const total = Math.round(min);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function renderRouteBanner(self) {
+  const el = document.getElementById('route-banner');
+  const moving = self && self.groundspeedKt > 30;
+  const progress = self ? updateProgress(self) : null;
+  if (!progress || !moving) {
+    el.classList.remove('visible');
+    return;
+  }
+  const w = progress.route.waypoints;
+  const nextName = progress.next.kind === 'USR' ? `WPT${progress.active + 1}` : progress.next.ident;
+  const dest = w[w.length - 1];
+  el.textContent = progress.arrived
+    ? `✓ Arrived at ${dest.ident || 'the last waypoint'}`
+    : `▶ ${nextName} · MC ${String(Math.round(progress.magCourse)).padStart(3, '0')}° · ${progress.distNm.toFixed(1)} NM · ` +
+      `ETA ${formatMin(progress.etaMin)}   —   ${progress.remainingNm.toFixed(0)} NM / ${formatMin(progress.remainingMin)} to ${dest.ident || 'the end'}`;
+  el.classList.add('visible');
+}
+
 // Only one plugin can own X-Plane's TCAS/AI planes. When another one has
 // them (typically LiveTraffic), peers are still drawn but missing from
 // TCAS and X-Plane's own map - say so instead of leaving it to Log.txt.
@@ -629,6 +656,8 @@ EventsOn('status', (data) => {
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
   renderTcasStatus(data.tcasStatus);
   renderAirspaceBanner(data.airspaceAlert);
+  recordTracks(data);
+  renderRouteBanner(data.selfPos);
   lastSimReady = data.simReady;
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
   renderLearn(data.learn);

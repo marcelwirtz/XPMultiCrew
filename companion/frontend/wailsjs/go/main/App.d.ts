@@ -44,6 +44,8 @@ export function GetSavedServers():Promise<Array<main.SavedServer>>;
 
 export function GetXPlanePath():Promise<string>;
 
+export function ImportFms():Promise<main.PlannedRoute>;
+
 export function InstallPlugin():Promise<void>;
 
 export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;

@@ -145,3 +145,36 @@ func TestParseSharedRoute(t *testing.T) {
 		t.Fatal("empty ROUTE_SHARED should clear it")
 	}
 }
+
+func TestParseFms(t *testing.T) {
+	v1100 := "I\r\n1100 Version\r\nCYCLE 1710\r\nADEP KCUB\r\nADES KRDU\r\nNUMENR 4\r\n" +
+		"1 KCUB ADEP 0.000000 33.970470 -80.995247\r\n3 CTF DRCT 6000.000000 34.650497 -80.274918\r\n" +
+		"28 +34.900_-080.000 DRCT 7000.000000 34.900000 -80.000000\r\n11 NOMOE V155 6500.000000 34.880920 -79.996437\r\n" +
+		"1 KRDU ADES 435.000000 35.877640 -78.787476\r\n"
+	r, err := parseFms(v1100, "test")
+	if err != nil || len(r.Waypoints) != 5 || r.CruiseFt != 7000 || r.Waypoints[0].Kind != "APT" ||
+		r.Waypoints[1].Kind != "VOR" || r.Waypoints[2].Kind != "USR" || r.Waypoints[3].Kind != "FIX" ||
+		r.Waypoints[3].Ident != "NOMOE" {
+		t.Fatalf("v1100 parse: %+v %v", r, err)
+	}
+	v3 := "I\n3 version\n1\n2\n1 EDDF 0 50.0333 8.5706\n2 XYZ 3000 50.1 8.7\n"
+	if r, err := parseFms(v3, "old"); err != nil || len(r.Waypoints) != 2 || r.Waypoints[1].Kind != "NDB" {
+		t.Fatalf("v3 parse: %+v %v", r, err)
+	}
+	if _, err := parseFms("hello", "x"); err == nil {
+		t.Fatal("garbage should be rejected")
+	}
+	// Round trip through our own export.
+	out, _ := fmsRoute(r, "2406")
+	back, err := parseFms(out, "back")
+	if err != nil || len(back.Waypoints) != len(r.Waypoints) || back.Waypoints[3].Kind != "FIX" {
+		t.Fatalf("export/import round trip: %+v %v", back, err)
+	}
+}
+
+func TestParseWind(t *testing.T) {
+	w := parseWind("1000:270:10;5000:280:25;bad;9000:300:x")
+	if len(w) != 2 || w[1] != (WindLayer{AltFt: 5000, FromDeg: 280, SpeedKt: 25}) {
+		t.Fatalf("got %+v", w)
+	}
+}

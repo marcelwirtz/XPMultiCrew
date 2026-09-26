@@ -117,6 +117,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
 //   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
 //   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
+//   WIND <alt_ft>:<from_deg_true>:<kt>;... (X-Plane's wind layers at the aircraft)
 //   ROUTE_SHARED <sender_id> <payload> (empty if none; sender_id 0 = our own)
 //   LEARN <idle|baseline|watching> <candidates> <noisy>
 //   LEARN_CHANGES <name>|<before>|<after>;... (see LEARN_START; at most 40)
@@ -124,7 +125,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //     Who owns X-Plane's TCAS/AI planes: us, the XPMP2 Remote Client (fine,
 //     it shows everyone's planes) or another plugin such as LiveTraffic
 //     (then our peers are drawn but missing from TCAS and X-Plane's map).
-//   SELF_POS <lat> <lon> <alt_ft> <heading_deg> <groundspeed_kt>
+//   SELF_POS <lat> <lon> <alt_ft> <heading_deg_true> <groundspeed_kt> <magnetic_variation_deg_east>
 //   PEER_POS <sender_id>:<lat>:<lon>:<alt_ft>:<heading_deg>;... (Formation, dead-reckoned)
 //     Both pushed about once a second, for the companion's map page.
 //   SHARED_COCKPIT_AIRCRAFT_MISMATCH <own icao>:<master icao> (empty if matching/unknown)
@@ -230,6 +231,7 @@ public:
     void SetTcasStatus(const std::string& status);
     void SetLearn(const std::string& state, const std::string& changes);
     void SetSharedRoute(const std::string& encoded);
+    void SetWind(const std::string& encoded);
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
@@ -257,6 +259,7 @@ private:
     std::string learn_state_ = "idle 0 0";
     std::string learn_changes_;
     std::string shared_route_;
+    std::string wind_;
     std::string self_pos_;
     std::string peer_pos_;
 };

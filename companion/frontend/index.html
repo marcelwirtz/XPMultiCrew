@@ -538,6 +538,8 @@
   #route-list .wp .wp-main { flex: 1; min-width: 0; }
   #route-list .wp .wp-ident { font-weight: 600; }
   #route-list .wp .wp-leg { color: var(--muted); }
+  #route-list .wp.passed { opacity: 0.45; }
+  #route-list .wp.active .wp-ident { color: #f5d142; }
   #route-list .wp button { flex: none; padding: 2px 6px; font-size: 11px; background: transparent; color: var(--muted); border: 1px solid var(--border); }
   #route-list .empty { color: var(--muted); padding: 6px 0; }
   #route-panel .route-total { font-weight: 600; margin-bottom: 6px; }
@@ -556,6 +558,7 @@
     color: #f5c451;
   }
   .airspace-banner.visible { display: block; }
+  .route-banner { border-color: #f5d142; background: rgba(245, 209, 66, 0.1); color: #f5d142; }
   .airspace-banner.danger { border-color: var(--err); background: rgba(255, 107, 107, 0.14); color: var(--err); }
   .maplibregl-popup-content { background: #1c2027; color: var(--text); font-size: 12px; border: 1px solid var(--border); max-width: 280px; }
   .maplibregl-popup-tip { display: none; }
@@ -612,6 +615,8 @@
            page, since you're usually looking at something else while
            flying. Toggle: "Airspace warnings" on the Map page. -->
       <div class="airspace-banner" id="airspace-banner"></div>
+      <!-- Route progress while flying the planned route (route-progress.js). -->
+      <div class="airspace-banner route-banner" id="route-banner"></div>
 
       <div class="status ok" id="update-banner" style="display: none; margin-bottom: 20px;">
         <span><span class="dot"></span><span id="update-banner-text"></span></span>
@@ -627,10 +632,13 @@
           <label class="checkbox-row"><input type="checkbox" id="map-follow"><span>Follow me</span></label>
           <button id="map-fit" class="secondary" type="button">Show everyone</button>
           <button id="map-route-btn" class="secondary" type="button">Route</button>
+          <button id="map-measure-btn" class="secondary" type="button" title="Click two points for course and distance">Measure</button>
           <div class="layer-toggles">
             <label class="checkbox-row"><input type="checkbox" id="layer-vfr" checked><span>VFR points &amp; navaids</span></label>
             <label class="checkbox-row"><input type="checkbox" id="layer-airspace" checked><span>Airspaces</span></label>
             <label class="checkbox-row"><input type="checkbox" id="airspace-warnings" checked><span>Airspace warnings</span></label>
+            <label class="checkbox-row"><input type="checkbox" id="layer-tracks" checked><span>Tracks</span></label>
+            <button id="tracks-clear" class="secondary" type="button" style="padding: 2px 8px; font-size: 11px;">Clear tracks</button>
           </div>
         </div>
         <div class="status" id="map-message" style="display: none;"></div>
@@ -646,11 +654,13 @@
             </div>
             <div id="route-list"></div>
             <div class="route-total" id="route-total"></div>
+            <div class="route-note" id="route-wind" style="margin: 0 0 6px;"></div>
             <div class="route-buttons">
               <button id="route-export" type="button">Export to GPS</button>
               <button id="route-share" class="secondary" type="button">Share with group</button>
               <button id="route-undo" class="secondary" type="button">Undo last</button>
               <button id="route-clear" class="secondary" type="button">Clear</button>
+              <button id="route-import" class="secondary" type="button">Import .fms</button>
             </div>
             <div class="route-note" id="route-note">Click the map to add waypoints - airports, VFR reporting points, VORs and NDBs snap in.</div>
           </div>

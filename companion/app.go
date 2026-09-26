@@ -40,6 +40,7 @@ type statusEvent struct {
 	Learn                  LearnStatus       `json:"learn"`
 	AirspaceAlert          *AirspaceAlert    `json:"airspaceAlert,omitempty"`
 	SharedRoute            *SharedRoute      `json:"sharedRoute,omitempty"`
+	Wind                   []WindLayer       `json:"wind"`
 	SelfPos                *MapPosition      `json:"selfPos"`
 	PeerPos                []MapPosition     `json:"peerPos"`
 }
@@ -116,6 +117,7 @@ func (a *App) pollStatus() {
 			Learn:                  a.describedLearnStatus(),
 			AirspaceAlert:          a.airspaceAlertFor(selfPos),
 			SharedRoute:            a.plugin.SharedRoute(),
+			Wind:                   a.plugin.Wind(),
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 		})
@@ -749,4 +751,32 @@ func (a *App) ShareRoute(route PlannedRoute) error {
 // ClearSharedRoute stops sharing / removes it for everyone.
 func (a *App) ClearSharedRoute() error {
 	return a.plugin.Send("ROUTE_CLEAR")
+}
+
+// ImportFms lets the user pick an X-Plane .fms flight plan (default folder:
+// <X-Plane>/Output/FMS plans) and returns it as a planner route. Returns
+// nil without an error if the dialog was cancelled.
+func (a *App) ImportFms() (*PlannedRoute, error) {
+	dir := ""
+	if root := loadConfig().XPlanePath; root != "" {
+		dir = filepath.Join(root, "Output", "FMS plans")
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Import an X-Plane flight plan",
+		DefaultDirectory: dir,
+		Filters:          []runtime.FileFilter{{DisplayName: "X-Plane flight plans (*.fms)", Pattern: "*.fms"}},
+	})
+	if err != nil || path == "" {
+		return nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	route, err := parseFms(string(raw), name)
+	if err != nil {
+		return nil, err
+	}
+	return &route, nil
 }

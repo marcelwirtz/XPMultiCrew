@@ -25,9 +25,12 @@ import {
   GetAirports,
   GetAirspaces,
   GetNavData,
+  ImportFms,
   ShareRoute,
 } from '../wailsjs/go/main/App';
-import { legInfo } from './route-math.js';
+import { distanceNm, legInfo, trueCourse, variationAt, windAt } from './route-math.js';
+import { activeIndex, setActiveIndex } from './route-progress.js';
+import { clearTracks, tracksGeoJson } from './tracks.js';
 
 maplibregl.setWorkerUrl(workerUrl);
 
@@ -53,6 +56,9 @@ let routeMode = false;
 let route = { name: '', cruiseFt: 3500, tasKt: 100, waypoints: [] };
 let airspaceTimer = null;
 let airspaceSeq = 0;
+let measureMode = false;
+let measurePoints = [];
+let routeListSignature = '';
 
 function storageGet(key) {
   try {
@@ -269,7 +275,8 @@ function routeGeoJson(waypoints, props = {}) {
 // own route, aircraft. Sources that arrive late are inserted below the
 // first layer from this list that already exists.
 const kLayerOrder = ['airspace-fill', 'airspace-line', 'airspace-labels', 'runways', 'airports', 'airport-labels',
-  'nav-points', 'shared-route-line', 'shared-route-points', 'route-line', 'route-points', 'aircraft'];
+  'nav-points', 'tracks-line', 'shared-route-line', 'shared-route-points', 'route-line', 'route-points',
+  'measure-line', 'measure-label', 'aircraft'];
 
 function beforeIdFor(id) {
   const idx = kLayerOrder.indexOf(id);
@@ -390,9 +397,49 @@ function addRouteLayers() {
       type: 'circle',
       source: prefix,
       filter: ['!=', ['get', 'line'], true],
-      paint: { 'circle-radius': 5, 'circle-color': color, 'circle-stroke-color': '#14171c', 'circle-stroke-width': 1.5 },
+      paint: {
+        'circle-radius': ['case', ['==', ['get', 'active'], true], 7, 5],
+        'circle-color': ['case', ['==', ['get', 'passed'], true], '#6b7280', color],
+        'circle-stroke-color': ['case', ['==', ['get', 'active'], true], '#ffffff', '#14171c'],
+        'circle-stroke-width': 1.5,
+      },
     });
   }
+}
+
+function addTracksLayer() {
+  if (map.getSource('tracks')) return;
+  map.addSource('tracks', { type: 'geojson', data: tracksGeoJson() });
+  addLayer({
+    id: 'tracks-line',
+    type: 'line',
+    source: 'tracks',
+    paint: {
+      'line-color': ['case', ['get', 'self'], '#4da3ff', '#ffb347'],
+      'line-width': 2,
+      'line-opacity': 0.6,
+    },
+  });
+}
+
+function addMeasureLayers() {
+  if (map.getSource('measure')) return;
+  map.addSource('measure', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  addLayer({
+    id: 'measure-line',
+    type: 'line',
+    source: 'measure',
+    filter: ['==', ['geometry-type'], 'LineString'],
+    paint: { 'line-color': '#ffffff', 'line-width': 2, 'line-dasharray': ['literal', [2, 1]] },
+  });
+  addLayer({
+    id: 'measure-label',
+    type: 'symbol',
+    source: 'measure',
+    filter: ['==', ['geometry-type'], 'Point'],
+    layout: { 'text-field': ['get', 'label'], 'text-font': textFont(), 'text-size': 12, 'text-allow-overlap': true },
+    paint: { 'text-color': '#ffffff', 'text-halo-color': '#14171c', 'text-halo-width': 2 },
+  });
 }
 
 function addAircraftLayer() {
@@ -430,6 +477,8 @@ function addAircraftLayer() {
 function addOverlays() {
   addAircraftLayer();
   addRouteLayers();
+  addTracksLayer();
+  addMeasureLayers();
   addAirspaceLayers();
   addAirportLayers();
   addNavLayers();
@@ -440,9 +489,9 @@ function addOverlays() {
 
 function layerPrefs() {
   try {
-    return { vfr: true, airspace: true, ...JSON.parse(storageGet(kLayerStorageKey) || '{}') };
+    return { vfr: true, airspace: true, tracks: true, ...JSON.parse(storageGet(kLayerStorageKey) || '{}') };
   } catch (e) {
-    return { vfr: true, airspace: true };
+    return { vfr: true, airspace: true, tracks: true };
   }
 }
 
@@ -451,6 +500,7 @@ function applyLayerVisibility() {
   const prefs = layerPrefs();
   const set = (id, on) => map.getLayer(id) && map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
   set('nav-points', prefs.vfr);
+  set('tracks-line', prefs.tracks);
   for (const id of ['airspace-fill', 'airspace-line', 'airspace-labels']) set(id, prefs.airspace);
 }
 
@@ -482,7 +532,9 @@ function refreshAirspaces() {
 function applyData() {
   if (!map || !lastData || !map.getSource('aircraft')) return;
   map.getSource('aircraft').setData(aircraftGeoJson(lastData));
+  if (map.getSource('tracks')) map.getSource('tracks').setData(tracksGeoJson());
   renderSharedRoute();
+  renderRoute(); // cheap unless wind/active waypoint changed - see routeListSignature
   const self = lastData.selfPos;
   if (self && followSelf) {
     if (firstFix) {
@@ -545,12 +597,45 @@ function formatMinutes(min) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+function pad3(deg) {
+  return String(Math.round(deg) % 360).padStart(3, '0');
+}
+
+// Wind for planning: X-Plane's current wind layers (plugin WIND line),
+// interpolated at the planned cruise altitude - constant along the route.
+function planningWind() {
+  return windAt(lastData && lastData.wind, route.cruiseFt);
+}
+
 function renderRoute() {
   readRouteFields();
   saveRoute();
-  if (map && map.getSource('route')) map.getSource('route').setData(routeGeoJson(route.waypoints));
+  const wind = planningWind();
+  const active = activeIndex(route.waypoints.length >= 2 ? route : null);
+  if (map && map.getSource('route')) {
+    const geo = routeGeoJson(route.waypoints);
+    let pointIndex = 0;
+    for (const f of geo.features) {
+      if (f.properties.line) continue;
+      // Waypoints before the one we're flying to count as passed.
+      f.properties.passed = route.waypoints.length >= 2 && pointIndex < active;
+      f.properties.active = route.waypoints.length >= 2 && pointIndex === active;
+      pointIndex++;
+    }
+    map.getSource('route').setData(geo);
+  }
+
+  // The list only changes with the route, wind or active waypoint - not
+  // rebuilt every second, so its buttons stay clickable.
+  const signature = JSON.stringify([route, wind && [Math.round(wind.fromDeg), Math.round(wind.speedKt)], active, vors.length]);
+  if (signature === routeListSignature) return;
+  routeListSignature = signature;
 
   const list = document.getElementById('route-list');
+  const windEl = document.getElementById('route-wind');
+  windEl.textContent = wind
+    ? `Wind at ${route.cruiseFt} ft: ${pad3(wind.fromDeg)}°/${Math.round(wind.speedKt)} kt (X-Plane, now)`
+    : 'No wind data yet (X-Plane not running?) - times without wind.';
   if (route.waypoints.length === 0) {
     list.innerHTML = '<div class="empty">No waypoints yet.</div>';
     document.getElementById('route-total').textContent = '';
@@ -562,23 +647,27 @@ function renderRoute() {
     .map((w, i) => {
       let leg = '';
       if (i > 0) {
-        const l = legInfo(route.waypoints[i - 1], w, route.tasKt, vors);
+        const l = legInfo(route.waypoints[i - 1], w, route.tasKt, vors, wind);
         totalNm += l.distNm;
         totalMin += l.minutes;
-        leg = `<div class="wp-leg">MC ${String(Math.round(l.magCourse)).padStart(3, '0')}° · ${l.distNm.toFixed(1)} NM · ${formatMinutes(l.minutes)}</div>`;
+        const heading = wind ? ` · MH ${pad3(l.magHeading)}° · GS ${Math.round(l.groundspeed)} kt` : '';
+        leg = `<div class="wp-leg">MC ${pad3(l.magCourse)}°${heading} · ${l.distNm.toFixed(1)} NM · ${formatMinutes(l.minutes)}</div>`;
       }
       const title = w.kind === 'USR' ? `WPT${i + 1}` : w.ident;
       const sub = w.name && w.name !== w.ident ? ` <span class="wp-leg">${escapeHtml(w.name)}</span>` : '';
-      return `<div class="wp" data-i="${i}">
-        <div class="wp-main"><span class="wp-ident">${escapeHtml(title)}</span> <span class="wp-leg">${w.kind}</span>${sub}${leg}</div>
+      const state = route.waypoints.length >= 2 ? (i < active ? 'passed' : i === active ? 'active' : '') : '';
+      return `<div class="wp ${state}" data-i="${i}">
+        <div class="wp-main"><span class="wp-ident">${i === active && route.waypoints.length >= 2 ? '▶ ' : ''}${escapeHtml(title)}</span> <span class="wp-leg">${w.kind}</span>${sub}${leg}</div>
+        ${i > 0 ? '<button data-act="go" title="Fly to this waypoint next">▶</button>' : ''}
         <button data-act="up" title="Move up">↑</button>
         <button data-act="down" title="Move down">↓</button>
         <button data-act="del" title="Remove">✕</button>
       </div>`;
     })
     .join('');
-  document.getElementById('route-total').textContent =
-    route.waypoints.length >= 2 ? `Total ${totalNm.toFixed(1)} NM · ${formatMinutes(totalMin)} at ${route.tasKt} kt TAS (no wind)` : '';
+  document.getElementById('route-total').textContent = route.waypoints.length >= 2
+    ? `Total ${totalNm.toFixed(1)} NM · ${formatMinutes(totalMin)} at ${route.tasKt} kt TAS${wind ? ' with wind' : ' (no wind)'}`
+    : '';
 }
 
 function addWaypoint(w) {
@@ -602,7 +691,40 @@ function waypointAt(e) {
   return { kind: 'USR', ident: '', name: '', lat: e.lngLat.lat, lon: e.lngLat.lng };
 }
 
+// --- Measure tool: two clicks -> magnetic course and distance ---------------
+
+function renderMeasure() {
+  if (!map || !map.getSource('measure')) return;
+  const features = measurePoints.map((p) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { label: '+' } }));
+  if (measurePoints.length === 2) {
+    const [a, b] = measurePoints;
+    const self = lastData && lastData.selfPos;
+    const variation = self && self.magVar ? self.magVar : variationAt(a, vors);
+    const mc = (trueCourse(a, b) - variation + 360) % 360;
+    const dist = distanceNm(a, b);
+    const gs = self && self.groundspeedKt > 30 ? self.groundspeedKt : route.tasKt;
+    features.length = 0;
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[a.lon, a.lat], [b.lon, b.lat]] }, properties: {} });
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [(a.lon + b.lon) / 2, (a.lat + b.lat) / 2] },
+      properties: { label: `MC ${pad3(mc)}° · ${dist.toFixed(1)} NM · ${formatMinutes((dist / gs) * 60)} at ${Math.round(gs)} kt` },
+    });
+  }
+  map.getSource('measure').setData({ type: 'FeatureCollection', features });
+}
+
+function setMeasureMode(on) {
+  measureMode = on;
+  measurePoints = [];
+  document.getElementById('map-measure-btn').classList.toggle('active', on);
+  if (on && routeMode) setRouteMode(false);
+  if (map) map.getCanvas().style.cursor = on ? 'crosshair' : '';
+  renderMeasure();
+}
+
 function setRouteMode(on) {
+  if (on && measureMode) setMeasureMode(false);
   routeMode = on;
   document.getElementById('route-panel').classList.toggle('open', on);
   document.getElementById('map-route-btn').classList.toggle('active', on);
@@ -724,6 +846,7 @@ function createMap() {
   const prefs = layerPrefs();
   document.getElementById('layer-vfr').checked = prefs.vfr;
   document.getElementById('layer-airspace').checked = prefs.airspace;
+  document.getElementById('layer-tracks').checked = prefs.tracks;
   loadRoute();
   try {
     map = new maplibregl.Map({
@@ -749,6 +872,12 @@ function createMap() {
   map.on('dragstart', () => setFollow(false));
   map.on('moveend', refreshAirspaces);
   map.on('click', (e) => {
+    if (measureMode) {
+      if (measurePoints.length >= 2) measurePoints = [];
+      measurePoints.push({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+      renderMeasure();
+      return;
+    }
     if (routeMode) {
       addWaypoint(waypointAt(e));
       return;
@@ -758,7 +887,7 @@ function createMap() {
     if (hit) showAirportPopup(hit);
   });
   map.on('mousemove', (e) => {
-    if (routeMode || !map.getLayer('airports')) return;
+    if (routeMode || measureMode || !map.getLayer('airports')) return;
     const hit = map.queryRenderedFeatures([[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]], { layers: ['airports'] });
     map.getCanvas().style.cursor = hit.length ? 'pointer' : '';
   });
@@ -797,7 +926,7 @@ document.getElementById('map-style').addEventListener('change', (e) => {
 });
 document.getElementById('map-follow').addEventListener('change', (e) => setFollow(e.target.checked));
 document.getElementById('map-fit').addEventListener('click', fitAll);
-for (const [id, key] of [['layer-vfr', 'vfr'], ['layer-airspace', 'airspace']]) {
+for (const [id, key] of [['layer-vfr', 'vfr'], ['layer-airspace', 'airspace'], ['layer-tracks', 'tracks']]) {
   document.getElementById(id).addEventListener('change', (e) => {
     storageSet(kLayerStorageKey, JSON.stringify({ ...layerPrefs(), [key]: e.target.checked }));
     applyLayerVisibility();
@@ -805,6 +934,28 @@ for (const [id, key] of [['layer-vfr', 'vfr'], ['layer-airspace', 'airspace']]) 
   });
 }
 document.getElementById('map-route-btn').addEventListener('click', () => setRouteMode(!routeMode));
+document.getElementById('map-measure-btn').addEventListener('click', () => setMeasureMode(!measureMode));
+document.getElementById('tracks-clear').addEventListener('click', () => {
+  clearTracks();
+  if (map && map.getSource('tracks')) map.getSource('tracks').setData(tracksGeoJson());
+});
+document.getElementById('route-import').addEventListener('click', async () => {
+  try {
+    const imported = await ImportFms();
+    if (!imported) return; // dialog cancelled
+    route = { ...route, ...imported, tasKt: route.tasKt };
+    document.getElementById('route-name').value = route.name;
+    document.getElementById('route-cruise').value = route.cruiseFt;
+    renderRoute();
+    setRouteNote(`Imported ${route.waypoints.length} waypoints.`);
+    if (map && route.waypoints.length) {
+      const pts = route.waypoints.map((w) => [w.lon, w.lat]);
+      map.fitBounds(pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0])), { padding: 60, maxZoom: 11 });
+    }
+  } catch (e) {
+    setRouteNote(`Import failed: ${e}`);
+  }
+});
 for (const id of ['route-name', 'route-cruise', 'route-tas']) {
   document.getElementById(id).addEventListener('change', renderRoute);
 }
@@ -813,6 +964,7 @@ document.getElementById('route-list').addEventListener('click', (e) => {
   if (!btn) return;
   const i = Number(btn.closest('.wp').dataset.i);
   const w = route.waypoints;
+  if (btn.dataset.act === 'go') setActiveIndex(i, route);
   if (btn.dataset.act === 'del') w.splice(i, 1);
   if (btn.dataset.act === 'up' && i > 0) [w[i - 1], w[i]] = [w[i], w[i - 1]];
   if (btn.dataset.act === 'down' && i < w.length - 1) [w[i + 1], w[i]] = [w[i], w[i + 1]];

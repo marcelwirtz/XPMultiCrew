@@ -37,6 +37,7 @@ type MapPosition struct {
 	AltFt         float64 `json:"altFt"`
 	Heading       float64 `json:"heading"`
 	GroundspeedKt float64 `json:"groundspeedKt,omitempty"`
+	MagVar        float64 `json:"magVar,omitempty"` // own aircraft only: local variation, east positive
 }
 
 // LearnStatus mirrors control_listener.h's LEARN / LEARN_CHANGES lines -
@@ -103,6 +104,7 @@ type PluginClient struct {
 	tcasStatus             string // see control_listener.h's TCAS_STATUS
 	learn                  LearnStatus
 	sharedRoute            *SharedRoute
+	wind                   []WindLayer
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 }
@@ -242,6 +244,45 @@ func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
 	}
 	self := *c.selfPos
 	return &self, peers
+}
+
+// WindLayer is one of X-Plane's wind layers around the aircraft - see
+// control_listener.h's WIND line.
+type WindLayer struct {
+	AltFt   float64 `json:"altFt"`
+	FromDeg float64 `json:"fromDeg"` // true
+	SpeedKt float64 `json:"speedKt"`
+}
+
+// Wind returns the latest wind layers (empty before the plugin sent them).
+func (c *PluginClient) Wind() []WindLayer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]WindLayer{}, c.wind...)
+}
+
+func parseWind(value string) []WindLayer {
+	out := []WindLayer{}
+	for _, entry := range strings.Split(value, ";") {
+		f := strings.Split(entry, ":")
+		if len(f) != 3 {
+			continue
+		}
+		var v [3]float64
+		ok := true
+		for i := range f {
+			x, err := strconv.ParseFloat(f[i], 64)
+			if err != nil {
+				ok = false
+				break
+			}
+			v[i] = x
+		}
+		if ok {
+			out = append(out, WindLayer{AltFt: v[0], FromDeg: v[1], SpeedKt: v[2]})
+		}
+	}
+	return out
 }
 
 // SharedRoute returns the route shared in the Multiplayer session (nil if
@@ -398,6 +439,8 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.learn.Changes = parseLearnChanges(value)
 		case "ROUTE_SHARED":
 			c.sharedRoute = parseSharedRoute(value)
+		case "WIND":
+			c.wind = parseWind(value)
 		case "SELF_POS":
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":
@@ -510,14 +553,14 @@ func parseOptionalPct(value string) *int {
 	return &pct
 }
 
-// parseSelfPos decodes SELF_POS "<lat> <lon> <alt_ft> <heading> <gs_kt>",
-// nil if empty or malformed.
+// parseSelfPos decodes SELF_POS "<lat> <lon> <alt_ft> <heading> <gs_kt>
+// [<magvar>]" (magvar since v0.3.3), nil if empty or malformed.
 func parseSelfPos(value string) *MapPosition {
 	f := strings.Fields(value)
-	if len(f) != 5 {
+	if len(f) != 5 && len(f) != 6 {
 		return nil
 	}
-	var v [5]float64
+	var v [6]float64
 	for i := range f {
 		x, err := strconv.ParseFloat(f[i], 64)
 		if err != nil {
@@ -525,7 +568,7 @@ func parseSelfPos(value string) *MapPosition {
 		}
 		v[i] = x
 	}
-	return &MapPosition{Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3], GroundspeedKt: v[4]}
+	return &MapPosition{Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3], GroundspeedKt: v[4], MagVar: v[5]}
 }
 
 // parsePeerPos decodes PEER_POS "<id>:<lat>:<lon>:<alt_ft>:<heading>;...".

@@ -86,6 +86,10 @@ export function GetXPlanePath() {
   return window['go']['main']['App']['GetXPlanePath']();
 }
 
+export function ImportFms() {
+  return window['go']['main']['App']['ImportFms']();
+}
+
 export function InstallPlugin() {
   return window['go']['main']['App']['InstallPlugin']();
 }

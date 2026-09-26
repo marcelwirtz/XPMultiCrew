@@ -53,6 +53,7 @@
 #include "sync/time_sync.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <array>
 #include <chrono>
@@ -148,6 +149,12 @@ float g_ref_height_agl_m = -1.0f;
 // Protocol_version 2 extras - see AircraftStatePacket's field comments.
 XPLMDataRef g_taxi_light_ref = nullptr;
 XPLMDataRef g_groundspeed_ref = nullptr; // sim/flightmodel/position/groundspeed, m/s - map page only
+// X-Plane 12's wind layers around the aircraft (float[13] each) - for the
+// companion's route planner (wind correction at the planned altitude).
+XPLMDataRef g_mag_heading_ref = nullptr; // sim/flightmodel/position/mag_psi - for the local variation
+XPLMDataRef g_wind_alt_ref = nullptr;
+XPLMDataRef g_wind_speed_ref = nullptr;
+XPLMDataRef g_wind_dir_ref = nullptr;
 XPLMDataRef g_local_vx_ref = nullptr; // also written by Shared Cockpit's client, see ApplyMasterPoseToOwnAircraft
 XPLMDataRef g_local_vy_ref = nullptr;
 XPLMDataRef g_local_vz_ref = nullptr;
@@ -2122,9 +2129,15 @@ void MaybePushLinkQuality(double now) {
     char self_buf[160] = {};
     if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
         const double groundspeed_mps = g_groundspeed_ref ? XPLMGetDataf(g_groundspeed_ref) : 0.0;
-        std::snprintf(self_buf, sizeof(self_buf), "%.6f %.6f %.0f %.0f %.0f", XPLMGetDatad(g_latitude_ref),
-                      XPLMGetDatad(g_longitude_ref), XPLMGetDatad(g_elevation_ref) * kFeetPerMeter,
-                      g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0f, groundspeed_mps * 1.94384);
+        const float true_heading = g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0f;
+        // Local magnetic variation, east positive: true minus magnetic heading.
+        float mag_var = 0.0f;
+        if (g_mag_heading_ref) {
+            mag_var = std::remainder(true_heading - XPLMGetDataf(g_mag_heading_ref), 360.0f);
+        }
+        std::snprintf(self_buf, sizeof(self_buf), "%.6f %.6f %.0f %.0f %.0f %.1f", XPLMGetDatad(g_latitude_ref),
+                      XPLMGetDatad(g_longitude_ref), XPLMGetDatad(g_elevation_ref) * kFeetPerMeter, true_heading,
+                      groundspeed_mps * 1.94384, mag_var);
     }
     std::string peer_pos;
     g_formation_sync.ForEachRemoteAircraft(
@@ -2136,6 +2149,21 @@ void MaybePushLinkQuality(double now) {
             peer_pos += buf;
         });
     g_control_listener.SetPositions(self_buf, peer_pos);
+
+    if (g_wind_alt_ref && g_wind_speed_ref && g_wind_dir_ref) {
+        float alt[13] = {}, spd[13] = {}, dir[13] = {};
+        const int n = std::min({XPLMGetDatavf(g_wind_alt_ref, alt, 0, 13), XPLMGetDatavf(g_wind_speed_ref, spd, 0, 13),
+                                XPLMGetDatavf(g_wind_dir_ref, dir, 0, 13)});
+        std::string wind;
+        for (int i = 0; i < n; ++i) {
+            if (!std::isfinite(alt[i]) || !std::isfinite(spd[i]) || !std::isfinite(dir[i]) || spd[i] < 0) continue;
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "%s%.0f:%.0f:%.0f", wind.empty() ? "" : ";", alt[i] * kFeetPerMeter, dir[i],
+                          spd[i]);
+            wind += buf;
+        }
+        g_control_listener.SetWind(wind);
+    }
 }
 
 // Formation time & weather sync, 1 Hz - see g_formation_weather. Works out
@@ -2248,6 +2276,10 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_on_ground_ref = XPLMFindDataRef("sim/flightmodel/failures/onground_any");
     g_taxi_light_ref = XPLMFindDataRef("sim/cockpit/electrical/taxi_light_on");
     g_groundspeed_ref = XPLMFindDataRef("sim/flightmodel/position/groundspeed");
+    g_mag_heading_ref = XPLMFindDataRef("sim/flightmodel/position/mag_psi");
+    g_wind_alt_ref = XPLMFindDataRef("sim/weather/aircraft/wind_altitude_msl_m");
+    g_wind_speed_ref = XPLMFindDataRef("sim/weather/aircraft/wind_speed_kts");
+    g_wind_dir_ref = XPLMFindDataRef("sim/weather/aircraft/wind_direction_degt");
     g_p_ref = XPLMFindDataRef("sim/flightmodel/position/P");
     g_q_ref = XPLMFindDataRef("sim/flightmodel/position/Q");
     g_r_ref = XPLMFindDataRef("sim/flightmodel/position/R");
