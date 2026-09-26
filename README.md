@@ -34,6 +34,41 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.3
+
+- **Callsigns:** set yours on the Multiplayer page (empty = your aircraft's
+  tail number). Others see it as a label next to your aircraft, on X-Plane's
+  map and in their peer list. Labels/map icons can be switched off.
+- **Direct or relay:** the peer list shows per aircraft whether its data
+  arrives peer-to-peer (`direct`) or through the rendezvous server
+  (`relay`), plus packet loss; Shared Cockpit shows the same for the master
+  link. Direct P2P actually works now (it never did before, see Phase 2 below).
+- **Take the controls (Shared Cockpit):** "Co-pilot is flying · take
+  controls" swaps MASTER and CLIENT mid-flight without reconnecting. The
+  new pilot flying continues with the old master's speed and rotation
+  rates, so the aircraft doesn't stop in the air. While following, the
+  client's instruments now see real speed too.
+- **Profile editor:** the Profiles page edits which datarefs Shared Cockpit
+  syncs per aircraft type, checks each name against X-Plane's
+  `DataRefs.txt` (typos, read-only datarefs) and saves your own profile
+  next to X-Plane, which wins over the bundled one.
+- **More animations:** taxi light, thrust reversers, propeller/engine and
+  tire rotation, nose wheel steering, control surfaces (yoke/rudder), slats
+  and on-ground state are sent and applied to CSL models. Remote aircraft
+  also sit correctly on the ground with any CSL package (the sender reports
+  its gear height).
+- **Time & weather sync:** in Multiplayer, the session creator shares sim
+  time and weather with everyone who has the option on; in Shared Cockpit
+  the master's time now syncs along with the weather.
+
+v0.3 builds can't share a session with v0.2.x builds (the server refuses
+with "incompatible client version") - everyone needs to update. The
+companion's self-updater was broken in every earlier release (a broken
+checksum file, and on Linux the restart went nowhere); with the fixed v0.3
+release files, "Update & Restart" from v0.2.x should now install the
+update, but on Linux you'll have to start the app again yourself that one
+time.
+
 ## Repo layout
 
 - `plugin/` — the X-Plane plugin (C++17, XPLM SDK), builds on Windows and
@@ -241,10 +276,10 @@ couldn't have caught:
   finished loading a flight yet - added a `SIM_READY` status signal
   (`XPLM_MSG_PLANE_LOADED`) the companion app shows a banner for.
 
-**Direct P2P:** up to v0.2.2 hole punching could never succeed - direct
+**Direct P2P:** up to v0.2.x hole punching could never succeed - direct
 packets were sent from/to the sync engines' own fixed ports instead of the
 rendezvous socket whose address the server actually hands out, so
-everything silently went over the relay. Since v0.2.3 direct traffic runs
+everything silently went over the relay. Since v0.3.0 direct traffic runs
 over the rendezvous socket itself (tagged datagrams, only accepted from
 addresses the server announced, plus a 1s hole-punch keepalive for sides
 that don't send anything themselves). `Log.txt` prints

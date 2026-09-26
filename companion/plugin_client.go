@@ -23,8 +23,31 @@ const companionPort = 49031
 // correlate the two, so this is the best available stable identifier for
 // "which aircraft is this" across updates.
 type FormationPeer struct {
-	ID   uint32 `json:"id"`
-	ICAO string `json:"icao"`
+	ID       uint32 `json:"id"`
+	ICAO     string `json:"icao"`
+	Callsign string `json:"callsign"`
+}
+
+// PluginPrefs mirrors control_listener.h's PREFS line / SET_PREFS command.
+type PluginPrefs struct {
+	Callsign   string `json:"callsign"` // "" = aircraft tail number
+	ShowLabels bool   `json:"showLabels"`
+	EnvSync    bool   `json:"envSync"`
+}
+
+// encode renders the SET_PREFS/PREFS argument form.
+func (p PluginPrefs) encode() string {
+	cs := p.Callsign
+	if cs == "" {
+		cs = "-"
+	}
+	b := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return "0"
+	}
+	return cs + " " + b(p.ShowLabels) + " " + b(p.EnvSync)
 }
 
 // PluginClient sends commands to the X-Plane plugin's control listener and
@@ -45,6 +68,8 @@ type PluginClient struct {
 	simReady               bool
 	runningVersion         string
 	cslStatus              string // "" until the plugin has pushed one - see control_listener.h's CSL_STATUS
+	prefsEncoded           string // raw PREFS value, "" until pushed
+	ownIcao                string
 }
 
 // LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
@@ -53,10 +78,14 @@ type PluginClient struct {
 // (nil map / nil pointer) the same way, rather than defaulting to a
 // misleading 0.
 type LinkQuality struct {
-	FormationServerRttMs       *int64         `json:"formationServerRttMs,omitempty"`
-	FormationPeerLossPct       map[uint32]int `json:"formationPeerLossPct,omitempty"`
-	SharedCockpitServerRttMs   *int64         `json:"sharedCockpitServerRttMs,omitempty"`
-	SharedCockpitMasterLossPct *int           `json:"sharedCockpitMasterLossPct,omitempty"`
+	FormationServerRttMs *int64         `json:"formationServerRttMs,omitempty"`
+	FormationPeerLossPct map[uint32]int `json:"formationPeerLossPct,omitempty"`
+	// "direct" or "relay" per aircraft (sender_id) - see LINK_QUALITY's
+	// formation_peer_path. Missing for LAN peers and before the first packet.
+	FormationPeerPath          map[uint32]string `json:"formationPeerPath,omitempty"`
+	SharedCockpitServerRttMs   *int64            `json:"sharedCockpitServerRttMs,omitempty"`
+	SharedCockpitMasterLossPct *int              `json:"sharedCockpitMasterLossPct,omitempty"`
+	SharedCockpitPath          string            `json:"sharedCockpitPath,omitempty"` // "direct"/"relay", "" = unknown
 }
 
 func NewPluginClient() *PluginClient {
@@ -157,6 +186,23 @@ func (c *PluginClient) CslStatus() string {
 	return c.cslStatus
 }
 
+// PrefsEncoded returns the plugin's last-pushed PREFS value ("" before the
+// plugin has been seen) - compared against the wanted settings so they can
+// be re-sent after an X-Plane restart.
+func (c *PluginClient) PrefsEncoded() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.prefsEncoded
+}
+
+// OwnIcao returns the ICAO type of the aircraft currently loaded in
+// X-Plane, "" if unknown.
+func (c *PluginClient) OwnIcao() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ownIcao
+}
+
 // LinkQuality returns the last-pushed LINK_QUALITY reading (see
 // control_listener.h's wire-format comment) - a zero-value LinkQuality
 // (every field nil/empty) before the plugin has ever pushed one.
@@ -220,13 +266,17 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.runningVersion = value
 		case "CSL_STATUS":
 			c.cslStatus = value
+		case "PREFS":
+			c.prefsEncoded = value
+		case "OWN_ICAO":
+			c.ownIcao = value
 		}
 	}
 }
 
 // parseFormationPeers decodes control_listener.h's PEERS wire format:
-// "<sender_id>:<icao>;<sender_id>:<icao>;..." (empty string means no
-// peers). Malformed entries are skipped rather than failing the whole
+// "<sender_id>:<icao>:<callsign>;..." (empty string means no peers; the
+// callsign part is missing from pre-v0.3 plugins). Malformed entries are skipped rather than failing the whole
 // line - a forward-compatible plugin build sending something this
 // version doesn't expect shouldn't take down status parsing entirely.
 func parseFormationPeers(encoded string) []FormationPeer {
@@ -243,7 +293,8 @@ func parseFormationPeers(encoded string) []FormationPeer {
 		if err != nil {
 			continue
 		}
-		peers = append(peers, FormationPeer{ID: uint32(id), ICAO: icao})
+		icao, callsign, _ := strings.Cut(icao, ":")
+		peers = append(peers, FormationPeer{ID: uint32(id), ICAO: icao, Callsign: callsign})
 	}
 	return peers
 }
@@ -292,6 +343,12 @@ func parseLinkQuality(encoded string) LinkQuality {
 			lq.SharedCockpitMasterLossPct = parseOptionalPct(value)
 		case "formation_peer_loss_pct":
 			lq.FormationPeerLossPct = parsePeerLossPct(value)
+		case "formation_peer_path":
+			lq.FormationPeerPath = parsePeerPath(value)
+		case "sc_path":
+			if value == "direct" || value == "relay" {
+				lq.SharedCockpitPath = value
+			}
 		}
 	}
 	return lq
@@ -319,6 +376,30 @@ func parseOptionalPct(value string) *int {
 		return nil
 	}
 	return &pct
+}
+
+// parsePeerPath decodes formation_peer_path's "<sender_id>:<direct|relay>;..."
+// sub-field.
+func parsePeerPath(encoded string) map[uint32]string {
+	if encoded == "" {
+		return nil
+	}
+	out := map[uint32]string{}
+	for _, entry := range strings.Split(encoded, ";") {
+		idStr, path, found := strings.Cut(entry, ":")
+		if !found || (path != "direct" && path != "relay") {
+			continue
+		}
+		id, err := strconv.ParseUint(idStr, 10, 32)
+		if err != nil {
+			continue
+		}
+		out[uint32(id)] = path
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // parsePeerLossPct decodes the "formation_peer_loss_pct" sub-field's own

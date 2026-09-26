@@ -89,8 +89,16 @@ X-Plane instance on the same machine, not a remote one):
   START_SHARED_COCKPIT <MASTER|CLIENT> <rendezvous host:port> <code, empty for MASTER>
   DISCONNECT_FORMATION
   DISCONNECT_SHARED_COCKPIT
+  CLAIM_OWNERSHIP <engine|avionics|systems|flight>
+  RELOAD_CSL
+  SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
   GET_STATUS
   ```
+  The full, authoritative list is in `plugin/include/control/control_listener.h`.
+  `CLAIM_OWNERSHIP flight` is the Shared Cockpit "take controls" button
+  (whoever owns `flight` is MASTER). `SET_PREFS` carries the "You" panel's
+  settings; the plugin echoes them as `PREFS` and `app.go` re-sends them
+  whenever they differ (e.g. after X-Plane restarted).
   Shared Cockpit's peer discovery goes through the same rendezvous/relay
   server as Formation's Create/Join Session, not a manually-typed peer
   address - see the root `README.md`'s Phase 3 section for why (it's what
@@ -107,9 +115,14 @@ X-Plane instance on the same machine, not a remote one):
   FORMATION_CODE <code, empty if none yet>
   SHARED_COCKPIT <status text>
   SHARED_COCKPIT_CODE <code, empty if none yet - CLIENT never has one>
-  PEERS <sender_id>:<icao>;<sender_id>:<icao>;... (Formation only, empty if none)
+  PEERS <sender_id>:<icao>:<callsign>;... (Formation only, empty if none)
+  LINK_QUALITY ... formation_peer_path:<id>:<direct|relay>;... sc_path:<direct|relay|?>
   SIM_READY <0|1>
+  PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+  OWN_ICAO <current aircraft type>
   ```
+  (plus `SHARED_COCKPIT_OWNERSHIP`, `SHARED_COCKPIT_AIRCRAFT_MISMATCH`,
+  `PLUGIN_VERSION`, `CSL_STATUS` - see `control_listener.h`).
   Formation's status text includes a live peer count (e.g. `connected,
   code 'ABC', peer 1 - 2 peer(s) online`), updated on every join/leave -
   found via a live two-person test that without this, the person who
@@ -136,6 +149,17 @@ X-Plane instance on the same machine, not a remote one):
 `PluginClient` currently holds as a `"status"` event to the frontend
 (`frontend/src/main.js` listens via `EventsOn`) - no HTTP polling loop in
 the browser anymore.
+
+## Profiles page
+
+Edits Shared Cockpit dataref profiles (`profiles.go`): lists the profiles
+bundled with the installed plugin
+(`Resources/plugins/XPMultiCrew/Resources/shared_cockpit_profiles/`) and
+your own (`<X-Plane>/XPMultiCrew_shared_cockpit_profiles/`), and only ever
+writes your own - the plugin prefers it over the bundled one. Each dataref
+is checked against `<X-Plane>/Resources/plugins/DataRefs.txt` (unknown or
+read-only names get a warning; add-on datarefs that don't start with
+`sim/` can't be checked).
 
 ## System dependencies
 

@@ -14,6 +14,8 @@ export function CreateSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
 
+export function DeleteUserProfile(arg1:string):Promise<void>;
+
 export function DisconnectFormation():Promise<void>;
 
 export function DisconnectSharedCockpit():Promise<void>;
@@ -21,6 +23,8 @@ export function DisconnectSharedCockpit():Promise<void>;
 export function GetAvailablePluginVersion():Promise<string>;
 
 export function GetInstalledPluginVersion():Promise<string>;
+
+export function GetPrefs():Promise<main.PluginPrefs>;
 
 export function GetRecentLogLines(arg1:number):Promise<main.LogLinesResult>;
 
@@ -32,8 +36,16 @@ export function InstallPlugin():Promise<void>;
 
 export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function ListProfiles():Promise<Array<main.ProfileInfo>>;
+
+export function LoadProfile(arg1:string):Promise<main.ProfileData>;
+
 export function ReloadCsl():Promise<void>;
 
+export function SaveProfile(arg1:string,arg2:Array<main.ProfileEntry>):Promise<main.ProfileData>;
+
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
+
+export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean):Promise<main.PluginPrefs>;
 
 export function StartSharedCockpit(arg1:string,arg2:string,arg3:string):Promise<void>;

@@ -26,6 +26,10 @@ export function DeleteSavedServer(arg1) {
   return window['go']['main']['App']['DeleteSavedServer'](arg1);
 }
 
+export function DeleteUserProfile(arg1) {
+  return window['go']['main']['App']['DeleteUserProfile'](arg1);
+}
+
 export function DisconnectFormation() {
   return window['go']['main']['App']['DisconnectFormation']();
 }
@@ -40,6 +44,10 @@ export function GetAvailablePluginVersion() {
 
 export function GetInstalledPluginVersion() {
   return window['go']['main']['App']['GetInstalledPluginVersion']();
+}
+
+export function GetPrefs() {
+  return window['go']['main']['App']['GetPrefs']();
 }
 
 export function GetRecentLogLines(arg1) {
@@ -62,12 +70,28 @@ export function JoinSession(arg1, arg2, arg3) {
   return window['go']['main']['App']['JoinSession'](arg1, arg2, arg3);
 }
 
+export function ListProfiles() {
+  return window['go']['main']['App']['ListProfiles']();
+}
+
+export function LoadProfile(arg1) {
+  return window['go']['main']['App']['LoadProfile'](arg1);
+}
+
 export function ReloadCsl() {
   return window['go']['main']['App']['ReloadCsl']();
 }
 
+export function SaveProfile(arg1, arg2) {
+  return window['go']['main']['App']['SaveProfile'](arg1, arg2);
+}
+
 export function SaveServer(arg1, arg2) {
   return window['go']['main']['App']['SaveServer'](arg1, arg2);
+}
+
+export function SetPrefs(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3);
 }
 
 export function StartSharedCockpit(arg1, arg2, arg3) {

@@ -35,6 +35,7 @@ type statusEvent struct {
 	SimReady               bool              `json:"simReady"`
 	RunningVersion         string            `json:"runningVersion"`
 	CslStatus              string            `json:"cslStatus"`
+	OwnIcao                string            `json:"ownIcao"`
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -89,6 +90,7 @@ func (a *App) pollStatus() {
 		if a.plugin.SimReady() {
 			a.maybeAutoRejoin()
 		}
+		a.maybeSyncPrefs()
 
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
 			Formation:              formation,
@@ -102,8 +104,58 @@ func (a *App) pollStatus() {
 			SimReady:               a.plugin.SimReady(),
 			RunningVersion:         a.plugin.RunningVersion(),
 			CslStatus:              a.plugin.CslStatus(),
+			OwnIcao:                a.plugin.OwnIcao(),
 		})
 	}
+}
+
+// maybeSyncPrefs re-sends the saved settings whenever the plugin reports
+// different ones (it forgets them on an X-Plane restart, and starts with
+// its own defaults). Only once the plugin has been seen at all.
+func (a *App) maybeSyncPrefs() {
+	current := a.plugin.PrefsEncoded()
+	if current == "" {
+		return
+	}
+	wanted := loadConfig().pluginPrefs().encode()
+	if current != wanted {
+		_ = a.plugin.Send("SET_PREFS " + wanted)
+	}
+}
+
+// GetPrefs returns the saved callsign/label/time-&-weather settings.
+func (a *App) GetPrefs() PluginPrefs {
+	return loadConfig().pluginPrefs()
+}
+
+// SetPrefs saves the settings and pushes them to the plugin right away.
+// The callsign is upper-cased and cut to what the wire format carries
+// (8 characters of A-Z, 0-9 and '-').
+func (a *App) SetPrefs(callsign string, showLabels, envSync bool) (PluginPrefs, error) {
+	callsign = sanitizeCallsign(callsign)
+	cfg := loadConfig()
+	cfg.Callsign = callsign
+	cfg.ShowLabels = &showLabels
+	cfg.EnvSync = &envSync
+	if err := saveConfig(cfg); err != nil {
+		return PluginPrefs{}, err
+	}
+	prefs := cfg.pluginPrefs()
+	_ = a.plugin.Send("SET_PREFS " + prefs.encode())
+	return prefs, nil
+}
+
+func sanitizeCallsign(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(strings.TrimSpace(s)) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+			if b.Len() == 8 {
+				break
+			}
+		}
+	}
+	return b.String()
 }
 
 // isIdleStatus mirrors frontend/src/main.js's isIdle() - the plugin's
@@ -487,4 +539,44 @@ func (a *App) GetInstalledPluginVersion() string {
 		return ""
 	}
 	return InstalledPluginVersion(path)
+}
+
+// ListProfiles returns every Shared Cockpit profile found (yours and the
+// ones bundled with the installed plugin) - bound to the Profiles page.
+func (a *App) ListProfiles() ([]ProfileInfo, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return nil, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return listProfiles(root), nil
+}
+
+// LoadProfile opens a profile for editing: your override if there is one,
+// else the bundled default, else an empty new profile.
+func (a *App) LoadProfile(icao string) (ProfileData, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return ProfileData{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return loadProfile(root, icao)
+}
+
+// SaveProfile writes your override for this aircraft type. Takes effect
+// the next time Shared Cockpit is started.
+func (a *App) SaveProfile(icao string, entries []ProfileEntry) (ProfileData, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return ProfileData{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return saveProfile(root, icao, entries)
+}
+
+// DeleteUserProfile removes your override, falling back to the bundled
+// profile (if any).
+func (a *App) DeleteUserProfile(icao string) error {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return deleteUserProfile(root, icao)
 }

@@ -268,3 +268,38 @@ func sortedByID(peers []FormationPeer) []FormationPeer {
 	}
 	return out
 }
+
+func TestApplyStatusMessageV03Fields(t *testing.T) {
+	c := NewPluginClient()
+	c.applyStatusMessage("PEERS 12:C172:D-EABC;34:B738:;56:A320\n" +
+		"LINK_QUALITY formation_server_rtt_ms:40 formation_peer_path:12:direct;34:relay;56:bogus sc_path:relay\n" +
+		"PREFS D-EABC 1 0\nOWN_ICAO C172\n")
+	peers := c.FormationPeers()
+	if len(peers) != 3 || peers[0].Callsign != "D-EABC" || peers[1].Callsign != "" || peers[2].ICAO != "A320" {
+		t.Fatalf("unexpected peers: %+v", peers)
+	}
+	lq := c.LinkQuality()
+	if lq.FormationPeerPath[12] != "direct" || lq.FormationPeerPath[34] != "relay" || len(lq.FormationPeerPath) != 2 {
+		t.Fatalf("unexpected peer paths: %+v", lq.FormationPeerPath)
+	}
+	if lq.SharedCockpitPath != "relay" {
+		t.Fatalf("unexpected sc path: %q", lq.SharedCockpitPath)
+	}
+	if c.PrefsEncoded() != "D-EABC 1 0" || c.OwnIcao() != "C172" {
+		t.Fatalf("unexpected prefs/own icao: %q %q", c.PrefsEncoded(), c.OwnIcao())
+	}
+}
+
+func TestPluginPrefsDefaultsAndEncoding(t *testing.T) {
+	if got := (companionConfig{}).pluginPrefs().encode(); got != "- 1 1" {
+		t.Fatalf("defaults should be no callsign, labels on, env sync on - got %q", got)
+	}
+	off := false
+	cfg := companionConfig{Callsign: "N123", ShowLabels: &off}
+	if got := cfg.pluginPrefs().encode(); got != "N123 0 1" {
+		t.Fatalf("got %q", got)
+	}
+	if got := sanitizeCallsign(" d-eabc x;yz123 "); got != "D-EABCXY" {
+		t.Fatalf("sanitizeCallsign: got %q", got)
+	}
+}

@@ -6,18 +6,30 @@ import {
   CreateSession,
   DeleteSavedServer,
   DisconnectFormation,
+  DeleteUserProfile,
   DisconnectSharedCockpit,
   GetAvailablePluginVersion,
+  GetPrefs,
   GetInstalledPluginVersion,
   GetRecentLogLines,
   GetSavedServers,
   GetXPlanePath,
   InstallPlugin,
   JoinSession,
+  ListProfiles,
+  LoadProfile,
   ReloadCsl,
+  SaveProfile,
   SaveServer,
+  SetPrefs,
   StartSharedCockpit,
 } from '../wailsjs/go/main/App';
+
+// Everything peer-supplied (callsigns, ICAO types) goes through this before
+// landing in innerHTML.
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // Sidebar navigation - one .page shown at a time (see index.html's
@@ -319,6 +331,10 @@ document.getElementById('reload-csl-btn').addEventListener('click', async () => 
 // claim-and-tell model).
 document.querySelectorAll('.ownership-toggle button').forEach((btn) => {
   btn.addEventListener('click', async () => {
+    if (btn.dataset.category === 'flight' &&
+        !confirm('Take the controls? You become the pilot flying (MASTER) and your co-pilot follows your aircraft.')) {
+      return;
+    }
     try {
       await ClaimOwnership(btn.dataset.category);
     } catch (e) {
@@ -366,20 +382,37 @@ function renderOwnership(ownership) {
     const state = (ownership && ownership[btn.dataset.category]) || 'peer';
     const owned = state === 'me';
     btn.classList.toggle('owned', owned);
-    const label = btn.dataset.category.charAt(0).toUpperCase() + btn.dataset.category.slice(1);
-    btn.textContent = owned ? `${label} · you` : `${label} · peer`;
+    if (btn.dataset.category === 'flight') {
+      btn.textContent = owned ? 'You are flying' : 'Co-pilot is flying · take controls';
+    } else {
+      const label = btn.dataset.category.charAt(0).toUpperCase() + btn.dataset.category.slice(1);
+      btn.textContent = owned ? `${label} · you` : `${label} · peer`;
+    }
     btn.dataset.owned = owned ? '1' : ''; // nothing to click while already owned
   });
 }
 
-function renderPeerList(peers) {
+// One row per aircraft: callsign (or a fallback), type, and - for
+// rendezvous peers - whether its packets arrive directly (P2P) or via the
+// relay server, plus packet loss.
+function renderPeerList(peers, linkQuality) {
   const el = document.getElementById('peer-list');
   if (!peers || peers.length === 0) {
     el.innerHTML = '<div class="empty">no peers connected</div>';
     return;
   }
+  const paths = (linkQuality && linkQuality.formationPeerPath) || {};
+  const loss = (linkQuality && linkQuality.formationPeerLossPct) || {};
   const items = peers
-    .map((p) => `<li><span>Peer ${p.id}</span><span class="icao">${p.icao || 'unknown'}</span></li>`)
+    .map((p) => {
+      const name = p.callsign ? `<b>${escapeHtml(p.callsign)}</b>` : `Peer ${p.id}`;
+      const path = paths[p.id];
+      const pathBadge = path
+        ? `<span class="badge ${path === 'direct' ? 'direct' : ''}" title="${path === 'direct' ? 'Peer-to-peer' : 'Through the rendezvous server'}">${path}</span>`
+        : '';
+      const lossText = loss[p.id] != null ? `<span>${loss[p.id]}% loss</span>` : '';
+      return `<li><span class="peer-main">${name}</span><span class="peer-meta">${lossText}${pathBadge}<span class="icao">${escapeHtml(p.icao || 'unknown')}</span></span></li>`;
+    })
     .join('');
   el.innerHTML = `<ul>${items}</ul>`;
 }
@@ -399,11 +432,8 @@ function renderFormationLinkQuality(linkQuality, peers) {
   }
   el.style.display = '';
   const rttText = rttKnown ? `${linkQuality.formationServerRttMs} ms` : '? ms';
-  const peerLossText = (peers || [])
-    .filter((p) => lossByPeer[p.id] != null)
-    .map((p) => `<span class="peer-loss">Peer ${p.id}: ${lossByPeer[p.id]}% loss</span>`)
-    .join('');
-  el.innerHTML = `Server RTT: ${rttText}${peerLossText}`;
+  // Per-peer loss and direct/relay are shown in the peer list itself.
+  el.textContent = `Server RTT: ${rttText}`;
 }
 
 // Same idea as renderFormationLinkQuality, for the Shared Cockpit panel's
@@ -419,7 +449,9 @@ function renderSharedCockpitLinkQuality(linkQuality) {
   el.style.display = '';
   const rttText = rttKnown ? `${linkQuality.sharedCockpitServerRttMs} ms` : '? ms';
   const lossText = lossKnown ? `<span class="peer-loss">Master link: ${linkQuality.sharedCockpitMasterLossPct}% loss</span>` : '';
-  el.innerHTML = `Server RTT: ${rttText}${lossText}`;
+  const path = linkQuality && linkQuality.sharedCockpitPath;
+  const pathText = path ? `<span class="peer-loss badge ${path === 'direct' ? 'direct' : ''}">${path}</span>` : '';
+  el.innerHTML = `Server RTT: ${rttText}${lossText}${pathText}`;
 }
 
 // Renders control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH - a
@@ -473,7 +505,8 @@ EventsOn('status', (data) => {
   fillCodeFieldIfEmpty('code', data.formationCode);
   fillCodeFieldIfEmpty('sc-code', data.sharedCockpitCode);
 
-  renderPeerList(data.peers);
+  renderPeerList(data.peers, data.linkQuality);
+  renderCurrentAircraftButton(data.ownIcao);
   renderOwnership(data.sharedCockpitOwnership);
   renderFormationLinkQuality(data.linkQuality, data.peers);
   renderSharedCockpitLinkQuality(data.linkQuality);
@@ -567,3 +600,170 @@ document.getElementById('diagnostics-copy-btn').addEventListener('click', async 
     alert('Could not copy to clipboard: ' + e);
   }
 });
+
+// --- "You" panel: callsign, labels, time & weather sync (companion
+// settings pushed to the plugin, see app.go's SetPrefs) ---
+function applyPrefsToForm(prefs) {
+  document.getElementById('callsign').value = prefs.callsign || '';
+  document.getElementById('pref-labels').checked = prefs.showLabels;
+  document.getElementById('pref-env-sync').checked = prefs.envSync;
+}
+
+async function savePrefs() {
+  try {
+    const prefs = await SetPrefs(
+      document.getElementById('callsign').value,
+      document.getElementById('pref-labels').checked,
+      document.getElementById('pref-env-sync').checked,
+    );
+    applyPrefsToForm(prefs);
+  } catch (e) {
+    alert('Could not save settings: ' + e);
+  }
+}
+
+GetPrefs().then(applyPrefsToForm);
+document.getElementById('callsign-save-btn').addEventListener('click', savePrefs);
+document.getElementById('callsign').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') savePrefs();
+});
+document.getElementById('pref-labels').addEventListener('change', savePrefs);
+document.getElementById('pref-env-sync').addEventListener('change', savePrefs);
+
+// --- Profiles page: Shared Cockpit dataref profile editor (see
+// companion/profiles.go) ---
+const kCategories = ['systems', 'engine', 'avionics'];
+let currentProfile = null; // ProfileData from the Go side
+
+function setProfileStatus(text, kind) {
+  const el = document.getElementById('profile-status');
+  el.className = 'status ' + (kind || '');
+  document.getElementById('profile-status-text').textContent = text;
+}
+
+function describeSource(profile) {
+  switch (profile.source) {
+    case 'user':
+      return `Your profile for ${profile.icao} (overrides the bundled one, if any).`;
+    case 'bundled':
+      return `Bundled profile for ${profile.icao} - saving creates your own copy.`;
+    default:
+      return `No profile for ${profile.icao} yet - add datarefs and save.`;
+  }
+}
+
+function profileRowHtml(entry, index) {
+  const options = kCategories
+    .map((c) => `<option value="${c}" ${entry.category === c ? 'selected' : ''}>${c}</option>`)
+    .join('');
+  const warn = entry.warning ? escapeHtml(entry.warning) : '';
+  return `<tr data-index="${index}">
+    <td><input type="text" class="p-name ${warn ? 'has-warning' : ''}" value="${escapeHtml(entry.name)}" placeholder="sim/cockpit2/..." title="${warn}"></td>
+    <td><select class="p-category">${options}</select></td>
+    <td style="text-align: center;"><input type="checkbox" class="p-stream" ${entry.stream ? 'checked' : ''}></td>
+    <td><button class="row-delete" type="button" title="Remove">✕</button></td>
+  </tr>${warn ? `<tr><td colspan="4" class="warn">${warn}</td></tr>` : ''}`;
+}
+
+function readProfileRows() {
+  return Array.from(document.querySelectorAll('#profile-rows tr[data-index]')).map((tr) => ({
+    name: tr.querySelector('.p-name').value.trim(),
+    category: tr.querySelector('.p-category').value,
+    stream: tr.querySelector('.p-stream').checked,
+  }));
+}
+
+function renderProfile(profile) {
+  currentProfile = profile;
+  document.getElementById('profile-editor').style.display = '';
+  document.getElementById('profile-icao').value = profile.icao;
+  const rows = document.getElementById('profile-rows');
+  rows.innerHTML = profile.entries.map(profileRowHtml).join('');
+  rows.querySelectorAll('.row-delete').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const entries = readProfileRows();
+      entries.splice(Number(btn.closest('tr').dataset.index), 1);
+      renderProfile({ ...currentProfile, entries });
+    });
+  });
+  const warnings = profile.entries.filter((e) => e.warning).length;
+  let status = describeSource(profile) + ` ${profile.entries.length} dataref(s).`;
+  if (!profile.validated) status += ' (Could not read X-Plane\'s DataRefs.txt to check names.)';
+  else if (warnings) status += ` ${warnings} need a look.`;
+  setProfileStatus(status, warnings ? 'err' : profile.source === 'user' ? 'ok' : '');
+  document.getElementById('profile-revert-btn').disabled = profile.source !== 'user';
+}
+
+async function refreshProfileList(selectIcao) {
+  const select = document.getElementById('profile-select');
+  try {
+    const list = await ListProfiles();
+    select.innerHTML = '<option value="">Profiles…</option>' +
+      list
+        .map((p) => `<option value="${escapeHtml(p.icao)}">${escapeHtml(p.icao)}${p.hasUser ? ' (yours)' : ' (bundled)'}</option>`)
+        .join('');
+    if (selectIcao) select.value = selectIcao;
+  } catch (e) {
+    select.innerHTML = `<option value="">${escapeHtml(String(e))}</option>`;
+  }
+}
+
+async function openProfile(icao) {
+  if (!icao) return;
+  try {
+    renderProfile(await LoadProfile(icao));
+    document.getElementById('profile-select').value = currentProfile.icao;
+  } catch (e) {
+    alert(e);
+  }
+}
+
+// Offers a one-click "open the profile for the aircraft you're sitting in",
+// using the type the plugin reports (OWN_ICAO).
+let lastOwnIcao = '';
+function renderCurrentAircraftButton(ownIcao) {
+  if (ownIcao === lastOwnIcao) return;
+  lastOwnIcao = ownIcao || '';
+  const btn = document.getElementById('profile-current-btn');
+  btn.style.display = lastOwnIcao ? '' : 'none';
+  btn.textContent = `Current aircraft: ${lastOwnIcao}`;
+}
+
+document.getElementById('profile-current-btn').addEventListener('click', () => openProfile(lastOwnIcao));
+document.getElementById('profile-select').addEventListener('change', (e) => openProfile(e.target.value));
+document.getElementById('profile-open-btn').addEventListener('click', () =>
+  openProfile(document.getElementById('profile-icao').value));
+document.getElementById('profile-icao').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') openProfile(e.target.value);
+});
+document.getElementById('profile-add-btn').addEventListener('click', () => {
+  if (!currentProfile) return;
+  const entries = readProfileRows();
+  entries.push({ name: '', category: 'systems', stream: false });
+  renderProfile({ ...currentProfile, entries });
+  const inputs = document.querySelectorAll('#profile-rows .p-name');
+  inputs[inputs.length - 1].focus();
+});
+document.getElementById('profile-save-btn').addEventListener('click', async () => {
+  if (!currentProfile) return;
+  try {
+    const saved = await SaveProfile(currentProfile.icao, readProfileRows());
+    renderProfile(saved);
+    refreshProfileList(saved.icao);
+  } catch (e) {
+    alert('Could not save: ' + e);
+  }
+});
+document.getElementById('profile-revert-btn').addEventListener('click', async () => {
+  if (!currentProfile || currentProfile.source !== 'user') return;
+  if (!confirm(`Delete your ${currentProfile.icao} profile? The bundled one (if any) applies again.`)) return;
+  try {
+    await DeleteUserProfile(currentProfile.icao);
+    await refreshProfileList();
+    openProfile(currentProfile.icao);
+  } catch (e) {
+    alert(e);
+  }
+});
+document.querySelector('.sidebar button[data-page="profiles"]').addEventListener('click', () => refreshProfileList());
+if (initialPage === 'profiles') refreshProfileList();

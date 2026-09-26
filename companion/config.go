@@ -24,6 +24,26 @@ type companionConfig struct {
 	// own without any help from here). nil means "nothing to rejoin".
 	LastFormation     *PersistedSession `json:"lastFormation,omitempty"`
 	LastSharedCockpit *PersistedSession `json:"lastSharedCockpit,omitempty"`
+
+	// Settings pushed to the plugin via SET_PREFS (see app.go's
+	// pluginPrefs). Pointers so an absent key (config from an older
+	// version) means "default on" rather than false.
+	Callsign   string `json:"callsign,omitempty"`
+	ShowLabels *bool  `json:"showLabels,omitempty"`
+	EnvSync    *bool  `json:"envSync,omitempty"`
+}
+
+// pluginPrefs returns the settings to push to the plugin, with defaults
+// filled in.
+func (c companionConfig) pluginPrefs() PluginPrefs {
+	p := PluginPrefs{Callsign: c.Callsign, ShowLabels: true, EnvSync: true}
+	if c.ShowLabels != nil {
+		p.ShowLabels = *c.ShowLabels
+	}
+	if c.EnvSync != nil {
+		p.EnvSync = *c.EnvSync
+	}
+	return p
 }
 
 // PersistedSession is one remembered Formation/Shared Cockpit session -
