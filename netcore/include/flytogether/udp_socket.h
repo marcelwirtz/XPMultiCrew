@@ -49,10 +49,13 @@ public:
         return socket_ != kInvalidSocket;
     }
 
-    bool Bind(uint16_t port) {
+    // `loopbackOnly` binds to 127.0.0.1 instead of every interface - for
+    // sockets that must only ever be reachable from this machine (the
+    // companion-app control channel, see control/control_listener.h).
+    bool Bind(uint16_t port, bool loopbackOnly = false) {
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
         addr.sin_port = htons(port);
         return bind(socket_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
     }

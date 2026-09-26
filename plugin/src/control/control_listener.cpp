@@ -9,7 +9,9 @@ bool ControlListener::Start(const Callbacks& callbacks) {
     if (!socket_.Open()) {
         return false;
     }
-    if (!socket_.Bind(kControlUdpPort)) {
+    // Loopback only: these commands start/stop sessions and reload CSL, so
+    // nothing but the companion app on this same machine may send them.
+    if (!socket_.Bind(kControlUdpPort, /*loopbackOnly=*/true)) {
         return false;
     }
     socket_.SetNonBlocking(true);
