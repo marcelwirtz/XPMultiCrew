@@ -21,6 +21,7 @@ import {
   ReloadCsl,
   SaveProfile,
   SaveServer,
+  ScResync,
   SearchDatarefs,
   SetPrefs,
   StartLearn,
@@ -36,6 +37,7 @@ function escapeHtml(text) {
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { updateProgress } from './route-progress.js';
 import { recordTracks } from './tracks.js';
+import { showChecklists, updateChecklists } from './checklists.js';
 
 // The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
 let mapModule = null;
@@ -66,6 +68,7 @@ function showPage(page) {
   // MapLibre needs a visible container to size itself, so the map is only
   // created the first time its page is actually shown.
   if (page === 'map') openMapPage();
+  if (page === 'checklists') showChecklists();
   try {
     localStorage.setItem(kLastPageStorageKey, page);
   } catch (e) {
@@ -494,6 +497,25 @@ function renderAircraftMismatch(mismatch) {
   el.classList.add('visible');
 }
 
+// Shared Cockpit desync report (SC_DESYNC): datarefs whose value differs
+// between both cockpits for more than one check, or different profiles.
+function renderDesync(desync) {
+  const el = document.getElementById('sc-desync');
+  if (!desync || (!desync.profilesDiffer && desync.items.length === 0)) {
+    el.classList.remove('visible');
+    return;
+  }
+  const text = document.getElementById('sc-desync-text');
+  if (desync.profilesDiffer) {
+    text.textContent = 'The two cockpits use different profiles for this aircraft - make sure both have the same one (Profiles page).';
+    document.getElementById('sc-resync-btn').style.display = 'none';
+  } else {
+    text.textContent = `Out of sync with your co-pilot: ${desync.items.map((i) => `${i.name.split('/').pop()} (yours: ${i.value})`).join(', ')}`;
+    document.getElementById('sc-resync-btn').style.display = '';
+  }
+  el.classList.add('visible');
+}
+
 // Airspace warning banner (companion/navdata.go's airspaceAlert): shown on
 // every page while flying. Prohibited/restricted/danger areas in red, the
 // rest (CTR, C, D - "needs a clearance") in amber.
@@ -656,7 +678,9 @@ EventsOn('status', (data) => {
   document.getElementById('csl-status').textContent = data.cslStatus || '—';
   renderTcasStatus(data.tcasStatus);
   renderAirspaceBanner(data.airspaceAlert);
+  renderDesync(data.scDesync);
   recordTracks(data);
+  updateChecklists(data);
   renderRouteBanner(data.selfPos);
   lastSimReady = data.simReady;
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
@@ -728,6 +752,7 @@ function applyPrefsToForm(prefs) {
   document.getElementById('callsign').value = prefs.callsign || '';
   document.getElementById('pref-labels').checked = prefs.showLabels;
   document.getElementById('pref-env-sync').checked = prefs.envSync;
+  document.getElementById('pref-right-seat').checked = prefs.rightSeat;
 }
 
 async function savePrefs() {
@@ -736,6 +761,7 @@ async function savePrefs() {
       document.getElementById('callsign').value,
       document.getElementById('pref-labels').checked,
       document.getElementById('pref-env-sync').checked,
+      document.getElementById('pref-right-seat').checked,
     );
     applyPrefsToForm(prefs);
   } catch (e) {
@@ -750,6 +776,8 @@ document.getElementById('callsign').addEventListener('keydown', (e) => {
 });
 document.getElementById('pref-labels').addEventListener('change', savePrefs);
 document.getElementById('pref-env-sync').addEventListener('change', savePrefs);
+document.getElementById('pref-right-seat').addEventListener('change', savePrefs);
+document.getElementById('sc-resync-btn').addEventListener('click', () => ScResync().catch(alert));
 
 // --- Profiles page: Shared Cockpit dataref profile editor (see
 // companion/profiles.go) ---
@@ -781,16 +809,21 @@ function profileRowHtml(entry, index) {
     .map((c) => `<option value="${c}" ${entry.category === c ? 'selected' : ''}>${c}</option>`)
     .join('');
   const warn = entry.warning ? escapeHtml(entry.warning) : '';
+  const isCommand = entry.kind === 'command';
   return `<tr data-index="${index}">
-    <td><input type="text" class="p-name ${warn ? 'has-warning' : ''}" value="${escapeHtml(entry.name)}" placeholder="sim/cockpit2/..." title="${warn}"></td>
+    <td><select class="p-kind" title="Value: kept in sync. Button: pressing it presses it in the other cockpit too.">
+      <option value="dataref" ${isCommand ? '' : 'selected'}>Value</option>
+      <option value="command" ${isCommand ? 'selected' : ''}>Button</option></select></td>
+    <td><input type="text" class="p-name ${warn ? 'has-warning' : ''}" value="${escapeHtml(entry.name)}" placeholder="${isCommand ? 'sim/autopilot/...' : 'sim/cockpit2/...'}" title="${warn}"></td>
     <td><select class="p-category">${options}</select></td>
-    <td style="text-align: center;"><input type="checkbox" class="p-stream" ${entry.stream ? 'checked' : ''}></td>
+    <td style="text-align: center;"><input type="checkbox" class="p-stream" ${entry.stream && !isCommand ? 'checked' : ''} ${isCommand ? 'disabled' : ''}></td>
     <td><button class="row-delete" type="button" title="Remove">✕</button></td>
-  </tr>${warn ? `<tr><td colspan="4" class="warn">${warn}</td></tr>` : ''}`;
+  </tr>${warn ? `<tr><td colspan="5" class="warn">${warn}</td></tr>` : ''}`;
 }
 
 function readProfileRows() {
   return Array.from(document.querySelectorAll('#profile-rows tr[data-index]')).map((tr) => ({
+    kind: tr.querySelector('.p-kind').value,
     name: tr.querySelector('.p-name').value.trim(),
     category: tr.querySelector('.p-category').value,
     stream: tr.querySelector('.p-stream').checked,
@@ -922,7 +955,7 @@ document.getElementById('profile-icao').addEventListener('keydown', (e) => {
 document.getElementById('profile-add-btn').addEventListener('click', () => {
   if (!currentProfile) return;
   const entries = readProfileRows();
-  entries.push({ name: '', category: 'systems', stream: false });
+  entries.push({ kind: 'dataref', name: '', category: 'systems', stream: false });
   renderProfile({ ...currentProfile, entries });
   const inputs = document.querySelectorAll('#profile-rows .p-name');
   inputs[inputs.length - 1].focus();
@@ -973,6 +1006,12 @@ function pickSuggestion(item) {
   const row = suggestInput.closest('tr');
   const category = row && row.querySelector('.p-category');
   if (category && item.category) category.value = item.category;
+  const kind = row && row.querySelector('.p-kind');
+  if (kind && item.kind) {
+    kind.value = item.kind;
+    row.querySelector('.p-stream').disabled = item.kind === 'command';
+    if (item.kind === 'command') row.querySelector('.p-stream').checked = false;
+  }
   hideSuggestions();
 }
 
@@ -983,7 +1022,7 @@ function renderSuggestions() {
   }
   suggestBox.innerHTML = suggestItems
     .map((s, i) => `<div data-i="${i}" class="${i === suggestActive ? 'active' : ''}">
-      <span class="s-cat">${escapeHtml(s.category)}</span>
+      <span class="s-cat">${s.kind === 'command' ? 'button · ' : ''}${escapeHtml(s.category)}</span>
       <div class="s-name">${escapeHtml(s.name)}</div>
       ${s.description ? `<div class="s-desc">${escapeHtml(s.description)}${s.units ? ` (${escapeHtml(s.units)})` : ''}</div>` : ''}
     </div>`)
@@ -1019,6 +1058,14 @@ document.getElementById('profile-rows').addEventListener('input', (e) => {
     suggestActive = -1;
     renderSuggestions();
   }, 150);
+});
+
+// Switching a row between Value and Button: STREAM only applies to values.
+document.getElementById('profile-rows').addEventListener('change', (e) => {
+  if (!e.target.classList.contains('p-kind')) return;
+  const stream = e.target.closest('tr').querySelector('.p-stream');
+  stream.disabled = e.target.value === 'command';
+  if (stream.disabled) stream.checked = false;
 });
 
 document.getElementById('profile-rows').addEventListener('keydown', (e) => {
@@ -1089,7 +1136,7 @@ function renderLearn(learn) {
         <input type="checkbox" ${inProfile ? 'disabled' : learnUnchecked.has(c.name) ? '' : 'checked'}>
         <div class="l-main">
           <div class="l-name">${escapeHtml(c.name)}</div>
-          <div class="l-desc">${escapeHtml(c.before)} → ${escapeHtml(c.after)}${c.description ? ` · ${escapeHtml(c.description)}` : ''}${inProfile ? ' · already in the profile' : ''}</div>
+          <div class="l-desc">${c.kind === 'command' ? `button, pressed ${escapeHtml(c.after)}×` : `${escapeHtml(c.before)} → ${escapeHtml(c.after)}`}${c.description ? ` · ${escapeHtml(c.description)}` : ''}${inProfile ? ' · already in the profile' : ''}</div>
         </div>
         <select ${inProfile ? 'disabled' : ''}>${options}</select>
       </li>`;
@@ -1127,10 +1174,11 @@ document.getElementById('learn-add-btn').addEventListener('click', () => {
   if (!currentProfile || !lastLearn) return;
   const entries = readProfileRows().filter((r) => r.name);
   const known = new Set(entries.map((r) => r.name));
+  // (a dataref and a command never share a name, so the name alone is unique)
   let added = 0;
   for (const c of lastLearn.changes) {
     if (known.has(c.name) || learnUnchecked.has(c.name)) continue;
-    entries.push({ name: c.name, category: learnCategory.get(c.name) || c.category, stream: false });
+    entries.push({ kind: c.kind || 'dataref', name: c.name, category: learnCategory.get(c.name) || c.category, stream: false });
     known.add(c.name);
     added++;
   }

@@ -12,7 +12,7 @@
 # needs sim/operation/override/override_autopilot engaged first) - mirroring
 # those blindly wouldn't stick, since X-Plane's own autopilot logic would
 # just overwrite them back next frame. Autopilot *mode engagement* (HDG/NAV/
-# ALT button state) is therefore out of scope for now; the bugs/targets
+# ALT button state) is synced as COMMAND lines instead (end of file); the bugs/targets
 # below (heading/altitude/vspeed/airspeed dial) work fine since those are
 # plain pilot-set values, not autopilot-owned state.
 #
@@ -110,3 +110,29 @@ DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems
+
+# Autopilot (GFC 700) and G1000 buttons - COMMAND lines mirror the button
+# *press* to the other cockpit (see shared_cockpit/command_sync.h), which is
+# what makes autopilot modes work at all: they're X-Plane-owned state that
+# can't be written as a dataref (see the note at the top of this file).
+COMMAND sim/autopilot/servos_toggle CATEGORY avionics
+COMMAND sim/autopilot/fdir_toggle CATEGORY avionics
+COMMAND sim/autopilot/heading CATEGORY avionics
+COMMAND sim/autopilot/NAV CATEGORY avionics
+COMMAND sim/autopilot/approach CATEGORY avionics
+COMMAND sim/autopilot/back_course CATEGORY avionics
+COMMAND sim/autopilot/altitude_hold CATEGORY avionics
+COMMAND sim/autopilot/vertical_speed CATEGORY avionics
+COMMAND sim/autopilot/level_change CATEGORY avionics
+COMMAND sim/autopilot/nose_up CATEGORY avionics
+COMMAND sim/autopilot/nose_down CATEGORY avionics
+COMMAND sim/autopilot/heading_sync CATEGORY avionics
+COMMAND sim/transponder/transponder_ident CATEGORY avionics
+COMMAND sim/GPS/g1000n1_direct CATEGORY avionics
+COMMAND sim/GPS/g1000n1_fpl CATEGORY avionics
+COMMAND sim/GPS/g1000n1_proc CATEGORY avionics
+COMMAND sim/GPS/g1000n1_clr CATEGORY avionics
+COMMAND sim/GPS/g1000n1_ent CATEGORY avionics
+COMMAND sim/GPS/g1000n1_menu CATEGORY avionics
+COMMAND sim/GPS/g1000n3_direct CATEGORY avionics
+COMMAND sim/GPS/g1000n3_fpl CATEGORY avionics

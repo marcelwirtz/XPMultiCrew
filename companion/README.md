@@ -174,6 +174,16 @@ the airspace warning (`airspaceAlert`, computed on every status tick from
 
 Third-party licenses: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
+## Checklists page
+
+`checklists.go` + `frontend/src/checklists.js`: text files per aircraft
+type (`CHECKLIST <title>` / `ITEM <challenge> | <response> [| <dataref>[i]
+<op> <value>]`), bundled ones in the plugin's `Resources/checklists`, your
+own copy in `<X-Plane>/XPMultiCrew_checklists`. Auto-checked items read
+their datarefs through the plugin's `WATCH`/`WATCH_VALUES`; the open list
+and hand ticks are shared via `CHECKLIST_SYNC`/`CHECKLIST_REMOTE` (the
+plugin relays the text to the Shared Cockpit peer, newest change wins).
+
 ## Profiles page
 
 Edits Shared Cockpit dataref profiles (`profiles.go`): lists the profiles

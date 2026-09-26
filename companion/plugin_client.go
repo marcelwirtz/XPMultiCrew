@@ -52,6 +52,7 @@ type LearnStatus struct {
 // LearnChange is one dataref the user changed while learning. Description
 // and Category are filled in by app.go from DataRefs.txt.
 type LearnChange struct {
+	Kind        string `json:"kind"` // "dataref" or "command" (Before "CMD", After = press count)
 	Name        string `json:"name"`
 	Before      string `json:"before"`
 	After       string `json:"after"`
@@ -64,6 +65,7 @@ type PluginPrefs struct {
 	Callsign   string `json:"callsign"` // "" = aircraft tail number
 	ShowLabels bool   `json:"showLabels"`
 	EnvSync    bool   `json:"envSync"`
+	RightSeat  bool   `json:"rightSeat"` // Shared Cockpit: the co-pilot (joined as CLIENT) sits right
 }
 
 // encode renders the SET_PREFS/PREFS argument form.
@@ -78,7 +80,7 @@ func (p PluginPrefs) encode() string {
 		}
 		return "0"
 	}
-	return cs + " " + b(p.ShowLabels) + " " + b(p.EnvSync)
+	return cs + " " + b(p.ShowLabels) + " " + b(p.EnvSync) + " " + b(p.RightSeat)
 }
 
 // PluginClient sends commands to the X-Plane plugin's control listener and
@@ -105,6 +107,9 @@ type PluginClient struct {
 	learn                  LearnStatus
 	sharedRoute            *SharedRoute
 	wind                   []WindLayer
+	checklistRemote        string
+	watchValues            map[string]float64
+	scDesync               *ScDesync
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 }
@@ -246,6 +251,65 @@ func (c *PluginClient) Positions() (*MapPosition, []MapPosition) {
 	return &self, peers
 }
 
+// ScDesync mirrors control_listener.h's SC_DESYNC line: Shared Cockpit
+// datarefs whose value differs from the peer's.
+type ScDesync struct {
+	ProfilesDiffer bool          `json:"profilesDiffer"`
+	Items          []DesyncEntry `json:"items"`
+}
+
+// DesyncEntry is one out-of-sync dataref with this side's value.
+type DesyncEntry struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+func parseScDesync(value string) *ScDesync {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	flag, rest, _ := strings.Cut(value, " ")
+	d := &ScDesync{ProfilesDiffer: flag == "1", Items: []DesyncEntry{}}
+	for _, entry := range strings.Split(strings.TrimSpace(rest), ";") {
+		name, val, ok := strings.Cut(entry, "=")
+		if ok && name != "" {
+			d.Items = append(d.Items, DesyncEntry{Name: name, Value: val})
+		}
+	}
+	return d
+}
+
+func parseWatchValues(value string) map[string]float64 {
+	out := map[string]float64{}
+	for _, entry := range strings.Split(value, ";") {
+		key, val, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if v, err := strconv.ParseFloat(val, 64); err == nil {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+// ChecklistState returns the peer's shared checklist state, its latest
+// watched dataref values and the desync report (all zero values if none).
+func (c *PluginClient) ChecklistState() (remote string, values map[string]float64, desync *ScDesync) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	values = map[string]float64{}
+	for k, v := range c.watchValues {
+		values[k] = v
+	}
+	if c.scDesync != nil {
+		d := *c.scDesync
+		desync = &d
+	}
+	return c.checklistRemote, values, desync
+}
+
 // WindLayer is one of X-Plane's wind layers around the aircraft - see
 // control_listener.h's WIND line.
 type WindLayer struct {
@@ -338,7 +402,11 @@ func parseLearnChanges(value string) []LearnChange {
 		if len(f) != 3 || f[0] == "" {
 			continue
 		}
-		out = append(out, LearnChange{Name: f[0], Before: f[1], After: f[2]})
+		kind := "dataref"
+		if f[1] == "CMD" {
+			kind = "command"
+		}
+		out = append(out, LearnChange{Kind: kind, Name: f[0], Before: f[1], After: f[2]})
 	}
 	return out
 }
@@ -441,6 +509,12 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.sharedRoute = parseSharedRoute(value)
 		case "WIND":
 			c.wind = parseWind(value)
+		case "CHECKLIST_REMOTE":
+			c.checklistRemote = strings.TrimSpace(value)
+		case "WATCH_VALUES":
+			c.watchValues = parseWatchValues(value)
+		case "SC_DESYNC":
+			c.scDesync = parseScDesync(value)
 		case "SELF_POS":
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":

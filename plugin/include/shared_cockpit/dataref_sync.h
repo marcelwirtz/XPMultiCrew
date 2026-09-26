@@ -98,6 +98,19 @@ public:
 
     size_t watched_count() const { return watched_.size(); }
 
+    // Desync detection (plugin_main.cpp exchanges these with the peer every
+    // few seconds): a hash of every watched dataref's current value, in
+    // profile order, plus a hash of the profile's dataref names - equal
+    // name hashes mean both sides watch the same list, so the value hashes
+    // can be compared index by index.
+    std::vector<uint32_t> ValueHashes() const;
+    uint32_t ProfileHash() const;
+    const std::string& WatchedName(size_t index) const { return watched_[index].name; }
+    std::string DescribeCurrentValue(size_t index) const;
+    // Broadcasts the current value of every dataref in a category this side
+    // owns - the "bring the other side back in line" button.
+    void ResendOwned();
+
     // Local UI action ("I'm taking this category now") - see
     // OwnershipTracker::Claim. An immediate, unconditional claim: no
     // permission step, see ownership_tracker.h's class comment. Sent to

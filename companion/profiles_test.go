@@ -17,11 +17,11 @@ func TestParseProfileMirrorsPluginGrammar(t *testing.T) {
 		"ROLE MASTER\n\n"
 	got := parseProfile(text)
 	want := []ProfileEntry{
-		{Name: "sim/a", Category: "engine"},
-		{Name: "sim/b", Stream: true, Category: "avionics"},
-		{Name: "sim/c", Stream: true, Category: "avionics"},
-		{Name: "sim/d", Category: "systems"},
-		{Name: "sim/e", Category: "systems"}, // flight is the MASTER role, not a dataref bucket
+		{Kind: "dataref", Name: "sim/a", Category: "engine"},
+		{Kind: "dataref", Name: "sim/b", Stream: true, Category: "avionics"},
+		{Kind: "dataref", Name: "sim/c", Stream: true, Category: "avionics"},
+		{Kind: "dataref", Name: "sim/d", Category: "systems"},
+		{Kind: "dataref", Name: "sim/e", Category: "systems"}, // flight is the MASTER role, not a dataref bucket
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseProfile:\n got %+v\nwant %+v", got, want)

@@ -16,6 +16,8 @@ export function CreateSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
 
+export function DeleteUserChecklists(arg1:string):Promise<void>;
+
 export function DeleteUserProfile(arg1:string):Promise<void>;
 
 export function DisconnectFormation():Promise<void>;
@@ -52,17 +54,27 @@ export function JoinSession(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function ListProfiles():Promise<Array<main.ProfileInfo>>;
 
+export function LoadChecklists(arg1:string):Promise<main.ChecklistFile>;
+
 export function LoadProfile(arg1:string):Promise<main.ProfileData>;
 
 export function ReloadCsl():Promise<void>;
+
+export function SaveChecklists(arg1:string,arg2:string):Promise<main.ChecklistFile>;
 
 export function SaveProfile(arg1:string,arg2:Array<main.ProfileEntry>):Promise<main.ProfileData>;
 
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
 
+export function ScResync():Promise<void>;
+
 export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
 
-export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean):Promise<main.PluginPrefs>;
+export function SetChecklistWatch(arg1:Array<string>):Promise<void>;
+
+export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean):Promise<main.PluginPrefs>;
+
+export function ShareChecklistState(arg1:string):Promise<void>;
 
 export function ShareRoute(arg1:main.PlannedRoute):Promise<void>;
 

@@ -34,9 +34,12 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   RELOAD_CSL
-//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1>]
 //   LEARN_START / LEARN_STOP
 //   ROUTE_SHARE <payload> / ROUTE_CLEAR
+//   CHECKLIST_SYNC <payload>   - shared checklist state, relayed to the Shared Cockpit peer as-is
+//   SC_RESYNC                  - both sides re-send the values of the categories they own
+//   WATCH <name[idx]>;...      - datarefs whose values the companion wants (checklist auto-check)
 //   GET_STATUS
 // ROUTE_SHARE sends a planned route (the companion's own text encoding,
 // passed through untouched, no spaces, at most kMaxRoutePayload bytes) to
@@ -115,7 +118,10 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   LINK_QUALITY formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
 //                formation_peer_path:<id>:<direct|relay>;...
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
-//   PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+//   PREFS <callsign|-> <labels 0|1> <envsync 0|1> <rightseat 0|1>
+//   CHECKLIST_REMOTE <payload> (the peer's latest CHECKLIST_SYNC, empty if none)
+//   SC_DESYNC <profiles_differ 0|1> <name>=<our value>;... (datarefs that differ from the peer)
+//   WATCH_VALUES <name[idx]>=<value>;... (see WATCH)
 //   OWN_ICAO <this aircraft's ICAO type, empty if unknown>
 //   WIND <alt_ft>:<from_deg_true>:<kt>;... (X-Plane's wind layers at the aircraft)
 //   ROUTE_SHARED <sender_id> <payload> (empty if none; sender_id 0 = our own)
@@ -184,7 +190,10 @@ public:
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_claim_ownership;
         std::function<void()> on_reload_csl;
-        std::function<void(const std::string& callsign, bool labels, bool envSync)> on_set_prefs;
+        std::function<void(const std::string& callsign, bool labels, bool envSync, bool rightSeat)> on_set_prefs;
+        std::function<void(const std::string& payload)> on_checklist_sync;
+        std::function<void()> on_sc_resync;
+        std::function<void(const std::string& list)> on_watch;
         std::function<void(bool start)> on_learn;
         std::function<void(const std::string& payload)> on_route_share; // "" = clear
     };
@@ -232,6 +241,9 @@ public:
     void SetLearn(const std::string& state, const std::string& changes);
     void SetSharedRoute(const std::string& encoded);
     void SetWind(const std::string& encoded);
+    void SetChecklistRemote(const std::string& payload);
+    void SetScDesync(const std::string& encoded);
+    void SetWatchValues(const std::string& encoded);
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
@@ -260,6 +272,9 @@ private:
     std::string learn_changes_;
     std::string shared_route_;
     std::string wind_;
+    std::string checklist_remote_;
+    std::string sc_desync_;
+    std::string watch_values_;
     std::string self_pos_;
     std::string peer_pos_;
 };

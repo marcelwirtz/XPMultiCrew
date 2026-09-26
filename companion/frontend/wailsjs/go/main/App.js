@@ -30,6 +30,10 @@ export function DeleteSavedServer(arg1) {
   return window['go']['main']['App']['DeleteSavedServer'](arg1);
 }
 
+export function DeleteUserChecklists(arg1) {
+  return window['go']['main']['App']['DeleteUserChecklists'](arg1);
+}
+
 export function DeleteUserProfile(arg1) {
   return window['go']['main']['App']['DeleteUserProfile'](arg1);
 }
@@ -102,12 +106,20 @@ export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
 }
 
+export function LoadChecklists(arg1) {
+  return window['go']['main']['App']['LoadChecklists'](arg1);
+}
+
 export function LoadProfile(arg1) {
   return window['go']['main']['App']['LoadProfile'](arg1);
 }
 
 export function ReloadCsl() {
   return window['go']['main']['App']['ReloadCsl']();
+}
+
+export function SaveChecklists(arg1, arg2) {
+  return window['go']['main']['App']['SaveChecklists'](arg1, arg2);
 }
 
 export function SaveProfile(arg1, arg2) {
@@ -118,12 +130,24 @@ export function SaveServer(arg1, arg2) {
   return window['go']['main']['App']['SaveServer'](arg1, arg2);
 }
 
+export function ScResync() {
+  return window['go']['main']['App']['ScResync']();
+}
+
 export function SearchDatarefs(arg1) {
   return window['go']['main']['App']['SearchDatarefs'](arg1);
 }
 
-export function SetPrefs(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3);
+export function SetChecklistWatch(arg1) {
+  return window['go']['main']['App']['SetChecklistWatch'](arg1);
+}
+
+export function SetPrefs(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3, arg4);
+}
+
+export function ShareChecklistState(arg1) {
+  return window['go']['main']['App']['ShareChecklistState'](arg1);
 }
 
 export function ShareRoute(arg1) {

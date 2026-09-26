@@ -34,6 +34,29 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.3.4: Shared Cockpit
+
+- **Buttons, not just values:** profiles can now list X-Plane *commands*
+  (`COMMAND sim/autopilot/heading`). Pressing one in either cockpit presses
+  it in the other too - autopilot modes, G1000 softkeys and FMS keys,
+  transponder IDENT: everything that isn't a writable value. The bundled
+  C172 profile syncs the GFC 700 autopilot and the main G1000 keys. The
+  profile editor has a Value/Button column; "Learn from cockpit" and the
+  suggestions find buttons too. Only commands in your own profile are ever
+  executed on the co-pilot's behalf, and a held button is released after
+  10 s if the release never arrives.
+- **Shared checklists** (new Checklists page): per aircraft type, both
+  pilots see the same list; items tick themselves once the switch really
+  is in position (e.g. Beacon ON), the rest are ticked by hand and synced.
+  A C172 set is bundled; edit your own copy in the app.
+- **Right seat:** whoever joins as CLIENT gets their view moved to the
+  right seat (switchable).
+- **Desync check:** both sides compare their synced values every few
+  seconds; anything that drifted apart is listed on the Shared Cockpit page
+  with a "bring both cockpits back in line" button.
+- **"YOU HAVE CONTROL" / "CO-PILOT HAS CONTROL"** is shown in X-Plane after
+  a takeover.
+
 ## What's new in v0.3.3: VFR chart, airspace warnings, route planning
 
 All read at runtime from your own X-Plane (`Resources/default data`, the

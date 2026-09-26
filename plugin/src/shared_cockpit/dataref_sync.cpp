@@ -1,6 +1,7 @@
 #include "shared_cockpit/dataref_sync.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <optional>
 
 namespace flytogether {
@@ -210,6 +211,81 @@ void DatarefSync::SendToPeers(const std::vector<uint8_t>& encoded) {
     }
     if (relay_sender_) {
         relay_sender_(encoded.data(), encoded.size());
+    }
+}
+
+namespace {
+uint32_t Fnv1a(const void* data, size_t len, uint32_t h = 2166136261u) {
+    const auto* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < len; ++i) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+uint32_t HashValue(const DatarefValue& v) {
+    uint32_t h = Fnv1a(&v.type, sizeof(v.type));
+    switch (v.type) {
+        case DatarefValueType::kInt: return Fnv1a(&v.int_value, sizeof(v.int_value), h);
+        case DatarefValueType::kFloat: return Fnv1a(&v.float_value, sizeof(v.float_value), h);
+        case DatarefValueType::kDouble: return Fnv1a(&v.double_value, sizeof(v.double_value), h);
+        case DatarefValueType::kIntArray: return Fnv1a(v.int_array, sizeof(int) * static_cast<size_t>(v.array_len), h);
+        case DatarefValueType::kFloatArray:
+            return Fnv1a(v.float_array, sizeof(float) * static_cast<size_t>(v.array_len), h);
+    }
+    return h;
+}
+} // namespace
+
+std::vector<uint32_t> DatarefSync::ValueHashes() const {
+    std::vector<uint32_t> out;
+    out.reserve(watched_.size());
+    for (const auto& w : watched_) {
+        out.push_back(HashValue(ReadCurrentValue(w)));
+    }
+    return out;
+}
+
+uint32_t DatarefSync::ProfileHash() const {
+    uint32_t h = 2166136261u;
+    for (const auto& w : watched_) {
+        h = Fnv1a(w.name.data(), w.name.size(), h);
+        h = Fnv1a("\n", 1, h);
+    }
+    return h;
+}
+
+std::string DatarefSync::DescribeCurrentValue(size_t index) const {
+    const DatarefValue v = ReadCurrentValue(watched_[index]);
+    char buf[32];
+    switch (v.type) {
+        case DatarefValueType::kInt: std::snprintf(buf, sizeof(buf), "%d", v.int_value); break;
+        case DatarefValueType::kFloat: std::snprintf(buf, sizeof(buf), "%.6g", v.float_value); break;
+        case DatarefValueType::kDouble: std::snprintf(buf, sizeof(buf), "%.6g", v.double_value); break;
+        // Arrays: first element only - enough to recognise the mismatch.
+        case DatarefValueType::kIntArray:
+            std::snprintf(buf, sizeof(buf), "[0]=%d", v.array_len ? v.int_array[0] : 0);
+            break;
+        case DatarefValueType::kFloatArray:
+            std::snprintf(buf, sizeof(buf), "[0]=%.6g", v.array_len ? v.float_array[0] : 0.0f);
+            break;
+    }
+    return buf;
+}
+
+void DatarefSync::ResendOwned() {
+    for (auto& w : watched_) {
+        if (!ownership_.Owns(w.category)) {
+            continue;
+        }
+        const DatarefValue current = ReadCurrentValue(w);
+        w.last_known = current;
+        w.has_last_known = true;
+        const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
+        if (!encoded.empty()) {
+            SendToPeers(encoded);
+        }
     }
 }
 

@@ -24,25 +24,28 @@ type ChooseXPlaneResult struct {
 // frontend/src/main.js's runtime.EventsOn("status", ...)). Replaces the old
 // HTTP-server version's polling GET /api/status.
 type statusEvent struct {
-	Formation              string            `json:"formation"`
-	FormationCode          string            `json:"formationCode"`
-	SharedCockpit          string            `json:"sharedCockpit"`
-	SharedCockpitCode      string            `json:"sharedCockpitCode"`
-	SharedCockpitOwnership map[string]string `json:"sharedCockpitOwnership"`
-	Peers                  []FormationPeer   `json:"peers"`
-	LinkQuality            LinkQuality       `json:"linkQuality"`
-	SharedCockpitMismatch  string            `json:"sharedCockpitMismatch"`
-	SimReady               bool              `json:"simReady"`
-	RunningVersion         string            `json:"runningVersion"`
-	CslStatus              string            `json:"cslStatus"`
-	OwnIcao                string            `json:"ownIcao"`
-	TcasStatus             string            `json:"tcasStatus"`
-	Learn                  LearnStatus       `json:"learn"`
-	AirspaceAlert          *AirspaceAlert    `json:"airspaceAlert,omitempty"`
-	SharedRoute            *SharedRoute      `json:"sharedRoute,omitempty"`
-	Wind                   []WindLayer       `json:"wind"`
-	SelfPos                *MapPosition      `json:"selfPos"`
-	PeerPos                []MapPosition     `json:"peerPos"`
+	Formation              string             `json:"formation"`
+	FormationCode          string             `json:"formationCode"`
+	SharedCockpit          string             `json:"sharedCockpit"`
+	SharedCockpitCode      string             `json:"sharedCockpitCode"`
+	SharedCockpitOwnership map[string]string  `json:"sharedCockpitOwnership"`
+	Peers                  []FormationPeer    `json:"peers"`
+	LinkQuality            LinkQuality        `json:"linkQuality"`
+	SharedCockpitMismatch  string             `json:"sharedCockpitMismatch"`
+	SimReady               bool               `json:"simReady"`
+	RunningVersion         string             `json:"runningVersion"`
+	CslStatus              string             `json:"cslStatus"`
+	OwnIcao                string             `json:"ownIcao"`
+	TcasStatus             string             `json:"tcasStatus"`
+	Learn                  LearnStatus        `json:"learn"`
+	AirspaceAlert          *AirspaceAlert     `json:"airspaceAlert,omitempty"`
+	SharedRoute            *SharedRoute       `json:"sharedRoute,omitempty"`
+	Wind                   []WindLayer        `json:"wind"`
+	ChecklistRemote        string             `json:"checklistRemote"`
+	WatchValues            map[string]float64 `json:"watchValues"`
+	ScDesync               *ScDesync          `json:"scDesync,omitempty"`
+	SelfPos                *MapPosition       `json:"selfPos"`
+	PeerPos                []MapPosition      `json:"peerPos"`
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -100,6 +103,7 @@ func (a *App) pollStatus() {
 		a.maybeSyncPrefs()
 
 		selfPos, peerPos := a.plugin.Positions()
+		checklistRemote, watchValues, scDesync := a.plugin.ChecklistState()
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
 			Formation:              formation,
 			FormationCode:          formationCode,
@@ -118,6 +122,9 @@ func (a *App) pollStatus() {
 			AirspaceAlert:          a.airspaceAlertFor(selfPos),
 			SharedRoute:            a.plugin.SharedRoute(),
 			Wind:                   a.plugin.Wind(),
+			ChecklistRemote:        checklistRemote,
+			WatchValues:            watchValues,
+			ScDesync:               scDesync,
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 		})
@@ -146,12 +153,13 @@ func (a *App) GetPrefs() PluginPrefs {
 // SetPrefs saves the settings and pushes them to the plugin right away.
 // The callsign is upper-cased and cut to what the wire format carries
 // (8 characters of A-Z, 0-9 and '-').
-func (a *App) SetPrefs(callsign string, showLabels, envSync bool) (PluginPrefs, error) {
+func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat bool) (PluginPrefs, error) {
 	callsign = sanitizeCallsign(callsign)
 	cfg := loadConfig()
 	cfg.Callsign = callsign
 	cfg.ShowLabels = &showLabels
 	cfg.EnvSync = &envSync
+	cfg.RightSeat = &rightSeat
 	if err := saveConfig(cfg); err != nil {
 		return PluginPrefs{}, err
 	}
@@ -614,6 +622,9 @@ func (a *App) describedLearnStatus() LearnStatus {
 	root := loadConfig().XPlanePath
 	for i := range status.Changes {
 		info := describeDataref(root, status.Changes[i].Name)
+		if status.Changes[i].Kind == "command" {
+			info = describeCommand(root, status.Changes[i].Name)
+		}
 		status.Changes[i].Description = info.Description
 		status.Changes[i].Category = info.Category
 	}
@@ -779,4 +790,59 @@ func (a *App) ImportFms() (*PlannedRoute, error) {
 		return nil, err
 	}
 	return &route, nil
+}
+
+// --- Shared Cockpit: checklists, desync, resync (checklists.go) ---
+
+// LoadChecklists returns the checklists for an aircraft type (yours, else
+// the bundled ones).
+func (a *App) LoadChecklists(icao string) (ChecklistFile, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return ChecklistFile{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return loadChecklists(root, icao)
+}
+
+// SaveChecklists validates and writes your own checklist file.
+func (a *App) SaveChecklists(icao, text string) (ChecklistFile, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return ChecklistFile{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return saveChecklists(root, icao, text)
+}
+
+// DeleteUserChecklists removes your own copy (the bundled one applies again).
+func (a *App) DeleteUserChecklists(icao string) error {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return errors.New("choose your X-Plane folder first (Setup)")
+	}
+	return deleteUserChecklists(root, icao)
+}
+
+// SetChecklistWatch tells the plugin which dataref values the open
+// checklist needs (WATCH) - they come back as watchValues in the status.
+func (a *App) SetChecklistWatch(keys []string) error {
+	clean := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k != "" && !strings.ContainsAny(k, " ;\n") {
+			clean = append(clean, k)
+		}
+	}
+	return a.plugin.Send("WATCH " + strings.Join(clean, ";"))
+}
+
+// ShareChecklistState sends the shared checklist state to the co-pilot.
+func (a *App) ShareChecklistState(payload string) error {
+	if payload == "" || strings.ContainsAny(payload, " \n") || len(payload) > 2000 {
+		return errors.New("invalid checklist state")
+	}
+	return a.plugin.Send("CHECKLIST_SYNC " + payload)
+}
+
+// ScResync makes both sides re-send the values they own (SC_RESYNC).
+func (a *App) ScResync() error {
+	return a.plugin.Send("SC_RESYNC")
 }

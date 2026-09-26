@@ -25,8 +25,11 @@ var profileCategories = map[string]bool{"engine": true, "avionics": true, "syste
 
 var icaoPattern = regexp.MustCompile(`^[A-Z0-9]{2,8}$`)
 
-// ProfileEntry is one DATAREF line.
+// ProfileEntry is one DATAREF or COMMAND line.
 type ProfileEntry struct {
+	// "dataref" (a value kept in sync) or "command" (a button press
+	// mirrored to the other cockpit, see the plugin's command_sync.h).
+	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	Stream   bool   `json:"stream"`
 	Category string `json:"category"`
@@ -118,14 +121,17 @@ func parseProfile(text string) []ProfileEntry {
 			line = line[:i]
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "DATAREF" {
+		if len(fields) < 2 || (fields[0] != "DATAREF" && fields[0] != "COMMAND") {
 			continue
 		}
-		e := ProfileEntry{Name: fields[1], Category: "systems"}
+		e := ProfileEntry{Kind: "dataref", Name: fields[1], Category: "systems"}
+		if fields[0] == "COMMAND" {
+			e.Kind = "command"
+		}
 		for i := 2; i < len(fields); i++ {
 			switch fields[i] {
 			case "STREAM":
-				e.Stream = true
+				e.Stream = e.Kind == "dataref"
 			case "CATEGORY":
 				if i+1 < len(fields) {
 					i++
@@ -143,11 +149,16 @@ func parseProfile(text string) []ProfileEntry {
 func formatProfile(icao string, entries []ProfileEntry) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Shared Cockpit profile for %s - edited with the XPMultiCrew companion app.\n", icao)
-	b.WriteString("# Format: DATAREF <path> [STREAM] [CATEGORY engine|avionics|systems]\n\n")
+	b.WriteString("# Format: DATAREF <path> [STREAM] [CATEGORY engine|avionics|systems]\n")
+	b.WriteString("#         COMMAND <command> [CATEGORY engine|avionics|systems]\n\n")
 	for _, e := range entries {
-		b.WriteString("DATAREF ")
+		if e.Kind == "command" {
+			b.WriteString("COMMAND ")
+		} else {
+			b.WriteString("DATAREF ")
+		}
 		b.WriteString(e.Name)
-		if e.Stream {
+		if e.Stream && e.Kind != "command" {
 			b.WriteString(" STREAM")
 		}
 		b.WriteString(" CATEGORY ")
@@ -160,6 +171,7 @@ func formatProfile(icao string, entries []ProfileEntry) string {
 // DatarefInfo is one DataRefs.txt entry - also what SearchDatarefs returns
 // to the profile editor.
 type DatarefInfo struct {
+	Kind        string `json:"kind"` // "dataref" or "command"
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Writable    bool   `json:"writable"`
@@ -217,7 +229,7 @@ func loadFullDatarefIndex(xplaneRoot string) *datarefIndex {
 		if len(fields) < 3 || !strings.HasPrefix(fields[0], "sim/") {
 			continue
 		}
-		info := DatarefInfo{Name: fields[0], Type: strings.TrimSpace(fields[1]), Writable: strings.TrimSpace(fields[2]) == "y"}
+		info := DatarefInfo{Kind: "dataref", Name: fields[0], Type: strings.TrimSpace(fields[1]), Writable: strings.TrimSpace(fields[2]) == "y"}
 		if len(fields) > 3 {
 			info.Units = strings.TrimSpace(fields[3])
 		}
@@ -269,8 +281,14 @@ func searchDatarefs(xplaneRoot, query string, limit int) []DatarefInfo {
 		score int
 	}
 	hits := []hit{}
-	for _, info := range idx.all {
-		if !info.Writable || !isProfileCandidate(info.Name) {
+	candidates := idx.all
+	for _, c := range loadCommandIndex(xplaneRoot).all {
+		if isCommandCandidate(c.Name) {
+			candidates = append(candidates, c)
+		}
+	}
+	for _, info := range candidates {
+		if !info.Writable || (info.Kind == "dataref" && !isProfileCandidate(info.Name)) {
 			continue
 		}
 		name := strings.ToLower(info.Name)
@@ -312,6 +330,65 @@ func searchDatarefs(xplaneRoot, query string, limit int) []DatarefInfo {
 	return out
 }
 
+// commandIndex is X-Plane's Resources/plugins/Commands.txt ("<name>
+// <spaces> <description>"), cached like the dataref index.
+type commandIndex struct {
+	path    string
+	modTime time.Time
+	byName  map[string]string
+	all     []DatarefInfo
+}
+
+var (
+	commandCacheMu sync.Mutex
+	commandCache   *commandIndex
+)
+
+func loadCommandIndex(xplaneRoot string) *commandIndex {
+	empty := &commandIndex{byName: nil}
+	path := filepath.Join(xplaneRoot, "Resources", "plugins", "Commands.txt")
+	st, err := os.Stat(path)
+	if err != nil {
+		return empty
+	}
+	commandCacheMu.Lock()
+	defer commandCacheMu.Unlock()
+	if commandCache != nil && commandCache.path == path && commandCache.modTime.Equal(st.ModTime()) {
+		return commandCache
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return empty
+	}
+	defer f.Close()
+	idx := &commandIndex{path: path, modTime: st.ModTime(), byName: map[string]string{}}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) == 0 || !strings.HasPrefix(fields[0], "sim/") {
+			continue
+		}
+		desc := strings.Join(fields[1:], " ")
+		idx.byName[fields[0]] = desc
+		idx.all = append(idx.all, DatarefInfo{Kind: "command", Name: fields[0], Writable: true, Description: desc,
+			Category: suggestCategory(fields[0], desc)})
+	}
+	commandCache = idx
+	return idx
+}
+
+// isCommandCandidate: the command areas the plugin's learn mode skips too
+// (views, menus, replay, joystick axes...).
+func isCommandCandidate(name string) bool {
+	for _, prefix := range []string{"sim/none/", "sim/operation/", "sim/view/", "sim/general/", "sim/replay/",
+		"sim/map/", "sim/flight_controls/", "sim/multiplayer/", "sim/weapons/", "sim/joystick/", "sim/ground_ops/"} {
+		if strings.HasPrefix(name, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
 // isProfileCandidate filters out areas that are never a cockpit switch -
 // the same list the plugin's learn mode skips (plugin_main.cpp's
 // IsLearnable): physics, clocks, joystick hardware, multiplayer slots,
@@ -331,6 +408,11 @@ func isProfileCandidate(name string) bool {
 
 // describeDataref returns DataRefs.txt's entry for name, or a bare entry
 // with a suggested category for add-on datarefs that aren't listed there.
+func describeCommand(xplaneRoot, name string) DatarefInfo {
+	desc := loadCommandIndex(xplaneRoot).byName[name]
+	return DatarefInfo{Kind: "command", Name: name, Writable: true, Description: desc, Category: suggestCategory(name, desc)}
+}
+
 func describeDataref(xplaneRoot, name string) DatarefInfo {
 	if idx := loadFullDatarefIndex(xplaneRoot); idx != nil {
 		if info, ok := idx.byName[name]; ok {
@@ -340,12 +422,19 @@ func describeDataref(xplaneRoot, name string) DatarefInfo {
 	return DatarefInfo{Name: name, Writable: true, Category: suggestCategory(name, "")}
 }
 
-func annotate(entries []ProfileEntry, index map[string]bool) {
+func annotate(entries []ProfileEntry, index map[string]bool, commands map[string]string) {
 	if index == nil {
 		return
 	}
 	for i := range entries {
 		name := entries[i].Name
+		if entries[i].Kind == "command" {
+			entries[i].Warning = ""
+			if _, ok := commands[name]; strings.HasPrefix(name, "sim/") && commands != nil && !ok {
+				entries[i].Warning = "not in X-Plane's Commands.txt - typo?"
+			}
+			continue
+		}
 		if !strings.HasPrefix(name, "sim/") {
 			entries[i].Warning = "" // add-on dataref - can't be checked, only works if that add-on is loaded
 			continue
@@ -380,7 +469,7 @@ func loadProfile(xplaneRoot, icao string) (ProfileData, error) {
 	}
 	index := loadDatarefIndex(xplaneRoot)
 	data.Validated = index != nil
-	annotate(data.Entries, index)
+	annotate(data.Entries, index, loadCommandIndex(xplaneRoot).byName)
 	return data, nil
 }
 
@@ -399,10 +488,16 @@ func saveProfile(xplaneRoot, icao string, entries []ProfileEntry) (ProfileData, 
 		if strings.ContainsAny(e.Name, " \t#") {
 			return ProfileData{}, fmt.Errorf("dataref %q contains spaces or '#'", e.Name)
 		}
-		if seen[e.Name] {
+		if e.Kind != "command" {
+			e.Kind = "dataref"
+		}
+		if seen[e.Kind+" "+e.Name] {
 			continue
 		}
-		seen[e.Name] = true
+		seen[e.Kind+" "+e.Name] = true
+		if e.Kind == "command" {
+			e.Stream = false
+		}
 		if !profileCategories[e.Category] {
 			e.Category = "systems"
 		}

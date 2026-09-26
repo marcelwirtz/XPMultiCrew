@@ -81,6 +81,22 @@ void ValidateBundledProfileFile(const std::string& path, size_t expected_dataref
         std::istringstream tokens(line.substr(start));
         std::string keyword;
         tokens >> keyword;
+        if (keyword == "COMMAND") {
+            // Button presses (see CommandSyncSpec) - own name space, same
+            // no-empty/no-duplicate discipline, only CATEGORY allowed.
+            std::string command, command_token;
+            tokens >> command;
+            assert(!command.empty());
+            assert(seen_names.insert("COMMAND " + command).second && "duplicate COMMAND line");
+            while (tokens >> command_token) {
+                assert(command_token == "CATEGORY" && "only CATEGORY is valid after a COMMAND");
+                std::string category_name;
+                tokens >> category_name;
+                flytogether::DatarefCategory parsed;
+                assert(flytogether::ParseDatarefCategoryName(category_name, parsed));
+            }
+            continue;
+        }
         if (keyword != "DATAREF") {
             std::printf("  UNEXPECTED non-DATAREF, non-comment line in %s: '%s'\n", path.c_str(),
                         line.c_str());
@@ -224,6 +240,20 @@ int main() {
     assert(category_config.datarefs[3].category == DatarefCategory::kSystems); // unknown name -> default
     assert(category_config.datarefs[4].category == DatarefCategory::kSystems); // no modifiers -> default
     std::printf("CATEGORY token is parsed in either order, unknown names fall back: OK\n");
+
+    // COMMAND lines: parsed separately from DATAREF lines, CATEGORY optional.
+    WriteFile("commands_test.txt",
+              "DATAREF sim/cockpit/electrical/beacon_lights_on\n"
+              "COMMAND sim/autopilot/heading CATEGORY avionics\n"
+              "COMMAND sim/GPS/g1000n1_softkey1\n"
+              "COMMAND\n");
+    const SharedCockpitConfig command_config = LoadSharedCockpitConfig("commands_test.txt");
+    assert(command_config.datarefs.size() == 1);
+    assert(command_config.commands.size() == 2);
+    assert(command_config.commands[0].name == "sim/autopilot/heading");
+    assert(command_config.commands[0].category == DatarefCategory::kAvionics);
+    assert(command_config.commands[1].category == DatarefCategory::kSystems);
+    std::printf("COMMAND lines are parsed: OK\n");
 
     // 6. A plugin-bundled profile (3rd parameter) is used for an aircraft
     // with no user override, instead of falling all the way back to the

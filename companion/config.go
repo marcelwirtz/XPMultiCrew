@@ -31,12 +31,16 @@ type companionConfig struct {
 	Callsign   string `json:"callsign,omitempty"`
 	ShowLabels *bool  `json:"showLabels,omitempty"`
 	EnvSync    *bool  `json:"envSync,omitempty"`
+	RightSeat  *bool  `json:"rightSeat,omitempty"`
 }
 
 // pluginPrefs returns the settings to push to the plugin, with defaults
 // filled in.
 func (c companionConfig) pluginPrefs() PluginPrefs {
-	p := PluginPrefs{Callsign: c.Callsign, ShowLabels: true, EnvSync: true}
+	p := PluginPrefs{Callsign: c.Callsign, ShowLabels: true, EnvSync: true, RightSeat: true}
+	if c.RightSeat != nil {
+		p.RightSeat = *c.RightSeat
+	}
 	if c.ShowLabels != nil {
 		p.ShowLabels = *c.ShowLabels
 	}

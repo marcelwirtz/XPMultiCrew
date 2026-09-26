@@ -28,6 +28,7 @@
 
 #include "XPLMDataAccess.h"
 #include "XPLMDefs.h"
+#include "XPLMDisplay.h"
 #include "XPLMGraphics.h"
 #include "XPLMPlugin.h"
 #include "XPLMProcessing.h"
@@ -44,6 +45,7 @@
 #include "formation/rendezvous_client.h"
 #include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
 #include "net/session_crypto.h"
+#include "shared_cockpit/command_sync.h"
 #include "shared_cockpit/dataref_learner.h"
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
@@ -60,6 +62,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <random>
@@ -176,6 +179,7 @@ XPLMDataRef g_tailnum_ref = nullptr; // sim/aircraft/view/acf_tailnum - callsign
 std::string g_pref_callsign;     // "" = use the aircraft's tail number
 bool g_pref_labels = true;       // XPMP2 labels + map layer
 bool g_pref_env_sync = true;     // Formation: host shares / others follow time & weather
+bool g_pref_right_seat = true;   // Shared Cockpit: whoever joined as CLIENT sits in the right seat
 
 XPLMDataRef g_zulu_time_ref = nullptr;       // sim/time/zulu_time_sec, float
 XPLMDataRef g_local_date_ref = nullptr;      // sim/time/local_date_days, int
@@ -921,6 +925,65 @@ std::string FormatLearnValue(const std::vector<double>& value, const std::vector
     return "[]";
 }
 
+// Commands are learned too: X-Plane can't enumerate commands, so the
+// sim/ ones come from Resources/plugins/Commands.txt, each gets a
+// pass-through handler while learning, and presses after the hands-off
+// baseline are counted. Views, menus, replay, joystick axes and the like
+// are left out - they're never a cockpit button to share.
+struct LearnCommand {
+    XPLMCommandRef ref = nullptr;
+    std::string name;
+    int presses = 0;
+    size_t order = 0;
+};
+std::vector<std::unique_ptr<LearnCommand>> g_learn_commands;
+size_t g_learn_command_order = 0;
+bool g_learn_command_handlers = false;
+
+int LearnCommandHandler(XPLMCommandRef /*cmd*/, XPLMCommandPhase phase, void* refcon) {
+    auto* c = static_cast<LearnCommand*>(refcon);
+    if (phase == xplm_CommandBegin && g_learner.active() && !g_learner.InBaseline(XPLMGetElapsedTime())) {
+        if (c->presses++ == 0) c->order = ++g_learn_command_order;
+    }
+    return 1;
+}
+
+void UnregisterLearnCommands() {
+    if (!g_learn_command_handlers) return;
+    for (const auto& c : g_learn_commands) {
+        XPLMUnregisterCommandHandler(c->ref, LearnCommandHandler, 1, c.get());
+    }
+    g_learn_command_handlers = false;
+}
+
+void RegisterLearnCommands() {
+    UnregisterLearnCommands();
+    g_learn_commands.clear();
+    g_learn_command_order = 0;
+    char sys[1024] = {};
+    XPLMGetSystemPath(sys);
+    std::ifstream file(std::string(sys) + "Resources/plugins/Commands.txt");
+    static const char* const kSkip[] = {"sim/none/", "sim/operation/", "sim/view/", "sim/general/", "sim/replay/",
+                                        "sim/map/", "sim/flight_controls/", "sim/multiplayer/", "sim/weapons/",
+                                        "sim/joystick/", "sim/ground_ops/"};
+    std::string line;
+    while (std::getline(file, line)) {
+        const std::string name = line.substr(0, line.find_first_of(" \t\r"));
+        if (name.rfind("sim/", 0) != 0) continue;
+        bool skip = false;
+        for (const char* prefix : kSkip) skip = skip || name.rfind(prefix, 0) == 0;
+        if (skip) continue;
+        XPLMCommandRef ref = XPLMFindCommand(name.c_str());
+        if (!ref) continue;
+        auto c = std::make_unique<LearnCommand>();
+        c->ref = ref;
+        c->name = name;
+        XPLMRegisterCommandHandler(ref, LearnCommandHandler, 1, c.get());
+        g_learn_commands.push_back(std::move(c));
+    }
+    g_learn_command_handlers = true;
+}
+
 void PushLearnStatus(double now) {
     const char* state = !g_learner.active() ? "idle" : g_learner.InBaseline(now) ? "baseline" : "watching";
     std::string encoded;
@@ -930,6 +993,16 @@ void PushLearnStatus(double now) {
         if (!encoded.empty()) encoded += ";";
         encoded += g_learn_candidates[change.index].name + "|" + FormatLearnValue(change.before, change.after) +
                    "|" + FormatLearnValue(change.after, change.before);
+    }
+    std::vector<const LearnCommand*> pressed;
+    for (const auto& c : g_learn_commands) {
+        if (c->presses > 0) pressed.push_back(c.get());
+    }
+    std::sort(pressed.begin(), pressed.end(), [](const LearnCommand* a, const LearnCommand* b) { return a->order < b->order; });
+    for (const LearnCommand* c : pressed) {
+        if (++shown > 60) break;
+        if (!encoded.empty()) encoded += ";";
+        encoded += c->name + "|CMD|" + std::to_string(c->presses);
     }
     g_control_listener.SetLearn(std::string(state) + " " + std::to_string(g_learn_candidates.size()) + " " +
                                     std::to_string(g_learner.noisy_count()),
@@ -981,6 +1054,7 @@ void StartLearning() {
         }
         g_learn_candidates.push_back(LearnCandidate{ref, info.name, info.type});
     }
+    RegisterLearnCommands();
     const double now = XPLMGetElapsedTime();
     g_learner.Begin(g_learn_candidates.size(), now);
     g_learn_scan_pos = 0;
@@ -995,6 +1069,7 @@ void StartLearning() {
 
 void StopLearning() {
     g_learner.Stop();
+    UnregisterLearnCommands(); // results (press counts) stay until the next start
     XPLMUnregisterFlightLoopCallback(LearnScanCallback, nullptr);
     PushLearnStatus(XPLMGetElapsedTime());
 }
@@ -1044,10 +1119,12 @@ void ApplyLabelPrefs() {
 
 void PushPrefs() {
     g_control_listener.SetPrefs((g_pref_callsign.empty() ? std::string("-") : g_pref_callsign) + " " +
-                                (g_pref_labels ? "1" : "0") + " " + (g_pref_env_sync ? "1" : "0"));
+                                (g_pref_labels ? "1" : "0") + " " + (g_pref_env_sync ? "1" : "0") + " " +
+                                (g_pref_right_seat ? "1" : "0"));
 }
 
-void SetPrefs(const std::string& callsign, bool labels, bool env_sync) {
+void SetPrefs(const std::string& callsign, bool labels, bool env_sync, bool right_seat) {
+    g_pref_right_seat = right_seat;
     char sanitized[8] = {};
     std::memcpy(sanitized, callsign.data(), std::min(callsign.size(), sizeof(sanitized)));
     flytogether::SanitizeCallsign(sanitized);
@@ -1430,6 +1507,214 @@ flytogether::SharedCockpitRole g_shared_cockpit_reconnect_role = flytogether::Sh
 std::string g_shared_cockpit_reconnect_code; // updated on_session_ready, same reasoning as Formation's
 flytogether::SharedCockpitRole g_pending_shared_cockpit_role = flytogether::SharedCockpitRole::kNone;
 std::vector<flytogether::DatarefSyncSpec> g_pending_shared_cockpit_datarefs;
+std::vector<flytogether::CommandSyncSpec> g_pending_shared_cockpit_commands;
+flytogether::CommandSync g_command_sync;
+// Seat (see g_pref_right_seat): decided by the role this side JOINED with,
+// not the current one - pilots don't change seats when handing over control.
+bool g_sc_joined_as_client = false;
+
+// --- Shared Cockpit extras: checklists, desync check, right seat, control overlay ---
+
+// Seals `plain` with the Shared Cockpit key and sends it to the peer
+// (relay + direct via the rendezvous socket).
+void SendSharedCockpitMessage(const std::vector<uint8_t>& plain) {
+    if (!g_shared_cockpit_crypto) {
+        return;
+    }
+    const auto envelope = g_shared_cockpit_crypto->Seal(plain);
+    g_shared_cockpit_rendezvous.SendRelay(envelope.data(), envelope.size());
+}
+
+std::vector<uint8_t> WithMagic(uint32_t magic, const void* data, size_t len) {
+    std::vector<uint8_t> out(sizeof(magic) + len);
+    std::memcpy(out.data(), &magic, sizeof(magic));
+    if (len) std::memcpy(out.data() + sizeof(magic), data, len);
+    return out;
+}
+
+// Shared checklist (CHECKLIST_SYNC): the companion's state text travels as
+// is behind this magic; re-sent every kChecklistResendS so a peer who
+// (re)connects later catches up.
+constexpr uint32_t kChecklistMagic = 0x4654434b; // "FTCK"
+constexpr double kChecklistResendS = 15.0;
+std::string g_own_checklist;
+double g_checklist_next_send_s = 0.0;
+
+void ShareChecklistState(const std::string& payload) {
+    g_own_checklist = payload;
+    g_checklist_next_send_s = 0.0;
+    if (g_shared_cockpit_active) {
+        SendSharedCockpitMessage(WithMagic(kChecklistMagic, payload.data(), payload.size()));
+        g_checklist_next_send_s = XPLMGetElapsedTime() + kChecklistResendS;
+    }
+}
+
+// Desync check: every kDigestIntervalS each side sends a hash per watched
+// dataref (DatarefSync::ValueHashes) plus a hash of the dataref list. A
+// dataref only counts as out of sync after differing in two digests in a
+// row, so values caught mid-update don't flash up.
+constexpr uint32_t kDigestMagic = 0x46544447;  // "FTDG"
+constexpr uint32_t kResyncMagic = 0x46545253;  // "FTRS"
+constexpr double kDigestIntervalS = 5.0;
+double g_digest_next_send_s = 0.0;
+std::vector<uint8_t> g_desync_streak; // per watched dataref: consecutive differing digests
+
+void SendDigest() {
+    const std::vector<uint32_t> hashes = g_dataref_sync.ValueHashes();
+    std::vector<uint8_t> body(4 + 2 + hashes.size() * 4);
+    const uint32_t profile = g_dataref_sync.ProfileHash();
+    const uint16_t count = static_cast<uint16_t>(std::min<size_t>(hashes.size(), 1000));
+    std::memcpy(body.data(), &profile, 4);
+    std::memcpy(body.data() + 4, &count, 2);
+    std::memcpy(body.data() + 6, hashes.data(), count * 4);
+    body.resize(6 + count * 4);
+    SendSharedCockpitMessage(WithMagic(kDigestMagic, body.data(), body.size()));
+}
+
+void OnPeerDigest(const uint8_t* body, size_t len) {
+    if (len < 6) return;
+    uint32_t profile = 0;
+    uint16_t count = 0;
+    std::memcpy(&profile, body, 4);
+    std::memcpy(&count, body + 4, 2);
+    if (len < 6 + static_cast<size_t>(count) * 4) return;
+    if (profile != g_dataref_sync.ProfileHash() || count != g_dataref_sync.watched_count()) {
+        g_control_listener.SetScDesync("1");
+        return;
+    }
+    const std::vector<uint32_t> mine = g_dataref_sync.ValueHashes();
+    g_desync_streak.resize(mine.size(), 0);
+    std::string encoded;
+    int listed = 0;
+    for (size_t i = 0; i < mine.size(); ++i) {
+        uint32_t theirs = 0;
+        std::memcpy(&theirs, body + 6 + i * 4, 4);
+        g_desync_streak[i] = theirs == mine[i] ? 0 : static_cast<uint8_t>(std::min(g_desync_streak[i] + 1, 9));
+        if (g_desync_streak[i] >= 2 && listed < 30) {
+            encoded += (listed++ ? ";" : "") + g_dataref_sync.WatchedName(i) + "=" + g_dataref_sync.DescribeCurrentValue(i);
+        }
+    }
+    g_control_listener.SetScDesync("0 " + encoded);
+}
+
+void RequestSharedCockpitResync() {
+    if (!g_shared_cockpit_active) return;
+    g_dataref_sync.ResendOwned();
+    SendSharedCockpitMessage(WithMagic(kResyncMagic, nullptr, 0));
+    std::fill(g_desync_streak.begin(), g_desync_streak.end(), 0);
+    g_control_listener.SetScDesync("0 ");
+}
+
+// Right seat: X-Plane puts every pilot's head in the left seat. Whoever
+// joined as CLIENT gets it mirrored across the centre line (the aircraft's
+// default eye point, sim/aircraft/view/acf_peX, negated). Re-applied if
+// X-Plane resets the view to the default (e.g. a view-reset key), but a
+// head the user moved themselves is left alone.
+XPLMDataRef g_head_x_ref = nullptr;
+XPLMDataRef g_acf_eye_x_ref = nullptr;
+bool g_right_seat_applied = false;
+
+void UpdateRightSeat() {
+    if (!g_head_x_ref || !g_acf_eye_x_ref) return;
+    const float left_x = XPLMGetDataf(g_acf_eye_x_ref);
+    const float head_x = XPLMGetDataf(g_head_x_ref);
+    const bool want = g_shared_cockpit_active && g_sc_joined_as_client && g_pref_right_seat && std::fabs(left_x) > 0.05f;
+    if (want && std::fabs(head_x - left_x) < 0.02f) {
+        XPLMSetDataf(g_head_x_ref, -left_x);
+        if (!g_right_seat_applied) XPLMDebugString("XPMultiCrew: shared cockpit - moved your view to the right seat\n");
+        g_right_seat_applied = true;
+    } else if (!want && g_right_seat_applied) {
+        if (std::fabs(head_x + left_x) < 0.02f) XPLMSetDataf(g_head_x_ref, left_x);
+        g_right_seat_applied = false;
+    }
+}
+
+// "YOU HAVE CONTROL" / "CO-PILOT HAS CONTROL" on screen for a few seconds
+// after a role swap, so nobody has to look at the companion to know.
+std::string g_overlay_text;
+double g_overlay_until_s = 0.0;
+
+void ShowOverlay(const std::string& text, double seconds) {
+    g_overlay_text = text;
+    g_overlay_until_s = XPLMGetElapsedTime() + seconds;
+}
+
+int DrawOverlayCallback(XPLMDrawingPhase /*phase*/, int /*isBefore*/, void* /*refcon*/) {
+    if (g_overlay_text.empty() || XPLMGetElapsedTime() > g_overlay_until_s) {
+        return 1;
+    }
+    int width = 0, height = 0;
+    XPLMGetScreenSize(&width, &height);
+    const int text_w = static_cast<int>(XPLMMeasureString(xplmFont_Proportional, g_overlay_text.c_str(),
+                                                          static_cast<int>(g_overlay_text.size())));
+    const int x = (width - text_w) / 2;
+    const int y = height - 120;
+    XPLMDrawTranslucentDarkBox(x - 16, y + 22, x + text_w + 16, y - 12);
+    float color[3] = {0.96f, 0.82f, 0.26f};
+    XPLMDrawString(color, x, y, const_cast<char*>(g_overlay_text.c_str()), nullptr, xplmFont_Proportional);
+    return 1;
+}
+
+// Checklist auto-check support (WATCH / WATCH_VALUES): the companion names
+// the datarefs its current checklist items look at, the plugin reports
+// their values once a second. "name[3]" reads one array element.
+struct WatchedValue {
+    std::string key;
+    XPLMDataRef ref = nullptr;
+    int index = -1;
+};
+std::vector<WatchedValue> g_watch;
+
+void SetWatchList(const std::string& list) {
+    g_watch.clear();
+    size_t start = 0;
+    while (start < list.size() && g_watch.size() < 100) {
+        size_t end = list.find(';', start);
+        if (end == std::string::npos) end = list.size();
+        const std::string key = list.substr(start, end - start);
+        start = end + 1;
+        if (key.empty() || key.size() > 200) continue;
+        WatchedValue w;
+        w.key = key;
+        std::string name = key;
+        const auto bracket = key.find('[');
+        if (bracket != std::string::npos && key.back() == ']') {
+            name = key.substr(0, bracket);
+            w.index = std::atoi(key.c_str() + bracket + 1);
+        }
+        w.ref = XPLMFindDataRef(name.c_str());
+        g_watch.push_back(w);
+    }
+}
+
+void PushWatchValues() {
+    std::string encoded;
+    for (const auto& w : g_watch) {
+        char buf[48] = "?";
+        if (w.ref) {
+            const XPLMDataTypeID t = XPLMGetDataRefTypes(w.ref);
+            double v = 0.0;
+            if (w.index >= 0 && (t & xplmType_FloatArray)) {
+                float f = 0.0f;
+                XPLMGetDatavf(w.ref, &f, w.index, 1);
+                v = f;
+            } else if (w.index >= 0 && (t & xplmType_IntArray)) {
+                int n = 0;
+                XPLMGetDatavi(w.ref, &n, w.index, 1);
+                v = n;
+            } else if (t & xplmType_Int) {
+                v = XPLMGetDatai(w.ref);
+            } else if (t & xplmType_Float) {
+                v = XPLMGetDataf(w.ref);
+            } else if (t & xplmType_Double) {
+                v = XPLMGetDatad(w.ref);
+            }
+            std::snprintf(buf, sizeof(buf), "%.6g", v);
+        }
+        encoded += (encoded.empty() ? "" : ";") + w.key + "=" + buf;
+    }
+    g_control_listener.SetWatchValues(encoded);
+}
 
 // Client only: take over the user's own aircraft physics
 // (sim/operation/override/override_planepath[0]) so it can be positioned
@@ -1621,11 +1906,13 @@ void SyncSharedCockpitRoleWithFlightOwnership() {
             g_control_listener.SetSharedCockpitAircraftMismatch("");
         }
         XPLMDebugString("XPMultiCrew: shared cockpit - you have control (now MASTER)\n");
+        ShowOverlay("YOU HAVE CONTROL", 5.0);
     } else {
         // Physics gets overridden as soon as the new master's first packet
         // arrives (UpdateSharedCockpitCallback); until then this side just
         // keeps flying on its own flight model for those few milliseconds.
         XPLMDebugString("XPMultiCrew: shared cockpit - co-pilot took control (now CLIENT)\n");
+        ShowOverlay("CO-PILOT HAS CONTROL", 5.0);
     }
     g_shared_cockpit.SetRole(wanted);
     g_weather_sync.SetRole(wanted);
@@ -1640,6 +1927,7 @@ float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
                                int /*counter*/,
                                void* /*refcon*/) {
     g_dataref_sync.Poll();
+    g_command_sync.Poll(XPLMGetElapsedTime());
     SyncSharedCockpitRoleWithFlightOwnership();
     // Catches the peer claiming a category over the network, which (unlike
     // a local ClaimOwnership() call) has no other point in this plugin
@@ -1663,6 +1951,16 @@ float PollWeatherSyncCallback(float /*elapsedSinceLastCall*/,
     g_weather_sync.MaybeBroadcast(latitude, longitude, elevation_m, now); // no-op unless MASTER
     g_weather_sync.PollIncoming(latitude, longitude, elevation_m, now);   // no-op unless CLIENT
 
+    if (now >= g_digest_next_send_s) {
+        g_digest_next_send_s = now + kDigestIntervalS;
+        SendDigest();
+    }
+    if (!g_own_checklist.empty() && now >= g_checklist_next_send_s) {
+        g_checklist_next_send_s = now + kChecklistResendS;
+        SendSharedCockpitMessage(WithMagic(kChecklistMagic, g_own_checklist.data(), g_own_checklist.size()));
+    }
+    UpdateRightSeat();
+
     // Sim time rides along, master -> client, sealed like position/datarefs.
     if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kMaster && g_shared_cockpit_crypto &&
         now >= g_shared_cockpit_next_time_broadcast_s) {
@@ -1685,6 +1983,13 @@ void StopSharedCockpit() {
     if (!g_shared_cockpit_active) {
         return;
     }
+    g_command_sync.Stop();
+    g_shared_cockpit_active = false; // before UpdateRightSeat, so it restores the seat
+    UpdateRightSeat();
+    g_shared_cockpit_active = true;
+    g_control_listener.SetChecklistRemote("");
+    g_control_listener.SetScDesync("");
+    g_desync_streak.clear();
     XPLMUnregisterFlightLoopCallback(SendSharedCockpitStateCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(UpdateSharedCockpitCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(PollDatarefSyncCallback, nullptr);
@@ -1794,6 +2099,20 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
         g_has_pushed_ownership = false;
         PushSharedCockpitOwnershipIfChanged();
     }
+
+    g_command_sync.Start(
+        g_pending_shared_cockpit_commands, g_sender_id,
+        [](const std::vector<uint8_t>& plain) { SendSharedCockpitMessage(plain); },
+        // Pressing a button claims its category, same as touching a switch.
+        [](flytogether::DatarefCategory category) { g_dataref_sync.ClaimOwnership(category); });
+    {
+        char cmd_buf[128];
+        std::snprintf(cmd_buf, sizeof(cmd_buf), "XPMultiCrew: command sync mirroring %zu command(s)\n",
+                      g_command_sync.command_count());
+        XPLMDebugString(cmd_buf);
+    }
+    g_digest_next_send_s = XPLMGetElapsedTime() + kDigestIntervalS;
+    g_checklist_next_send_s = 0.0;
 
     if (!g_weather_sync.Start(role, peers)) {
         XPLMDebugString("XPMultiCrew: weather sync port busy - relay/P2P via the rendezvous socket only\n");
@@ -1934,6 +2253,25 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         if (plain.size() >= sizeof(magic)) {
             std::memcpy(&magic, plain.data(), sizeof(magic));
         }
+        if (magic == flytogether::kCommandSyncMagic) {
+            g_command_sync.Ingest(plain.data(), plain.size(), now);
+            return;
+        }
+        if (magic == kChecklistMagic) {
+            const std::string payload(plain.begin() + sizeof(magic), plain.end());
+            if (payload.size() <= flytogether::kMaxRoutePayload && payload.find_first_of(" \r\n") == std::string::npos) {
+                g_control_listener.SetChecklistRemote(payload);
+            }
+            return;
+        }
+        if (magic == kDigestMagic) {
+            OnPeerDigest(plain.data() + sizeof(magic), plain.size() - sizeof(magic));
+            return;
+        }
+        if (magic == kResyncMagic) {
+            g_dataref_sync.ResendOwned();
+            return;
+        }
         if (magic == flytogether::kTimeSyncMagic) {
             if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
                 if (const auto time = flytogether::DecodeTimeSyncPacket(plain.data(), plain.size())) {
@@ -1985,7 +2323,8 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
 // once on_peer_joined fires above with the discovered peer address.
 void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
                                    flytogether::SharedCockpitRole role, const std::string& code,
-                                   const std::vector<flytogether::DatarefSyncSpec>& datarefs) {
+                                   const std::vector<flytogether::DatarefSyncSpec>& datarefs,
+                                   const std::vector<flytogether::CommandSyncSpec>& commands) {
     SetupSharedCockpitRendezvousCallbacksOnce();
 
     g_shared_cockpit_reconnect.wanted = true;
@@ -2004,6 +2343,8 @@ void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
 
     g_pending_shared_cockpit_role = role;
     g_pending_shared_cockpit_datarefs = datarefs;
+    g_pending_shared_cockpit_commands = commands;
+    g_sc_joined_as_client = role == flytogether::SharedCockpitRole::kClient;
 
     if (!g_shared_cockpit_rendezvous.Start(host, port)) {
         XPLMDebugString("XPMultiCrew: failed to start shared cockpit rendezvous client (UDP socket?)\n");
@@ -2149,6 +2490,7 @@ void MaybePushLinkQuality(double now) {
             peer_pos += buf;
         });
     g_control_listener.SetPositions(self_buf, peer_pos);
+    PushWatchValues();
 
     if (g_wind_alt_ref && g_wind_speed_ref && g_wind_dir_ref) {
         float alt[13] = {}, spd[13] = {}, dir[13] = {};
@@ -2277,6 +2619,8 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_taxi_light_ref = XPLMFindDataRef("sim/cockpit/electrical/taxi_light_on");
     g_groundspeed_ref = XPLMFindDataRef("sim/flightmodel/position/groundspeed");
     g_mag_heading_ref = XPLMFindDataRef("sim/flightmodel/position/mag_psi");
+    g_head_x_ref = XPLMFindDataRef("sim/graphics/view/pilots_head_x");
+    g_acf_eye_x_ref = XPLMFindDataRef("sim/aircraft/view/acf_peX");
     g_wind_alt_ref = XPLMFindDataRef("sim/weather/aircraft/wind_altitude_msl_m");
     g_wind_speed_ref = XPLMFindDataRef("sim/weather/aircraft/wind_speed_kts");
     g_wind_dir_ref = XPLMFindDataRef("sim/weather/aircraft/wind_direction_degt");
@@ -2366,7 +2710,7 @@ PLUGIN_API int XPluginEnable() {
         const std::string icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
         const auto file_config = flytogether::LoadSharedCockpitConfig(flytogether::ResolveSharedCockpitConfigPath(
             "XPMultiCrew_shared_cockpit.txt", icao, GetPluginResourcesPath()));
-        StartSharedCockpitRendezvous(host, port, role, code, file_config.datarefs);
+        StartSharedCockpitRendezvous(host, port, role, code, file_config.datarefs, file_config.commands);
     };
     control_callbacks.on_lan_connect_formation = [](const std::string& host_port, const std::string& code) {
         LanConnectFormation(host_port, code);
@@ -2374,9 +2718,12 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
     control_callbacks.on_reload_csl = []() { ReloadCsl(); };
-    control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync) {
-        SetPrefs(callsign, labels, env_sync);
+    control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync, bool right_seat) {
+        SetPrefs(callsign, labels, env_sync, right_seat);
     };
+    control_callbacks.on_checklist_sync = [](const std::string& payload) { ShareChecklistState(payload); };
+    control_callbacks.on_sc_resync = []() { RequestSharedCockpitResync(); };
+    control_callbacks.on_watch = [](const std::string& list) { SetWatchList(list); };
     control_callbacks.on_route_share = [](const std::string& payload) {
         if (payload.empty()) {
             if (!g_own_route.empty()) SendRouteMessage("-");
@@ -2425,6 +2772,7 @@ PLUGIN_API int XPluginEnable() {
         g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
     });
     XPLMRegisterFlightLoopCallback(PollFormationEnvCallback, 1.0f, nullptr);
+    XPLMRegisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
 
     if (g_udp_socket.Open()) {
         XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
@@ -2474,10 +2822,12 @@ PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(PollControlListenerCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(LearnScanCallback, nullptr);
     g_learner.Stop();
+    UnregisterLearnCommands();
     g_control_listener.Stop();
 
     XPLMUnregisterFlightLoopCallback(LogPositionCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(PollFormationEnvCallback, nullptr);
+    XPLMUnregisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
     g_formation_weather.Stop();
     XPLMUnregisterFlightLoopCallback(SendPositionOverUdpCallback, nullptr);
     g_udp_socket.Close();

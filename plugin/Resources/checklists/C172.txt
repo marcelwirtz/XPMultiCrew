@@ -1,0 +1,66 @@
+# XPMultiCrew shared checklist for the X-Plane 12 Cessna 172 (G1000).
+# Simplified for simulator use - not the real aircraft's POH checklist.
+#
+#   CHECKLIST <title>
+#   ITEM <challenge> | <response> [| <dataref>[<index>] <op> <value>]
+#
+# Items with a condition tick themselves as soon as the switch really is in
+# that position (op: == != < <= > >=); the others are ticked by hand. Both
+# pilots see the same ticks. Your own copy of this file (companion app,
+# Checklists page) goes to <X-Plane>/XPMultiCrew_checklists/C172.txt.
+
+CHECKLIST Before Start
+ITEM Parking brake | SET | sim/flightmodel/controls/parkbrake >= 0.5
+ITEM Seats and belts | ADJUSTED, LOCKED
+ITEM Fuel selector | BOTH | sim/cockpit/engine/fuel_tank_selector == 4
+ITEM Avionics master | OFF | sim/cockpit2/switches/avionics_power_on == 0
+ITEM Mixture | RICH | sim/cockpit2/engine/actuators/mixture_ratio_all >= 0.95
+ITEM Carburetor heat | COLD | sim/cockpit2/engine/actuators/carb_heat_ratio <= 0.05
+ITEM Beacon | ON | sim/cockpit/electrical/beacon_lights_on == 1
+
+CHECKLIST Engine Start
+ITEM Battery master | ON | sim/cockpit2/electrical/battery_on[0] == 1
+ITEM Throttle | OPEN 1/4 INCH
+ITEM Propeller area | CLEAR
+ITEM Magnetos | START, then BOTH | sim/cockpit2/engine/actuators/ignition_key[0] == 3
+ITEM Oil pressure | CHECK
+ITEM Alternator | ON | sim/cockpit2/electrical/generator_on[0] == 1
+ITEM Avionics master | ON | sim/cockpit2/switches/avionics_power_on == 1
+ITEM Navigation lights | ON | sim/cockpit/electrical/nav_lights_on == 1
+
+CHECKLIST Before Takeoff
+ITEM Parking brake | SET | sim/flightmodel/controls/parkbrake >= 0.5
+ITEM Flight controls | FREE AND CORRECT
+ITEM Fuel selector | BOTH | sim/cockpit/engine/fuel_tank_selector == 4
+ITEM Mixture | RICH | sim/cockpit2/engine/actuators/mixture_ratio_all >= 0.95
+ITEM Run-up | COMPLETE
+ITEM Elevator trim | TAKEOFF
+ITEM Flaps | 0-10 DEGREES | sim/flightmodel/controls/flaprqst <= 0.35
+ITEM Transponder | ALT | sim/cockpit/radios/transponder_mode >= 2
+ITEM Landing light | ON | sim/cockpit/electrical/landing_lights_on == 1
+ITEM Strobes | ON | sim/cockpit/electrical/strobe_lights_on == 1
+ITEM Parking brake | RELEASE | sim/flightmodel/controls/parkbrake < 0.5
+
+CHECKLIST After Takeoff
+ITEM Flaps | UP | sim/flightmodel/controls/flaprqst == 0
+ITEM Climb power | SET
+
+CHECKLIST Before Landing
+ITEM Fuel selector | BOTH | sim/cockpit/engine/fuel_tank_selector == 4
+ITEM Mixture | RICH | sim/cockpit2/engine/actuators/mixture_ratio_all >= 0.95
+ITEM Landing light | ON | sim/cockpit/electrical/landing_lights_on == 1
+ITEM Autopilot | OFF
+
+CHECKLIST After Landing
+ITEM Flaps | UP | sim/flightmodel/controls/flaprqst == 0
+ITEM Transponder | STBY | sim/cockpit/radios/transponder_mode == 1
+ITEM Strobes | OFF | sim/cockpit/electrical/strobe_lights_on == 0
+ITEM Landing light | OFF | sim/cockpit/electrical/landing_lights_on == 0
+
+CHECKLIST Shutdown
+ITEM Parking brake | SET | sim/flightmodel/controls/parkbrake >= 0.5
+ITEM Avionics master | OFF | sim/cockpit2/switches/avionics_power_on == 0
+ITEM Mixture | IDLE CUTOFF | sim/cockpit2/engine/actuators/mixture_ratio_all <= 0.05
+ITEM Magnetos | OFF | sim/cockpit2/engine/actuators/ignition_key[0] == 0
+ITEM Battery master | OFF | sim/cockpit2/electrical/battery_on[0] == 0
+ITEM Beacon | OFF | sim/cockpit/electrical/beacon_lights_on == 0

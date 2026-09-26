@@ -439,6 +439,7 @@
   .profile-toolbar input[type=text] { width: 110px; flex: 0 0 auto; }
   .profile-toolbar button { flex: 0 0 auto; padding: 7px 10px; }
   .profile-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; table-layout: fixed; }
+  .profile-table col.c-kind { width: 84px; }
   .profile-table col.c-category { width: 104px; }
   .profile-table col.c-stream { width: 56px; }
   .profile-table col.c-delete { width: 36px; }
@@ -484,6 +485,23 @@
     background: #101317; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; padding: 4px;
   }
   .learn-list li.known { opacity: 0.5; }
+  .cl-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  .cl-tabs button { flex: none; padding: 6px 10px; font-size: 12px; background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .cl-tabs button.active { background: var(--accent); color: #05070a; border-color: var(--accent); }
+  .cl-tabs .cl-count { opacity: 0.75; margin-left: 4px; }
+  .cl-list { list-style: none; margin: 0; padding: 0; }
+  .cl-item { display: flex; align-items: baseline; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .cl-item:hover { background: rgba(255, 255, 255, 0.04); }
+  .cl-item .cl-icon { width: 16px; text-align: center; color: var(--muted); }
+  .cl-item .cl-dots { flex: 1; border-bottom: 1px dotted var(--border); transform: translateY(-4px); }
+  .cl-item .cl-response { font-weight: 600; }
+  .cl-item.done .cl-icon, .cl-item.auto .cl-icon { color: var(--ok); }
+  .cl-item.done .cl-challenge, .cl-item.auto .cl-challenge, .cl-item.done .cl-response, .cl-item.auto .cl-response { color: var(--muted); }
+  .cl-item.open-auto .cl-icon { color: #f0b429; }
+  #checklist-text {
+    width: 100%; min-height: 300px; margin-top: 12px; background: #101317; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; user-select: text;
+  }
   .map-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
   .map-toolbar select {
     background: #101317;
@@ -587,6 +605,7 @@
       <button type="button" data-page="formation"><span class="nav-dot" id="nav-dot-formation"></span>Multiplayer</button>
       <button type="button" data-page="shared-cockpit"><span class="nav-dot" id="nav-dot-shared-cockpit"></span>Shared Cockpit</button>
       <button type="button" data-page="map"><span class="nav-dot"></span>Map</button>
+      <button type="button" data-page="checklists"><span class="nav-dot"></span>Checklists</button>
       <button type="button" data-page="profiles"><span class="nav-dot"></span>Profiles</button>
       <button type="button" data-page="setup"><span class="nav-dot"></span>Setup</button>
       <button type="button" data-page="diagnostics"><span class="nav-dot"></span>Diagnostics</button>
@@ -667,6 +686,31 @@
         </div>
       </div>
 
+      <div class="page" id="page-checklists">
+        <div class="panel">
+          <h2>Checklists</h2>
+          <div class="profile-toolbar">
+            <input type="text" id="checklist-icao" placeholder="ICAO" maxlength="8">
+            <button id="checklist-load" class="secondary" type="button">Open</button>
+            <button id="checklist-current" class="secondary" type="button" style="display: none;"></button>
+            <button id="checklist-edit-btn" class="secondary" type="button" disabled>Edit</button>
+          </div>
+          <div class="hint" id="checklist-source"></div>
+          <div class="mismatch-warning visible" id="checklist-error" style="display: block; border: none; background: none; padding: 0;"></div>
+          <div id="checklist-body"></div>
+          <div id="checklist-editor" style="display: none;">
+            <textarea id="checklist-text" spellcheck="false"></textarea>
+            <div class="hint">CHECKLIST &lt;title&gt; · ITEM &lt;challenge&gt; | &lt;response&gt; [| &lt;dataref&gt;[index] &lt;== != &lt; &lt;= &gt; &gt;=&gt; &lt;value&gt;]
+              - items with a condition tick themselves. Tip: find dataref names on the Profiles page.</div>
+            <div class="row buttons">
+              <button id="checklist-save" type="button">Save my checklists</button>
+              <button id="checklist-delete" class="secondary" type="button">Delete my version</button>
+              <button id="checklist-cancel" class="secondary" type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="page" id="page-profiles">
         <div class="panel">
           <h2>Shared Cockpit profiles</h2>
@@ -691,8 +735,8 @@
           <div id="profile-editor" style="display: none;">
             <div class="status" id="profile-status"><span class="dot"></span><span id="profile-status-text"></span></div>
             <table class="profile-table">
-              <colgroup><col><col class="c-category"><col class="c-stream"><col class="c-delete"></colgroup>
-              <thead><tr><th>Dataref</th><th>Category</th><th title="Send every tick instead of only on change (spring-loaded switches like the starter)">Stream</th><th></th></tr></thead>
+              <colgroup><col class="c-kind"><col><col class="c-category"><col class="c-stream"><col class="c-delete"></colgroup>
+              <thead><tr><th title="Value: kept in sync. Button: pressed in both cockpits.">Type</th><th>Dataref / command</th><th>Category</th><th title="Send every tick instead of only on change (spring-loaded switches like the starter)">Stream</th><th></th></tr></thead>
               <tbody id="profile-rows"></tbody>
             </table>
             <div class="hint">Type part of a name or what it does (e.g. "beacon", "mixture") for suggestions -
@@ -856,7 +900,19 @@
               <button id="own-systems" data-category="systems" disabled>Systems</button>
             </div>
 
+            <label class="checkbox-row">
+              <input type="checkbox" id="pref-right-seat">
+              <span>The co-pilot (whoever joins as CLIENT) sits in the right seat</span>
+            </label>
+
             <div class="status" id="sc-status"><span class="dot"></span><span id="sc-status-text">loading…</span></div>
+
+            <!-- Datarefs whose value differs between both cockpits (plugin's
+                 digest exchange, see SC_DESYNC) - hidden while in sync. -->
+            <div class="mismatch-warning" id="sc-desync">
+              <div id="sc-desync-text"></div>
+              <button id="sc-resync-btn" class="secondary" type="button" style="margin-top: 6px; padding: 4px 10px; font-size: 12px;">Bring both cockpits back in line</button>
+            </div>
 
             <!-- See control_listener.h's SHARED_COCKPIT_AIRCRAFT_MISMATCH -
                  the client-side check for "I'm not flying the same aircraft

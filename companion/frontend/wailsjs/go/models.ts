@@ -146,6 +146,126 @@ export namespace main {
 	        this.poly = source["poly"];
 	    }
 	}
+	export class ChecklistCondition {
+	    key: string;
+	    op: string;
+	    value: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChecklistCondition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.op = source["op"];
+	        this.value = source["value"];
+	    }
+	}
+	export class ChecklistItem {
+	    challenge: string;
+	    response: string;
+	    condition?: ChecklistCondition;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChecklistItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.challenge = source["challenge"];
+	        this.response = source["response"];
+	        this.condition = this.convertValues(source["condition"], ChecklistCondition);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Checklist {
+	    title: string;
+	    items: ChecklistItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Checklist(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.items = this.convertValues(source["items"], ChecklistItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ChecklistFile {
+	    icao: string;
+	    source: string;
+	    text: string;
+	    lists: Checklist[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ChecklistFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.icao = source["icao"];
+	        this.source = source["source"];
+	        this.text = source["text"];
+	        this.lists = this.convertValues(source["lists"], Checklist);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class ChooseXPlaneResult {
 	    path: string;
 	    warning?: string;
@@ -161,6 +281,7 @@ export namespace main {
 	    }
 	}
 	export class DatarefInfo {
+	    kind: string;
 	    name: string;
 	    type: string;
 	    writable: boolean;
@@ -174,6 +295,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
 	        this.name = source["name"];
 	        this.type = source["type"];
 	        this.writable = source["writable"];
@@ -288,6 +410,7 @@ export namespace main {
 	    callsign: string;
 	    showLabels: boolean;
 	    envSync: boolean;
+	    rightSeat: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginPrefs(source);
@@ -298,9 +421,11 @@ export namespace main {
 	        this.callsign = source["callsign"];
 	        this.showLabels = source["showLabels"];
 	        this.envSync = source["envSync"];
+	        this.rightSeat = source["rightSeat"];
 	    }
 	}
 	export class ProfileEntry {
+	    kind: string;
 	    name: string;
 	    stream: boolean;
 	    category: string;
@@ -312,6 +437,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
 	        this.name = source["name"];
 	        this.stream = source["stream"];
 	        this.category = source["category"];

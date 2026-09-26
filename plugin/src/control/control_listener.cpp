@@ -85,11 +85,23 @@ void ControlListener::HandleLine(const std::string& line) {
     } else if (cmd == "RELOAD_CSL") {
         if (callbacks_.on_reload_csl) callbacks_.on_reload_csl();
     } else if (cmd == "SET_PREFS") {
-        std::string callsign, labels, env_sync;
-        ls >> callsign >> labels >> env_sync;
+        std::string callsign, labels, env_sync, right_seat;
+        ls >> callsign >> labels >> env_sync >> right_seat;
         if (callbacks_.on_set_prefs && !callsign.empty()) {
-            callbacks_.on_set_prefs(callsign == "-" ? "" : callsign, labels != "0", env_sync != "0");
+            callbacks_.on_set_prefs(callsign == "-" ? "" : callsign, labels != "0", env_sync != "0", right_seat == "1");
         }
+    } else if (cmd == "CHECKLIST_SYNC") {
+        std::string payload;
+        ls >> payload;
+        if (callbacks_.on_checklist_sync && !payload.empty() && payload.size() <= kMaxRoutePayload) {
+            callbacks_.on_checklist_sync(payload);
+        }
+    } else if (cmd == "SC_RESYNC") {
+        if (callbacks_.on_sc_resync) callbacks_.on_sc_resync();
+    } else if (cmd == "WATCH") {
+        std::string list;
+        ls >> list;
+        if (callbacks_.on_watch) callbacks_.on_watch(list);
     } else if (cmd == "ROUTE_SHARE") {
         std::string payload;
         ls >> payload;
@@ -115,7 +127,8 @@ void ControlListener::SendStatus() {
                              "\nCSL_STATUS " + csl_status_ + "\nPREFS " + prefs_ + "\nOWN_ICAO " + own_icao_ +
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
                              "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ +
-                             "\nROUTE_SHARED " + shared_route_ + "\nWIND " + wind_ + "\n";
+                             "\nROUTE_SHARED " + shared_route_ + "\nWIND " + wind_ + "\nCHECKLIST_REMOTE " +
+                             checklist_remote_ + "\nSC_DESYNC " + sc_desync_ + "\nWATCH_VALUES " + watch_values_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -200,6 +213,24 @@ void ControlListener::SetOwnIcao(const std::string& icao) {
 void ControlListener::SetTcasStatus(const std::string& status) {
     if (status == tcas_status_) return;
     tcas_status_ = status;
+    SendStatus();
+}
+
+void ControlListener::SetChecklistRemote(const std::string& payload) {
+    if (payload == checklist_remote_) return;
+    checklist_remote_ = payload;
+    SendStatus();
+}
+
+void ControlListener::SetScDesync(const std::string& encoded) {
+    if (encoded == sc_desync_) return;
+    sc_desync_ = encoded;
+    SendStatus();
+}
+
+void ControlListener::SetWatchValues(const std::string& encoded) {
+    if (encoded == watch_values_) return;
+    watch_values_ = encoded;
     SendStatus();
 }
 

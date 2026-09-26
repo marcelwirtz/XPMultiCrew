@@ -78,7 +78,7 @@ int main() {
     int prefs_calls = 0;
     std::string prefs_callsign;
     bool prefs_labels = false, prefs_env_sync = false;
-    callbacks.on_set_prefs = [&](const std::string& callsign, bool labels, bool env_sync) {
+    callbacks.on_set_prefs = [&](const std::string& callsign, bool labels, bool env_sync, bool /*right_seat*/) {
         ++prefs_calls;
         prefs_callsign = callsign;
         prefs_labels = labels;

@@ -75,8 +75,19 @@ struct DatarefSyncSpec {
 //     keeps today's defaults (CHANGE / systems), so every profile file
 //     written before these were added still parses unchanged. See
 //     DatarefSyncSpec::stream/::category above for what each one does.
+// One X-Plane command to mirror between both cockpits (COMMAND line) - for
+// everything that's a button press rather than a value: autopilot modes,
+// G1000 softkeys, FMS keys, transponder IDENT. See shared_cockpit/command_sync.h.
+struct CommandSyncSpec {
+    std::string name;
+    DatarefCategory category = DatarefCategory::kSystems;
+};
+
+//   COMMAND <command/path> [CATEGORY <engine|avionics|systems>]
+//     Pressing it on either side presses it on the other side too.
 struct SharedCockpitConfig {
     std::vector<DatarefSyncSpec> datarefs; // "systems" datarefs to sync, see DatarefSync
+    std::vector<CommandSyncSpec> commands; // button presses to mirror, see CommandSync
 };
 
 SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path);

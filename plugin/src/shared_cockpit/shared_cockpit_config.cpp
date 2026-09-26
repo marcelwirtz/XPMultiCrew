@@ -88,6 +88,25 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
                 }
             }
         }
+        if (keyword == "COMMAND" && !rest.empty()) {
+            std::istringstream tokens(rest);
+            CommandSyncSpec spec;
+            tokens >> spec.name;
+            std::string token;
+            while (tokens >> token) {
+                if (token == "CATEGORY") {
+                    std::string category_name;
+                    tokens >> category_name;
+                    DatarefCategory parsed = spec.category;
+                    if (ParseDatarefCategoryName(category_name, parsed) && parsed != DatarefCategory::kFlight) {
+                        spec.category = parsed;
+                    }
+                }
+            }
+            if (!spec.name.empty()) {
+                config.commands.push_back(spec);
+            }
+        }
         // ROLE/PEER are no longer recognized here - Shared Cockpit only
         // ever starts through the companion app (rendezvous-based peer
         // discovery), never from a manually-typed peer in this file - see
