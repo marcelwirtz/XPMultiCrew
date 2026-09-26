@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,10 +95,47 @@ func findAsset(release *githubRelease, name string) (*githubAsset, bool) {
 	return nil, false
 }
 
+// parseVersion extracts X.Y.Z from a tag or `git describe` string like
+// "v0.2.3" or "v0.2.3-4-gabc123-dirty". ok=false if there's no such prefix.
+func parseVersion(v string) (parts [3]int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	fields := strings.Split(v, ".")
+	if len(fields) != 3 {
+		return parts, false
+	}
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil || n < 0 {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
+}
+
+// isNewerVersion reports whether `latest` is a strictly higher X.Y.Z than
+// `current`. Unparseable versions fall back to plain inequality.
+func isNewerVersion(latest, current string) bool {
+	l, okL := parseVersion(latest)
+	c, okC := parseVersion(current)
+	if !okL || !okC {
+		return latest != current
+	}
+	for i := 0; i < 3; i++ {
+		if l[i] != c[i] {
+			return l[i] > c[i]
+		}
+	}
+	return false
+}
+
 // CheckForUpdate compares the latest GitHub release's tag against this
-// build's own companionVersion (plain string inequality, matching the
-// existing Installed/Available plugin-version convention in app.go's
-// refreshVersions() - not semver parsing). Returns (nil, nil) - not an
+// build's own companionVersion and only offers strictly newer versions -
+// a build made a few commits after a tag ("v0.2.3-2-gabc") must not be
+// offered a "downgrade" to that tag. Returns (nil, nil) - not an
 // error - both when already up to date and when companionVersion is
 // "dev" (a local unreleased build should never offer to "update" itself
 // over a real release).
@@ -109,7 +147,7 @@ func CheckForUpdate() (*UpdateInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if release.TagName == "" || release.TagName == companionVersion {
+	if release.TagName == "" || !isNewerVersion(release.TagName, companionVersion) {
 		return nil, nil
 	}
 	return &UpdateInfo{Version: release.TagName}, nil

@@ -242,3 +242,23 @@ func TestPlatformAssetNameReturnsKnownPair(t *testing.T) {
 		t.Fatalf("expected non-empty names when ok=true, got zip=%q exe=%q", zipName, exeName)
 	}
 }
+
+func TestIsNewerVersion(t *testing.T) {
+	cases := []struct {
+		latest, current string
+		want            bool
+	}{
+		{"v0.2.3", "v0.2.2", true},
+		{"v0.10.0", "v0.9.9", true},
+		{"v0.2.2", "v0.2.2", false},
+		{"v0.2.2", "v0.2.3", false},
+		{"v0.2.2", "v0.2.2-3-gabc1234", false}, // local build after the tag
+		{"v0.2.3", "v0.2.2-3-gabc1234-dirty", true},
+		{"v0.2.3", "abc1234", true}, // unparseable -> inequality
+	}
+	for _, c := range cases {
+		if got := isNewerVersion(c.latest, c.current); got != c.want {
+			t.Errorf("isNewerVersion(%q, %q) = %v, want %v", c.latest, c.current, got, c.want)
+		}
+	}
+}

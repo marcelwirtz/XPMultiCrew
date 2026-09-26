@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -449,18 +451,28 @@ func (a *App) CheckForUpdate() (*UpdateInfo, error) {
 // on disk out from under this still-running (old-code) process, it
 // doesn't change what's already loaded into memory.
 func (a *App) ApplyUpdate() error {
+	// Resolved BEFORE applying: on Linux os.Executable() reads
+	// /proc/self/exe, which after selfupdate's swap points at the old,
+	// renamed-and-deleted ".xpmulticrew-companion.old" file - relaunching
+	// that path fails, so the app used to just close after an update and
+	// never come back.
+	exe, exeErr := os.Executable()
+	if exeErr == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+	}
+
 	if err := applyUpdate(); err != nil {
 		return err
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		// The update was applied successfully - only the automatic
-		// relaunch failed. Don't report this as an update failure; the
-		// user can just start the (now updated) app again themselves.
-		return nil
+	if exeErr != nil {
+		return fmt.Errorf("update installed, but restarting failed - please start XPMultiCrew again: %w", exeErr)
 	}
-	_ = exec.Command(exe).Start()
+	if err := exec.Command(exe).Start(); err != nil {
+		return fmt.Errorf("update installed, but restarting failed - please start XPMultiCrew again: %w", err)
+	}
 	runtime.Quit(a.ctx)
 	return nil
 }

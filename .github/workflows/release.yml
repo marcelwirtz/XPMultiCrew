@@ -256,11 +256,17 @@ jobs:
       # (what the updater actually fetches); the plugin/server artifacts
       # aren't part of that flow.
       - name: Compute checksums
+        # Hashed from inside each artifact's own folder so the file names
+        # come out bare. Up to v0.2.2 this piped through `sed 's#.*/##'`,
+        # which also stripped the hash itself - SHA256SUMS contained only
+        # file names, so the updater's checksum check always failed.
         run: |
-          cd artifacts
-          sha256sum xpmulticrew-linux/xpmulticrew-linux.zip xpmulticrew-windows/xpmulticrew-windows.zip \
-            | sed 's#.*/##' > ../SHA256SUMS
-          cat ../SHA256SUMS
+          : > SHA256SUMS
+          (cd artifacts/xpmulticrew-linux && sha256sum xpmulticrew-linux.zip) >> SHA256SUMS
+          (cd artifacts/xpmulticrew-windows && sha256sum xpmulticrew-windows.zip) >> SHA256SUMS
+          cat SHA256SUMS
+          # Fail the release rather than publish a file the updater can't use.
+          test "$(grep -cE '^[0-9a-f]{64}  xpmulticrew-(linux|windows)\.zip$' SHA256SUMS)" -eq 2
 
       - name: Create release
         uses: softprops/action-gh-release@v2

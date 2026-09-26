@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Fixed local ports agreed with the plugin - see
@@ -352,12 +353,24 @@ func parsePeerLossPct(encoded string) map[uint32]int {
 
 // ListenForStatus blocks forever applying every status push the plugin
 // sends to 127.0.0.1:companionPort. Run it in a goroutine.
+//
+// Keeps retrying the bind instead of giving up on the first failure: right
+// after "Update & Restart" the new process starts while the old one may
+// still hold the port for a moment, and a single failed attempt used to
+// leave the freshly updated app permanently without plugin status.
 func (c *PluginClient) ListenForStatus() {
 	addr := net.UDPAddr{Port: companionPort, IP: net.ParseIP("127.0.0.1")}
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		log.Printf("failed to listen for plugin status on :%d: %v", companionPort, err)
-		return
+	var conn *net.UDPConn
+	for attempt := 0; ; attempt++ {
+		var err error
+		conn, err = net.ListenUDP("udp", &addr)
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			log.Printf("failed to listen for plugin status on :%d (retrying): %v", companionPort, err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	defer conn.Close()
 
