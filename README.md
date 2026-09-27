@@ -34,6 +34,13 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.2
+
+- The companion remembers its window size and maximized state (and the
+  position on Windows/X11 - on Wayland the compositor places windows; in
+  KDE a window rule can remember it) and reopens on the page you had open
+  last. Both are kept in `config.json`, which is now written atomically.
+
 ## What's new in v0.4.1: Airports page
 
 - **Airport information** (new Airports page, or "Details" in the map's
