@@ -502,6 +502,39 @@
     width: 100%; min-height: 300px; margin-top: 12px; background: #101317; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; user-select: text;
   }
+  /* --- Airports --- */
+  .ap-results { position: absolute; top: 38px; left: 0; right: 0; z-index: 20; max-height: 280px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+  .ap-results button { display: block; width: 100%; text-align: left; background: transparent; color: var(--text); font-weight: 400; padding: 6px 8px; }
+  .ap-results button:hover { background: #262b33; }
+  .ap-nearby { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; margin-bottom: 10px; }
+  .ap-nearby:empty { display: none; }
+  .ap-nearby button { flex: none; padding: 3px 8px; font-size: 12px; background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .ap-nearby button:hover { border-color: var(--accent); }
+  .ap-wind { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 14px 0 6px; font-size: 13px; }
+  .ap-wind input { width: 62px; padding: 5px 6px; background: #101317; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+  .ap-wind button { flex: none; padding: 4px 8px; font-size: 12px; }
+  .ap-table td { vertical-align: top; }
+  .ap-table .muted, .ap-apps .muted { color: var(--muted); }
+  .ap-apps { font-size: 11px; }
+  .ap-best td { background: rgba(95, 217, 122, 0.08); }
+  .ap-best-tag { font-size: 10px; color: var(--ok); }
+  .ap-tail { color: #f0b429; }
+  .ap-diagram-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; margin-bottom: 10px; }
+  .ap-diagram-head button { flex: none; margin-left: auto; padding: 4px 10px; font-size: 12px; }
+  #airport-diagram { width: 100%; height: 380px; display: block; background: #101317; border-radius: 8px; cursor: grab; touch-action: none; }
+  #airport-diagram:active { cursor: grabbing; }
+  .ad-pavement path { fill: #262b33; }
+  .ad-runway path { fill: #3b414b; stroke: #8b93a1; stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .ad-centerline line { stroke: #e6e8eb; stroke-width: 1; stroke-dasharray: 6 6; vector-effect: non-scaling-stroke; opacity: 0.7; }
+  .ad-taxi line { stroke: #c9a227; stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: 0.85; }
+  .ad-parking circle { fill: #8b93a1; }
+  .ad-windsock circle { fill: #d95926; }
+  .ad-labels text { paint-order: stroke; stroke: #101317; stroke-width: 3px; stroke-linejoin: round; font-family: inherit; }
+  .ad-rwy-label { fill: #e6e8eb; font-weight: 700; }
+  .ad-taxi-label { fill: #f0c94a; font-weight: 600; }
+  .ad-park-label { fill: #8b93a1; }
+  .ad-twr-label { fill: #4da3ff; font-weight: 700; }
   /* --- Landings (Butter-Board) --- */
   .lb-hero { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: center; }
   .lb-ring { position: relative; width: 120px; height: 120px; }
@@ -629,6 +662,7 @@
   .maplibregl-popup-tip { display: none; }
   .maplibregl-popup-close-button { color: var(--muted); }
   .airport-popup h4 { margin: 0 0 4px; font-size: 13px; }
+  .airport-popup .airport-details-btn { display: block; width: 100%; margin-top: 8px; padding: 5px 8px; font-size: 12px; }
   .airport-popup .muted { color: var(--muted); }
   .airport-popup table { border-collapse: collapse; margin-top: 4px; }
   .airport-popup td { padding: 1px 8px 1px 0; }
@@ -652,6 +686,7 @@
       <button type="button" data-page="formation"><span class="nav-dot" id="nav-dot-formation"></span>Multiplayer</button>
       <button type="button" data-page="shared-cockpit"><span class="nav-dot" id="nav-dot-shared-cockpit"></span>Shared Cockpit</button>
       <button type="button" data-page="map"><span class="nav-dot"></span>Map</button>
+      <button type="button" data-page="airports"><span class="nav-dot"></span>Airports</button>
       <button type="button" data-page="checklists"><span class="nav-dot"></span>Checklists</button>
       <button type="button" data-page="landings"><span class="nav-dot" id="nav-dot-landings"></span>Landings</button>
       <button type="button" data-page="debrief"><span class="nav-dot" id="nav-dot-debrief"></span>Debrief</button>
@@ -756,6 +791,47 @@
               <button id="checklist-delete" class="secondary" type="button">Delete my version</button>
               <button id="checklist-cancel" class="secondary" type="button">Cancel</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Airports (airports.js, companion/airport_detail.go): what X-Plane
+           knows about an airport, plus our own diagram drawn from apt.dat. -->
+      <div class="page" id="page-airports">
+        <div class="map-toolbar" style="position: relative;">
+          <input type="text" id="airport-search" placeholder="ICAO or name, e.g. EDDF" autocomplete="off" spellcheck="false" style="flex: 1; min-width: 160px;">
+          <button id="airport-on-map" class="secondary" type="button" disabled>Show on map</button>
+          <button id="airport-charts" class="secondary" type="button" disabled
+            title="Opens chartfox.org in your browser - official charts, free account needed">Charts ↗</button>
+          <div id="airport-results" class="ap-results" style="display: none;"></div>
+        </div>
+        <div class="ap-nearby" id="airport-nearby"></div>
+        <div class="status" id="airport-message" style="display: none; margin-bottom: 10px;"></div>
+        <div id="airport-body" style="display: none;">
+          <div class="panel">
+            <div id="airport-head"></div>
+            <div class="ap-wind">
+              <span>Wind</span>
+              <input type="number" id="airport-wind-dir" min="0" max="360" step="10" placeholder="dir" title="Wind direction, magnetic (as in the ATIS)">
+              <span>° /</span>
+              <input type="number" id="airport-wind-kt" min="0" max="99" placeholder="kt" title="Wind speed in knots">
+              <span>kt</span>
+              <span class="hint" id="airport-wind-source" style="margin: 0;"></span>
+              <button id="airport-wind-reset" class="secondary" type="button" style="display: none;">Use sim wind</button>
+            </div>
+            <div id="airport-runways"></div>
+          </div>
+          <div class="panel" style="margin-top: 16px;">
+            <div class="ap-diagram-head">
+              <h2 style="margin: 0;">Airport diagram</h2>
+              <span class="hint" style="margin: 0;">Drawn from X-Plane's scenery data - scroll to zoom, drag to move. Not for real-world navigation.</span>
+              <button id="airport-fit" class="secondary" type="button">Fit</button>
+            </div>
+            <svg id="airport-diagram" role="img" aria-label="Airport diagram"></svg>
+          </div>
+          <div class="panel" style="margin-top: 16px;">
+            <h2>Frequencies</h2>
+            <div id="airport-freqs"></div>
           </div>
         </div>
       </div>

@@ -34,6 +34,27 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.1: Airports page
+
+- **Airport information** (new Airports page, or "Details" in the map's
+  airport popup): search by ICAO code or name, or pick one of the airports
+  near you. Runways with magnetic heading, landing length (displaced
+  thresholds), width, surface and PAPI angle; instrument approaches
+  (ILS/LOC with ident, frequency, course and glideslope, LPV/RNAV);
+  frequencies; the local magnetic variation.
+- **Wind per runway:** head/tailwind and crosswind for every runway end,
+  from the sim wind when you're within 30 nm, or a wind you type in (e.g.
+  from the ATIS) - the runway likely in use is highlighted.
+- **Airport diagram:** drawn by the app itself from X-Plane's scenery data -
+  paved areas, runways, taxiways with their names, parking positions,
+  windsocks, tower, and your own aircraft when you're there. Scroll to zoom,
+  drag to move. Add-on sceneries in `Custom Scenery` are used when they
+  contain the airport (in your scenery_packs.ini order). Not for real-world
+  navigation.
+- **Charts:** official charts are licensed and not shown in the app - the
+  "Charts" button opens the airport on [ChartFox](https://chartfox.org)
+  (free account) in your browser.
+
 ## What's new in v0.4.0: Butter-Board and Debrief
 
 - **Landing rating ("Butter-Board", new Landings page):** every landing is

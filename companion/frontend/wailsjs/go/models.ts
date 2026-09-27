@@ -64,6 +64,26 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class AirportHit {
+	    ident: string;
+	    name: string;
+	    lat: number;
+	    lon: number;
+	    distNm?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AirportHit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.distNm = source["distNm"];
+	    }
+	}
 	export class NavPoint {
 	    kind: string;
 	    ident: string;
@@ -124,6 +144,180 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class Approach {
+	    runway: string;
+	    kind: string;
+	    ident: string;
+	    freq?: string;
+	    courseMag?: number;
+	    course: number;
+	    glideDeg?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Approach(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runway = source["runway"];
+	        this.kind = source["kind"];
+	        this.ident = source["ident"];
+	        this.freq = source["freq"];
+	        this.courseMag = source["courseMag"];
+	        this.course = source["course"];
+	        this.glideDeg = source["glideDeg"];
+	    }
+	}
+	export class ParkingSpot {
+	    name: string;
+	    type: string;
+	    x: number;
+	    y: number;
+	    heading: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ParkingSpot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.heading = source["heading"];
+	    }
+	}
+	export class TaxiEdge {
+	    name: string;
+	    a: number[];
+	    b: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TaxiEdge(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.a = source["a"];
+	        this.b = source["b"];
+	    }
+	}
+	export class LayoutRunwayEnd {
+	    name: string;
+	    x: number;
+	    y: number;
+	    headingTrue: number;
+	    displacedM: number;
+	    papiDeg?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LayoutRunwayEnd(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.headingTrue = source["headingTrue"];
+	        this.displacedM = source["displacedM"];
+	        this.papiDeg = source["papiDeg"];
+	    }
+	}
+	export class LayoutRunway {
+	    widthM: number;
+	    lengthM: number;
+	    surface: string;
+	    ends: LayoutRunwayEnd[];
+	
+	    static createFrom(source: any = {}) {
+	        return new LayoutRunway(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.widthM = source["widthM"];
+	        this.lengthM = source["lengthM"];
+	        this.surface = source["surface"];
+	        this.ends = this.convertValues(source["ends"], LayoutRunwayEnd);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AirportLayout {
+	    ident: string;
+	    name: string;
+	    elevationFt: number;
+	    lat: number;
+	    lon: number;
+	    magVar: number;
+	    runways: LayoutRunway[];
+	    pavement: number[][][][];
+	    taxiways: TaxiEdge[];
+	    parking: ParkingSpot[];
+	    windsocks: number[][];
+	    tower?: number[];
+	    frequencies: Frequency[];
+	    approaches: Approach[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AirportLayout(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.elevationFt = source["elevationFt"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.magVar = source["magVar"];
+	        this.runways = this.convertValues(source["runways"], LayoutRunway);
+	        this.pavement = source["pavement"];
+	        this.taxiways = this.convertValues(source["taxiways"], TaxiEdge);
+	        this.parking = this.convertValues(source["parking"], ParkingSpot);
+	        this.windsocks = source["windsocks"];
+	        this.tower = source["tower"];
+	        this.frequencies = this.convertValues(source["frequencies"], Frequency);
+	        this.approaches = this.convertValues(source["approaches"], Approach);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Airspace {
 	    name: string;
 	    class: string;
@@ -146,6 +340,7 @@ export namespace main {
 	        this.poly = source["poly"];
 	    }
 	}
+	
 	export class ChecklistCondition {
 	    key: string;
 	    op: string;
@@ -523,6 +718,8 @@ export namespace main {
 		    return a;
 		}
 	}
+	
+	
 	export class LogLinesResult {
 	    lines: string[];
 	    offset: number;
@@ -567,6 +764,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	
 	
 	export class RouteWaypoint {
@@ -783,6 +981,7 @@ export namespace main {
 	        this.hostPort = source["hostPort"];
 	    }
 	}
+	
 	export class UpdateInfo {
 	    version: string;
 	

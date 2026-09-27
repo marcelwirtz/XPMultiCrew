@@ -34,6 +34,8 @@ export function ExportFms(arg1:main.PlannedRoute):Promise<string>;
 
 export function GetAirportInfo(arg1:string):Promise<main.AirportInfo>;
 
+export function GetAirportLayout(arg1:string):Promise<main.AirportLayout>;
+
 export function GetAirports():Promise<main.AirportData>;
 
 export function GetAirspaces(arg1:number,arg2:number,arg3:number,arg4:number):Promise<Array<main.Airspace>>;
@@ -70,6 +72,8 @@ export function LoadFlight(arg1:string):Promise<main.Flight>;
 
 export function LoadProfile(arg1:string):Promise<main.ProfileData>;
 
+export function NearestAirports(arg1:number,arg2:number):Promise<Array<main.AirportHit>>;
+
 export function ReloadCsl():Promise<void>;
 
 export function SaveChecklists(arg1:string,arg2:string):Promise<main.ChecklistFile>;
@@ -79,6 +83,8 @@ export function SaveProfile(arg1:string,arg2:Array<main.ProfileEntry>):Promise<m
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
 
 export function ScResync():Promise<void>;
+
+export function SearchAirports(arg1:string):Promise<Array<main.AirportHit>>;
 
 export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
 

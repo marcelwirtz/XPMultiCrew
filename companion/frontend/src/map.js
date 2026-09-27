@@ -804,7 +804,15 @@ async function showAirportPopup(feature) {
       <div>Elevation ${d.elevationFt ?? '?'} ft${(d.runways || []).length ? ` · RWY ${escapeHtml(d.runways.join(', '))}` : ''}</div>
       ${freqs ? `<table>${freqs}</table>` : '<div class="muted">No frequencies listed</div>'}
       ${vrps ? `<div style="margin-top: 4px;"><span class="muted">VFR reporting points:</span> ${vrps}</div>` : ''}
+      <button type="button" class="secondary airport-details-btn" data-ident="${escapeHtml(p.ident)}">Details, runways &amp; diagram →</button>
     </div>`);
+    const btn = popup.getElement() && popup.getElement().querySelector('.airport-details-btn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        popup.remove();
+        window.dispatchEvent(new CustomEvent('xpmc-open-airport', { detail: { ident: btn.dataset.ident } }));
+      });
+    }
   } catch (e) {
     popup.setHTML(`<div class="airport-popup"><h4>${escapeHtml(p.ident)}</h4><div class="muted">${escapeHtml(String(e))}</div></div>`);
   }
@@ -1006,3 +1014,17 @@ document.getElementById('route-share').addEventListener('click', async () => {
   }
 });
 window.addEventListener('resize', () => map && map.resize());
+
+// Centres the map on a position (the Airports page's "Show on map").
+export function centerOn(lat, lon, attempt = 0) {
+  if (!map || !styleReady) {
+    // Opened for the first time just now - wait for it.
+    if (attempt < 40) setTimeout(() => centerOn(lat, lon, attempt + 1), 250);
+    return;
+  }
+  firstFix = false; // don't jump to the own aircraft right after
+  followSelf = false;
+  const follow = document.getElementById('map-follow');
+  if (follow) follow.checked = false;
+  map.easeTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 12), duration: 600 });
+}

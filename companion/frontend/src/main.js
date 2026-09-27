@@ -39,6 +39,7 @@ import { updateProgress } from './route-progress.js';
 import { recordTracks } from './tracks.js';
 import { showChecklists, updateChecklists } from './checklists.js';
 import { showLandings, updateLandings } from './landings.js';
+import { openAirport, showAirports, updateAirports } from './airports.js';
 
 // The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
 let mapModule = null;
@@ -54,6 +55,17 @@ function openDebriefPage() {
     if (lastStatusForDebrief) m.updateDebrief(lastStatusForDebrief, true);
   });
 }
+
+// Airports page <-> map: "Details" in the map's airport popup, "Show on
+// map" on the Airports page.
+window.addEventListener('xpmc-open-airport', (e) => {
+  showPage('airports');
+  openAirport(e.detail.ident);
+});
+window.addEventListener('xpmc-show-on-map', (e) => {
+  showPage('map');
+  import('./map.js').then((m) => m.centerOn(e.detail.lat, e.detail.lon));
+});
 
 // Sidebar dot on Debrief: while a flight is being recorded, and after one
 // was saved until the page is opened.
@@ -95,6 +107,7 @@ function showPage(page) {
   if (page === 'map') openMapPage();
   if (page === 'checklists') showChecklists();
   if (page === 'landings') showLandings();
+  if (page === 'airports') showAirports();
   if (page === 'debrief') openDebriefPage();
   try {
     localStorage.setItem(kLastPageStorageKey, page);
@@ -709,6 +722,7 @@ EventsOn('status', (data) => {
   recordTracks(data);
   updateChecklists(data);
   updateLandings(data, document.getElementById('page-landings').classList.contains('active'));
+  updateAirports(data, document.getElementById('page-airports').classList.contains('active'));
   lastStatusForDebrief = data;
   renderDebriefDot(data);
   if (debriefModule) debriefModule.updateDebrief(data, document.getElementById('page-debrief').classList.contains('active'));

@@ -30,6 +30,9 @@ type AirportData struct {
 	Details map[string]AirportDetail `json:"-"`
 	// Runway geometry for the landing rating (landings.go) - Go side only.
 	RunwayGeometry []RunwayGeometry `json:"-"`
+	// Byte offset of each airport's header row in apt.dat, so its full
+	// layout can be read on demand (airport_detail.go) - Go side only.
+	Offsets map[string]int64 `json:"-"`
 }
 
 // RunwayGeometry is one land runway (apt.dat row 100) with both ends.
@@ -62,7 +65,7 @@ type Frequency struct {
 	Name string `json:"name"`
 }
 
-const airportCacheVersion = 3
+const airportCacheVersion = 4
 
 type airportCacheFile struct {
 	Version int                      `json:"version"`
@@ -70,6 +73,7 @@ type airportCacheFile struct {
 	Data    AirportData              `json:"data"`
 	Details map[string]AirportDetail `json:"details"`
 	Runways []RunwayGeometry         `json:"runwayGeometry"`
+	Offsets map[string]int64         `json:"offsets"`
 }
 
 func aptDatPath(xplaneRoot string) string {
@@ -101,6 +105,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 			if json.Unmarshal(raw, &cached) == nil && cached.Version == airportCacheVersion && cached.Key == key {
 				cached.Data.Details = cached.Details
 				cached.Data.RunwayGeometry = cached.Runways
+				cached.Data.Offsets = cached.Offsets
 				return cached.Data, nil
 			}
 		}
@@ -117,7 +122,8 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 	}
 
 	if cachePath != "" {
-		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data, Details: data.Details, Runways: data.RunwayGeometry}); err == nil {
+		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data, Details: data.Details, Runways: data.RunwayGeometry,
+			Offsets: data.Offsets}); err == nil {
 			_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
 			tmp := cachePath + ".tmp"
 			if os.WriteFile(tmp, raw, 0644) == nil {
@@ -135,7 +141,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 // without a datum get the midpoint of their first runway/helipad.
 func parseAptDat(r io.Reader) (AirportData, error) {
 	data := AirportData{Airports: [][]interface{}{}, Runways: [][4]float64{}, Details: map[string]AirportDetail{},
-		RunwayGeometry: []RunwayGeometry{}}
+		RunwayGeometry: []RunwayGeometry{}, Offsets: map[string]int64{}}
 	freqTypes := map[int]string{50: "ATIS", 51: "UNICOM", 52: "DEL", 53: "GND", 54: "TWR", 55: "APP", 56: "DEP"}
 
 	type current struct {
@@ -169,10 +175,9 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 		return v, err == nil
 	}
 
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
+	lines := newOffsetLineReader(r)
+	for lines.next() {
+		line := lines.line
 		if len(line) < 2 {
 			continue
 		}
@@ -185,6 +190,9 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 				continue
 			}
 			flush()
+			if _, dup := data.Offsets[f[4]]; !dup {
+				data.Offsets[f[4]] = lines.offset
+			}
 			kind, _ := strconv.Atoi(f[0])
 			elev, _ := strconv.Atoi(f[1])
 			cur = &current{ident: f[4], name: strings.Join(f[5:], " "), kind: kind,
@@ -276,7 +284,35 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 		}
 	}
 	flush()
-	return data, scanner.Err()
+	return data, lines.err
+}
+
+// offsetLineReader reads lines like bufio.Scanner, but also knows the byte
+// offset each line starts at (for seeking back to an airport later).
+type offsetLineReader struct {
+	r      *bufio.Reader
+	line   string
+	offset int64 // start of `line`
+	pos    int64
+	err    error
+}
+
+func newOffsetLineReader(r io.Reader) *offsetLineReader {
+	return &offsetLineReader{r: bufio.NewReaderSize(r, 256*1024)}
+}
+
+func (l *offsetLineReader) next() bool {
+	raw, err := l.r.ReadString('\n')
+	if len(raw) == 0 {
+		if err != nil && err != io.EOF {
+			l.err = err
+		}
+		return false
+	}
+	l.offset = l.pos
+	l.pos += int64(len(raw))
+	l.line = strings.TrimRight(raw, "\r\n")
+	return true
 }
 
 func round6(v float64) float64 {

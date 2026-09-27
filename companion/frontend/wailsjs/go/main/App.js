@@ -66,6 +66,10 @@ export function GetAirportInfo(arg1) {
   return window['go']['main']['App']['GetAirportInfo'](arg1);
 }
 
+export function GetAirportLayout(arg1) {
+  return window['go']['main']['App']['GetAirportLayout'](arg1);
+}
+
 export function GetAirports() {
   return window['go']['main']['App']['GetAirports']();
 }
@@ -138,6 +142,10 @@ export function LoadProfile(arg1) {
   return window['go']['main']['App']['LoadProfile'](arg1);
 }
 
+export function NearestAirports(arg1, arg2) {
+  return window['go']['main']['App']['NearestAirports'](arg1, arg2);
+}
+
 export function ReloadCsl() {
   return window['go']['main']['App']['ReloadCsl']();
 }
@@ -156,6 +164,10 @@ export function SaveServer(arg1, arg2) {
 
 export function ScResync() {
   return window['go']['main']['App']['ScResync']();
+}
+
+export function SearchAirports(arg1) {
+  return window['go']['main']['App']['SearchAirports'](arg1);
 }
 
 export function SearchDatarefs(arg1) {
