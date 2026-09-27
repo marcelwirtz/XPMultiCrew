@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -90,15 +91,24 @@ func readVersionFile(assets fs.FS, path string) string {
 // itself releases them - same principle the plugin's manual deploy docs
 // already recommend, just automated here.
 func installPluginFrom(assets fs.FS, root, xplaneRoot string) error {
-	pluginsDir := filepath.Join(xplaneRoot, "Resources", "plugins")
+	resourcesDir := filepath.Join(xplaneRoot, "Resources")
+	pluginsDir := filepath.Join(resourcesDir, "plugins")
 	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
 		return fmt.Errorf("could not create %s: %w", pluginsDir, err)
 	}
+	CleanupStaleInstalls(xplaneRoot)
 
+	// The temporary and moved-aside directories live in Resources/, not
+	// Resources/plugins/: X-Plane loads every folder in plugins/, and up to
+	// v0.4.2 a moved-aside ".XPMultiCrew.old-*" there whose deletion failed
+	// (Windows can't delete a win.xpl X-Plane still has loaded) was loaded
+	// on every later start instead of the real install - the dot sorts it
+	// first, and the real one was then refused as a duplicate signature.
+	// Same volume as plugins/, so the renames below still work.
 	finalDir := filepath.Join(pluginsDir, pluginDirName)
 	suffix := time.Now().UnixNano()
-	tmpDir := filepath.Join(pluginsDir, fmt.Sprintf(".%s.installing-%d", pluginDirName, suffix))
-	oldDir := filepath.Join(pluginsDir, fmt.Sprintf(".%s.old-%d", pluginDirName, suffix))
+	tmpDir := filepath.Join(resourcesDir, fmt.Sprintf("%s%d", stalePrefixInstalling, suffix))
+	oldDir := filepath.Join(resourcesDir, fmt.Sprintf("%s%d", stalePrefixOld, suffix))
 
 	if err := extractEmbedded(assets, root, tmpDir); err != nil {
 		_ = os.RemoveAll(tmpDir)
@@ -111,7 +121,7 @@ func installPluginFrom(assets fs.FS, root, xplaneRoot string) error {
 		// first and only delete it once the new one is safely in place.
 		if err := os.Rename(finalDir, oldDir); err != nil {
 			_ = os.RemoveAll(tmpDir)
-			return fmt.Errorf("could not move aside existing install: %w", err)
+			return fmt.Errorf("could not move aside existing install (close X-Plane and try again): %w", err)
 		}
 	}
 
@@ -121,8 +131,90 @@ func installPluginFrom(assets fs.FS, root, xplaneRoot string) error {
 		return fmt.Errorf("could not move new plugin into place: %w", err)
 	}
 
-	_ = os.RemoveAll(oldDir) // best-effort cleanup, not safety-critical
+	// Fails on Windows while X-Plane still has the old win.xpl loaded -
+	// harmless now that it's outside plugins/, and the next
+	// CleanupStaleInstalls (next install or companion start) retries.
+	_ = os.RemoveAll(oldDir)
 	return nil
+}
+
+const (
+	stalePrefixOld        = "." + pluginDirName + ".old-"
+	stalePrefixInstalling = "." + pluginDirName + ".installing-"
+)
+
+// CleanupStaleInstalls removes leftover temporary/moved-aside plugin
+// directories from earlier installs. Ones inside plugins/ (written there
+// by companion versions up to v0.4.2) are first moved out to Resources/ so
+// X-Plane stops loading them even if they can't be deleted yet. Returns
+// the leftovers still inside plugins/ afterwards - normally none.
+func CleanupStaleInstalls(xplaneRoot string) []string {
+	resourcesDir := filepath.Join(xplaneRoot, "Resources")
+	pluginsDir := filepath.Join(resourcesDir, "plugins")
+	var remaining []string
+
+	if entries, err := os.ReadDir(pluginsDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() || !isStaleInstallName(e.Name()) {
+				continue
+			}
+			src := filepath.Join(pluginsDir, e.Name())
+			if err := os.Rename(src, filepath.Join(resourcesDir, e.Name())); err != nil {
+				if err := os.RemoveAll(src); err != nil {
+					remaining = append(remaining, src)
+				}
+			}
+		}
+	}
+	if entries, err := os.ReadDir(resourcesDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() && isStaleInstallName(e.Name()) {
+				_ = os.RemoveAll(filepath.Join(resourcesDir, e.Name()))
+			}
+		}
+	}
+	return remaining
+}
+
+func isStaleInstallName(name string) bool {
+	return strings.HasPrefix(name, stalePrefixOld) || strings.HasPrefix(name, stalePrefixInstalling)
+}
+
+// pluginSignature is XPluginStart's outSig (plugin/src/core/plugin_main.cpp).
+const pluginSignature = "io.github.xpmulticrew.plugin"
+
+// DuplicatePluginInstalls lists every folder in <xplaneRoot>/Resources/
+// plugins/ other than XPMultiCrew/ that holds a copy of this plugin (e.g.
+// a hand-unpacked zip). X-Plane loads only the first folder carrying a
+// given signature and refuses the rest, so any of these can silently
+// shadow the real install.
+func DuplicatePluginInstalls(xplaneRoot string) []string {
+	pluginsDir := filepath.Join(xplaneRoot, "Resources", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == pluginDirName {
+			continue
+		}
+		dir := filepath.Join(pluginsDir, e.Name())
+		if containsPluginBinary(dir) || containsPluginBinary(filepath.Join(dir, "64")) {
+			found = append(found, dir)
+		}
+	}
+	return found
+}
+
+func containsPluginBinary(dir string) bool {
+	for _, name := range []string{"win.xpl", "lin.xpl", "mac.xpl"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err == nil && bytes.Contains(data, []byte(pluginSignature)) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractEmbedded writes every file under root (in assets) to destDir,

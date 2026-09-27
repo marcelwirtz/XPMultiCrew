@@ -296,6 +296,11 @@
   .version-info .update-available b {
     color: var(--accent);
   }
+  .version-info .duplicate-plugins,
+  .version-info .duplicate-plugins b {
+    color: var(--err);
+    word-break: break-all;
+  }
   #update-banner {
     display: flex;
     align-items: center;
@@ -950,6 +955,7 @@
             <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
             <span>Available (bundled with this app): <b id="available-version">—</b></span>
             <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
+            <span id="duplicate-plugins-row" class="duplicate-plugins" style="display: none;">X-Plane may load one of these other plugin copies instead - close X-Plane and delete them: <b id="duplicate-plugins"></b></span>
           </div>
         </div>
       </div>

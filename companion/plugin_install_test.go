@@ -155,3 +155,61 @@ func TestLooksLikeXPlaneRoot(t *testing.T) {
 		t.Fatal("directory with a Resources/ subfolder should look like an X-Plane root")
 	}
 }
+
+// Up to v0.4.2 a moved-aside old install was left in plugins/ whenever
+// Windows refused to delete its still-loaded win.xpl, and X-Plane then
+// loaded that one instead of the real install.
+func TestInstallPluginFromMovesStaleLeftoversOutOfPlugins(t *testing.T) {
+	xplaneRoot := t.TempDir()
+	pluginsDir := filepath.Join(xplaneRoot, "Resources", "plugins")
+	stale := filepath.Join(pluginsDir, ".XPMultiCrew.old-1790190575052378000")
+	if err := os.MkdirAll(stale, 0755); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "win.xpl"), []byte("io.github.xpmulticrew.plugin v0.2.0"), 0644); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(xplaneRoot, "Resources", ".XPMultiCrew.installing-1"), 0755); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	if err := installPluginFrom(fakePluginAssets(), "embedded_plugin/XPMultiCrew", xplaneRoot); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, dir := range []string{pluginsDir, filepath.Join(xplaneRoot, "Resources")} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("failed to list %s: %v", dir, err)
+		}
+		for _, e := range entries {
+			if isStaleInstallName(e.Name()) {
+				t.Fatalf("stale leftover %s survived in %s", e.Name(), dir)
+			}
+		}
+	}
+}
+
+func TestDuplicatePluginInstallsFindsOtherCopies(t *testing.T) {
+	xplaneRoot := t.TempDir()
+	pluginsDir := filepath.Join(xplaneRoot, "Resources", "plugins")
+	write := func(rel, content string) {
+		path := filepath.Join(pluginsDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("setup failed: %v", err)
+		}
+	}
+	write("XPMultiCrew/win.xpl", "io.github.xpmulticrew.plugin")            // the real install
+	write("XPMultiCrew - Kopie/win.xpl", "xx io.github.xpmulticrew.plugin") // hand-made copy
+	write("OldLayout/64/win.xpl", "io.github.xpmulticrew.plugin")           // old fat-plugin layout
+	write("SomeOtherPlugin/win.xpl", "com.example.other")
+
+	got := DuplicatePluginInstalls(xplaneRoot)
+	want := []string{filepath.Join(pluginsDir, "OldLayout"), filepath.Join(pluginsDir, "XPMultiCrew - Kopie")}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

@@ -519,6 +519,19 @@ func (a *App) InstallPlugin() error {
 	return InstallPlugin(path)
 }
 
+// GetDuplicatePluginInstalls clears leftovers of earlier installs (see
+// CleanupStaleInstalls) and then lists every other copy of the plugin in
+// the chosen X-Plane's plugins/ folder - X-Plane loads only one of them,
+// possibly not the real install. Empty when everything is in order.
+func (a *App) GetDuplicatePluginInstalls() []string {
+	path := loadConfig().XPlanePath
+	if path == "" {
+		return nil
+	}
+	CleanupStaleInstalls(path)
+	return DuplicatePluginInstalls(path)
+}
+
 // GetAvailablePluginVersion returns the version of the plugin embedded in
 // this companion build - i.e. what Install/Update Plugin would give you.
 func (a *App) GetAvailablePluginVersion() string {

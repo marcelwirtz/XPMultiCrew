@@ -42,6 +42,8 @@ export function GetAirspaces(arg1:number,arg2:number,arg3:number,arg4:number):Pr
 
 export function GetAvailablePluginVersion():Promise<string>;
 
+export function GetDuplicatePluginInstalls():Promise<Array<string>>;
+
 export function GetInstalledPluginVersion():Promise<string>;
 
 export function GetLandingBoard():Promise<main.LandingBoard>;

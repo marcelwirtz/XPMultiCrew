@@ -82,6 +82,10 @@ export function GetAvailablePluginVersion() {
   return window['go']['main']['App']['GetAvailablePluginVersion']();
 }
 
+export function GetDuplicatePluginInstalls() {
+  return window['go']['main']['App']['GetDuplicatePluginInstalls']();
+}
+
 export function GetInstalledPluginVersion() {
   return window['go']['main']['App']['GetInstalledPluginVersion']();
 }

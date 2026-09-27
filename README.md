@@ -34,6 +34,17 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.3
+
+- Fixed on Windows: updating the plugin while X-Plane was running could
+  leave the old version behind in `Resources/plugins/` as a hidden
+  `.XPMultiCrew.old-…` folder, which X-Plane then kept loading instead of
+  the new install. Install/Update now keeps its temporary folders outside
+  `plugins/` and clears such leftovers automatically; the Setup page also
+  warns about any other copy of the plugin in `plugins/`.
+- The update check falls back to the GitHub release page when the GitHub
+  API refuses (rate limit), and re-checks every 6 hours.
+
 ## What's new in v0.4.2
 
 - The companion remembers its window size and maximized state (and the

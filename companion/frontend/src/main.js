@@ -9,6 +9,7 @@ import {
   DeleteUserProfile,
   DisconnectSharedCockpit,
   GetAvailablePluginVersion,
+  GetDuplicatePluginInstalls,
   GetPrefs,
   GetInstalledPluginVersion,
   GetLastPage,
@@ -159,13 +160,20 @@ function setSetupStatus(text, kind) {
 // folder, and after Install/Update Plugin completes (all three can change
 // what "installed" means).
 async function refreshVersions() {
-  const [installed, available] = await Promise.all([GetInstalledPluginVersion(), GetAvailablePluginVersion()]);
+  const [installed, available, duplicates] = await Promise.all([
+    GetInstalledPluginVersion(),
+    GetAvailablePluginVersion(),
+    GetDuplicatePluginInstalls(),
+  ]);
   document.getElementById('installed-version').textContent = installed || 'not installed';
   document.getElementById('available-version').textContent = available;
 
   const infoEl = document.getElementById('version-info');
   const updateAvailable = installed && installed !== available;
   infoEl.classList.toggle('update-available', Boolean(updateAvailable));
+
+  document.getElementById('duplicate-plugins').textContent = (duplicates || []).join(', ');
+  document.getElementById('duplicate-plugins-row').style.display = duplicates && duplicates.length ? '' : 'none';
 }
 
 document.getElementById('xplane-path').value = '';
