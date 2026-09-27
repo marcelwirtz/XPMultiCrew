@@ -300,3 +300,11 @@ endif()
 target_compile_features(shared_cockpit_sync_test PRIVATE cxx_std_17)
 
 add_test(NAME shared_cockpit_sync_test COMMAND shared_cockpit_sync_test)
+
+add_executable(touchdown_detector_test
+    touchdown_detector_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/touchdown_detector.cpp
+)
+target_include_directories(touchdown_detector_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(touchdown_detector_test PRIVATE cxx_std_17)
+add_test(NAME touchdown_detector_test COMMAND touchdown_detector_test)

@@ -85,6 +85,15 @@ int main() {
         prefs_env_sync = env_sync;
     };
 
+    double overlay_seconds = 0.0;
+    std::string overlay_text;
+    int overlay_calls = 0;
+    callbacks.on_show_overlay = [&](double seconds, const std::string& text) {
+        ++overlay_calls;
+        overlay_seconds = seconds;
+        overlay_text = text;
+    };
+
     assert(listener.Start(callbacks));
 
     // IsSimReady() lets plugin_main.cpp's PollControlListenerCallback
@@ -112,6 +121,15 @@ int main() {
     assert(created_host_port == "rendezvous.example.com:45000");
     assert(!create_as_spectator);
     std::printf("CREATE_SESSION parsed correctly: %s\n", created_host_port.c_str());
+
+    // SHOW_OVERLAY keeps the spaces of its text; non-ASCII/too long is dropped.
+    const std::string overlay_cmd = "SHOW_OVERLAY 12 TOUCHDOWN -142 fpm  |  1.18 G\nSHOW_OVERLAY 5 caf\xc3\xa9\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, overlay_cmd.data(), overlay_cmd.size());
+    PumpFor(listener, 200ms);
+    assert(overlay_calls == 1);
+    assert(overlay_seconds == 12.0);
+    assert(overlay_text == "TOUCHDOWN -142 fpm  |  1.18 G");
+    std::printf("SHOW_OVERLAY parsed correctly\n");
 
     const std::string cmd2 = "JOIN_SESSION 1.2.3.4:9999 ABC123\n";
     companion.SendTo("127.0.0.1", kControlUdpPort, cmd2.data(), cmd2.size());

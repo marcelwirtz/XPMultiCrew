@@ -8,6 +8,7 @@ import {
   DeleteUserChecklists,
   LoadChecklists,
   SaveChecklists,
+  AddFlightEvent,
   SetChecklistWatch,
   ShareChecklistState,
 } from '../wailsjs/go/main/App';
@@ -21,6 +22,7 @@ let values = {};
 let sharedSession = false;
 let ownIcao = '';
 let lastWatchSent = 0;
+let reportedComplete = new Set(); // list titles already marked on the Debrief timeline
 
 const $ = (id) => document.getElementById(id);
 
@@ -155,6 +157,14 @@ function render() {
     })
     .join('');
   const complete = list.items.every((_, i) => ['done', 'auto'].includes(itemState(active, i)));
+  // Each completed list once on the Debrief timeline (companion/flights.go);
+  // resetting it and working through it again marks it again.
+  if (complete && !reportedComplete.has(list.title)) {
+    reportedComplete.add(list.title);
+    AddFlightEvent('checklist', list.title).catch(() => {});
+  } else if (!complete) {
+    reportedComplete.delete(list.title);
+  }
   body.innerHTML = `<div class="cl-tabs">${tabs}</div>
     <ul class="cl-list">${items}</ul>
     <div class="row buttons">

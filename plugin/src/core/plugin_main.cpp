@@ -53,6 +53,7 @@
 #include "shared_cockpit/shared_cockpit_sync.h"
 #include "shared_cockpit/weather_sync.h"
 #include "sync/time_sync.h"
+#include "sync/touchdown_detector.h"
 
 #include <algorithm>
 #include <cmath>
@@ -61,6 +62,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -222,6 +224,10 @@ constexpr uint32_t kRouteMagic = 0x46545231; // "FTR1"
 constexpr double kRouteResendS = 20.0;
 std::string g_own_route;
 double g_own_route_next_send_s = 0.0;
+
+// Butter-Board landings from the session - see OnOwnLanding/OnPeerLanding.
+constexpr uint32_t kLandingMagic = 0x46544c31; // "FTL1"
+void OnPeerLanding(int from_peer_id, const std::string& payload);
 
 
 flytogether::FormationSync g_formation_sync;
@@ -506,6 +512,10 @@ void SetupRendezvousCallbacksOnce() {
             const auto sender = g_formation_sender_by_peer.find(from_peer_id);
             const uint32_t sender_id = sender != g_formation_sender_by_peer.end() ? sender->second : 0xFFFFFFFFu;
             g_control_listener.SetSharedRoute(std::to_string(sender_id) + " " + payload);
+            return;
+        }
+        if (magic == kLandingMagic) {
+            OnPeerLanding(from_peer_id, std::string(opened->begin() + sizeof(magic), opened->end()));
             return;
         }
         if (magic == flytogether::kTimeSyncMagic) {
@@ -1220,6 +1230,21 @@ void RefreshOwnIcaoType() {
 // aircraft") and Shared Cockpit's master (sending "here's the aircraft
 // we're both in") need. `sequence` is passed in/incremented by the caller
 // since each use has its own independent counter.
+// The callsign others see: the one set in the companion, else the tail
+// number - sanitized and cut to the packet's 8 characters.
+std::string OwnCallsign() {
+    std::string callsign = g_pref_callsign;
+    if (callsign.empty() && g_tailnum_ref) {
+        char tail[41] = {};
+        XPLMGetDatab(g_tailnum_ref, tail, 0, sizeof(tail) - 1);
+        callsign = tail;
+    }
+    char fixed[8] = {};
+    std::memcpy(fixed, callsign.data(), std::min(callsign.size(), sizeof(fixed)));
+    flytogether::SanitizeCallsign(fixed);
+    return std::string(fixed, strnlen(fixed, sizeof(fixed)));
+}
+
 flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id, uint32_t sequence) {
     flytogether::AircraftStatePacket packet;
     packet.sender_id = sender_id;
@@ -1249,14 +1274,8 @@ flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id,
     }
     packet.ref_height_agl_m = g_ref_height_agl_m;
 
-    std::string callsign = g_pref_callsign;
-    if (callsign.empty() && g_tailnum_ref) {
-        char tail[41] = {};
-        XPLMGetDatab(g_tailnum_ref, tail, 0, sizeof(tail) - 1);
-        callsign = tail;
-    }
+    const std::string callsign = OwnCallsign();
     std::memcpy(packet.callsign, callsign.data(), std::min(callsign.size(), sizeof(packet.callsign)));
-    flytogether::SanitizeCallsign(packet.callsign);
 
     packet.velocity_x_mps = g_local_vx_ref ? XPLMGetDataf(g_local_vx_ref) : 0.0f;
     packet.velocity_y_mps = g_local_vy_ref ? XPLMGetDataf(g_local_vy_ref) : 0.0f;
@@ -1653,6 +1672,142 @@ int DrawOverlayCallback(XPLMDrawingPhase /*phase*/, int /*isBefore*/, void* /*re
     float color[3] = {0.96f, 0.82f, 0.26f};
     XPLMDrawString(color, x, y, const_cast<char*>(g_overlay_text.c_str()), nullptr, xplmFont_Proportional);
     return 1;
+}
+
+// --- Butter-Board: landing rating (sync/touchdown_detector.h) ---------------
+// Every landing of the own aircraft goes to the companion (LANDINGS) and,
+// sealed behind this magic, to everyone in the Multiplayer session - sent
+// twice, a few seconds apart, since relay datagrams can get lost; the
+// companion drops the duplicate by its id.
+constexpr size_t kMaxLandingEntries = 20;
+constexpr size_t kMaxLandingPayload = 200;
+constexpr double kLandingResendS = 3.0;
+flytogether::TouchdownDetector g_touchdown;
+std::vector<std::string> g_landings; // LANDINGS entries, oldest first
+std::string g_landing_resend;
+double g_landing_resend_at_s = 0.0;
+XPLMDataRef g_vs_fpm_ref = nullptr;       // sim/flightmodel/position/vh_ind_fpm
+XPLMDataRef g_g_normal_ref = nullptr;     // sim/flightmodel/forces/g_nrml
+XPLMDataRef g_running_time_ref = nullptr; // sim/time/total_running_time_sec, stops while paused
+XPLMDataRef g_paused_ref = nullptr;       // sim/time/paused
+XPLMDataRef g_replay_ref = nullptr;       // sim/time/is_in_replay
+XPLMDataRef g_ias_ref = nullptr;          // sim/flightmodel/position/indicated_airspeed, kt - debrief only
+XPLMDataRef g_engine_running_ref = nullptr; // sim/flightmodel/engine/ENGN_running, int[] - debrief: engine off ends a flight
+
+void AddLandingEntry(const std::string& entry) {
+    g_landings.push_back(entry);
+    if (g_landings.size() > kMaxLandingEntries) {
+        g_landings.erase(g_landings.begin());
+    }
+    std::string joined;
+    for (const auto& e : g_landings) {
+        joined += (joined.empty() ? "" : ";") + e;
+    }
+    g_control_listener.SetLandings(joined);
+}
+
+void SendLandingMessage(const std::string& payload) {
+    if (!g_formation_crypto || !g_rendezvous_client.InSession()) {
+        return;
+    }
+    std::vector<uint8_t> plain(sizeof(kLandingMagic) + payload.size());
+    std::memcpy(plain.data(), &kLandingMagic, sizeof(kLandingMagic));
+    std::memcpy(plain.data() + sizeof(kLandingMagic), payload.data(), payload.size());
+    const auto envelope = g_formation_crypto->Seal(plain);
+    g_rendezvous_client.SendRelay(envelope.data(), envelope.size());
+}
+
+// A peer's landing: the same fields as our own entries, checked strictly
+// since it ends up in the companion's line-based status text.
+void OnPeerLanding(int from_peer_id, const std::string& payload) {
+    if (payload.empty() || payload.size() > kMaxLandingPayload ||
+        payload.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.:-") !=
+            std::string::npos ||
+        std::count(payload.begin(), payload.end(), ':') != 12) {
+        return;
+    }
+    const auto sender = g_formation_sender_by_peer.find(from_peer_id);
+    if (sender == g_formation_sender_by_peer.end()) {
+        return; // no aircraft state from them yet - nothing to show it against
+    }
+    const std::string entry = std::to_string(sender->second) + ":" + payload;
+    if (std::find(g_landings.begin(), g_landings.end(), entry) == g_landings.end()) {
+        AddLandingEntry(entry);
+    }
+}
+
+std::string LandingVerdict(double vs_fpm) {
+    const double fpm = std::fabs(vs_fpm);
+    if (fpm < 60) return "BUTTER!";
+    if (fpm < 180) return "Smooth";
+    if (fpm < 300) return "Good";
+    if (fpm < 500) return "Firm";
+    if (fpm < 700) return "Hard";
+    return "Ouch - check the gear";
+}
+
+void OnOwnLanding(const flytogether::LandingResult& r) {
+    // <id>:<lat>:<lon>:<hdg>:<fpm>:<g>:<gs_kt>:<drift>:<bounces>:<flare_m>:<touch&go>:<icao>:<callsign>,
+    // id = unix time (unique across X-Plane restarts, and when it happened).
+    const std::string icao(g_icao_type, strnlen(g_icao_type, sizeof(g_icao_type)));
+    char buf[kMaxLandingPayload];
+    std::snprintf(buf, sizeof(buf), "%lld:%.6f:%.6f:%.1f:%.0f:%.2f:%.0f:%.1f:%d:%.0f:%d:%s:%s",
+                  static_cast<long long>(std::time(nullptr)), r.latitude, r.longitude, r.heading_true_deg, r.vs_fpm,
+                  r.peak_g, r.groundspeed_kt, r.drift_deg, r.bounces, r.flare_distance_m, r.touch_and_go ? 1 : 0,
+                  icao.empty() ? "-" : icao.c_str(), OwnCallsign().empty() ? "-" : OwnCallsign().c_str());
+    const std::string payload(buf);
+    AddLandingEntry("0:" + payload);
+    SendLandingMessage(payload);
+    g_landing_resend = payload;
+    g_landing_resend_at_s = XPLMGetElapsedTime() + kLandingResendS;
+
+    // The companion replaces this with the runway-aware version right
+    // away (SHOW_OVERLAY) - this one is for flying without it.
+    char text[160];
+    std::snprintf(text, sizeof(text), "%s  %.0f fpm  |  %.2f G%s%s", r.touch_and_go ? "TOUCH & GO" : "TOUCHDOWN",
+                  r.vs_fpm, r.peak_g, r.bounces > 0 ? "  |  bounced" : "",
+                  ("  |  " + LandingVerdict(r.vs_fpm)).c_str());
+    ShowOverlay(text, 12.0);
+    XPLMDebugString(("XPMultiCrew: landing " + payload + "\n").c_str());
+}
+
+float TouchdownCallback(float /*elapsedSinceLastCall*/,
+                        float /*elapsedTimeSinceLastFlightLoop*/,
+                        int /*counter*/,
+                        void* /*refcon*/) {
+    const double now = XPLMGetElapsedTime();
+    if (!g_landing_resend.empty() && now >= g_landing_resend_at_s) {
+        SendLandingMessage(g_landing_resend);
+        g_landing_resend.clear();
+    }
+    if (g_paused_ref && XPLMGetDatai(g_paused_ref) != 0) {
+        return -1.0f; // running time stands still, the detector just continues afterwards
+    }
+    // Replays and the Shared Cockpit co-pilot (whose aircraft is moved by
+    // the pilot flying's packets) don't land themselves.
+    if (!g_running_time_ref || !g_on_ground_ref || !g_latitude_ref || (g_replay_ref && XPLMGetDatai(g_replay_ref) != 0) ||
+        g_physics_override_active) {
+        g_touchdown.Reset();
+        return -1.0f;
+    }
+    flytogether::TouchdownSample s;
+    s.time_s = XPLMGetDataf(g_running_time_ref);
+    s.on_ground = XPLMGetDatai(g_on_ground_ref) != 0;
+    s.vs_fpm = g_vs_fpm_ref ? XPLMGetDataf(g_vs_fpm_ref) : 0.0;
+    s.g_normal = g_g_normal_ref ? XPLMGetDataf(g_g_normal_ref) : 1.0;
+    s.agl_m = g_y_agl_ref ? XPLMGetDataf(g_y_agl_ref) : 0.0;
+    s.latitude = XPLMGetDatad(g_latitude_ref);
+    s.longitude = XPLMGetDatad(g_longitude_ref);
+    s.heading_true_deg = g_heading_ref ? XPLMGetDataf(g_heading_ref) : 0.0;
+    s.groundspeed_kt = g_groundspeed_ref ? XPLMGetDataf(g_groundspeed_ref) * 1.94384 : 0.0;
+    // OpenGL local frame: +x east, +z south.
+    const double vx = g_local_vx_ref ? XPLMGetDataf(g_local_vx_ref) : 0.0;
+    const double vz = g_local_vz_ref ? XPLMGetDataf(g_local_vz_ref) : 0.0;
+    s.track_true_deg = std::atan2(vx, -vz) * 180.0 / 3.14159265358979323846;
+    if (const auto landing = g_touchdown.Update(s)) {
+        OnOwnLanding(*landing);
+    }
+    return -1.0f;
 }
 
 // Checklist auto-check support (WATCH / WATCH_VALUES): the companion names
@@ -2476,9 +2631,20 @@ void MaybePushLinkQuality(double now) {
         if (g_mag_heading_ref) {
             mag_var = std::remainder(true_heading - XPLMGetDataf(g_mag_heading_ref), 360.0f);
         }
-        std::snprintf(self_buf, sizeof(self_buf), "%.6f %.6f %.0f %.0f %.0f %.1f", XPLMGetDatad(g_latitude_ref),
-                      XPLMGetDatad(g_longitude_ref), XPLMGetDatad(g_elevation_ref) * kFeetPerMeter, true_heading,
-                      groundspeed_mps * 1.94384, mag_var);
+        // on_ground/IAS/vertical speed/engines feed the companion's flight recorder (debrief).
+        const int on_ground = g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0 ? 1 : 0;
+        const float ias_kt = g_ias_ref ? XPLMGetDataf(g_ias_ref) : 0.0f;
+        const float vs_fpm = g_vs_fpm_ref ? XPLMGetDataf(g_vs_fpm_ref) : 0.0f;
+        int engines_running = 0;
+        if (g_engine_running_ref) {
+            int running[16] = {};
+            const int n = XPLMGetDatavi(g_engine_running_ref, running, 0, 16);
+            for (int i = 0; i < n; ++i) engines_running |= running[i] != 0 ? 1 : 0;
+        }
+        std::snprintf(self_buf, sizeof(self_buf), "%.6f %.6f %.0f %.0f %.0f %.1f %d %.0f %.0f %d",
+                      XPLMGetDatad(g_latitude_ref), XPLMGetDatad(g_longitude_ref),
+                      XPLMGetDatad(g_elevation_ref) * kFeetPerMeter, true_heading, groundspeed_mps * 1.94384, mag_var,
+                      on_ground, ias_kt, vs_fpm, engines_running);
     }
     std::string peer_pos;
     g_formation_sync.ForEachRemoteAircraft(
@@ -2639,6 +2805,13 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_zulu_time_ref = XPLMFindDataRef("sim/time/zulu_time_sec");
     g_local_date_ref = XPLMFindDataRef("sim/time/local_date_days");
     g_use_system_time_ref = XPLMFindDataRef("sim/time/use_system_time");
+    g_vs_fpm_ref = XPLMFindDataRef("sim/flightmodel/position/vh_ind_fpm");
+    g_g_normal_ref = XPLMFindDataRef("sim/flightmodel/forces/g_nrml");
+    g_running_time_ref = XPLMFindDataRef("sim/time/total_running_time_sec");
+    g_paused_ref = XPLMFindDataRef("sim/time/paused");
+    g_replay_ref = XPLMFindDataRef("sim/time/is_in_replay");
+    g_ias_ref = XPLMFindDataRef("sim/flightmodel/position/indicated_airspeed");
+    g_engine_running_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_running");
     RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
     std::random_device rd;
@@ -2735,6 +2908,7 @@ PLUGIN_API int XPluginEnable() {
         g_own_route_next_send_s = 0.0; // sent on the next 1 Hz env tick, and then every kRouteResendS
         g_control_listener.SetSharedRoute("0 " + payload);
     };
+    control_callbacks.on_show_overlay = [](double seconds, const std::string& text) { ShowOverlay(text, seconds); };
     control_callbacks.on_learn = [](bool start) {
         if (start) {
             StartLearning();
@@ -2773,6 +2947,7 @@ PLUGIN_API int XPluginEnable() {
     });
     XPLMRegisterFlightLoopCallback(PollFormationEnvCallback, 1.0f, nullptr);
     XPLMRegisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
+    XPLMRegisterFlightLoopCallback(TouchdownCallback, -1.0f, nullptr);
 
     if (g_udp_socket.Open()) {
         XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
@@ -2828,6 +3003,7 @@ PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(LogPositionCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(PollFormationEnvCallback, nullptr);
     XPLMUnregisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
+    XPLMUnregisterFlightLoopCallback(TouchdownCallback, nullptr);
     g_formation_weather.Stop();
     XPLMUnregisterFlightLoopCallback(SendPositionOverUdpCallback, nullptr);
     g_udp_socket.Close();
@@ -2888,6 +3064,7 @@ PLUGIN_API void XPluginReceiveMessage(XPLMPluginID /*inFrom*/, int inMsg, void* 
         // aircraft change mid-session too.
         RefreshOwnIcaoType();
         g_ref_height_agl_m = -1.0f; // different aircraft, different gear height - re-measure
+        g_touchdown.Reset();
     } else if (inMsg == XPLM_MSG_PLANE_UNLOADED && plane_index == 0) {
         g_control_listener.SetSimReady(false);
     }

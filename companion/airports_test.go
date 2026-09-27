@@ -92,3 +92,21 @@ func TestLoadAirportsCaches(t *testing.T) {
 		t.Fatalf("cache not invalidated: %+v %v", second.Airports, err)
 	}
 }
+
+func TestParseAptDatRunwayGeometry(t *testing.T) {
+	data, err := parseAptDat(strings.NewReader(sampleAptDat))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.RunwayGeometry) != 2 {
+		t.Fatalf("expected 2 runways, got %+v", data.RunwayGeometry)
+	}
+	r := data.RunwayGeometry[0]
+	if r.Airport != "EDDF" || r.WidthM != 60 || r.Ends[0].Name != "07C" || r.Ends[1].Name != "25C" ||
+		r.Ends[0].Lat != 50.03253798 || r.Ends[1].Lon != 8.58696597 || r.Ends[0].DisplacedM != 0 {
+		t.Fatalf("EDDF runway geometry wrong: %+v", r)
+	}
+	if data.RunwayGeometry[1].Airport != "XNOD" {
+		t.Fatalf("second runway belongs to XNOD: %+v", data.RunwayGeometry[1])
+	}
+}

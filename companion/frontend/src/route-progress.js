@@ -4,6 +4,7 @@
 // the leg. The route itself lives in localStorage (written by map.js's
 // planner), so this works on every page even if the map was never opened.
 import { alongTrackNm, distanceNm, legInfo, trueCourse, variationAt } from './route-math.js';
+import { AddFlightEvent } from '../wailsjs/go/main/App';
 
 const kRouteKey = 'xpmulticrew.route';
 const kProgressKey = 'xpmulticrew.routeProgress';
@@ -57,6 +58,8 @@ export function updateProgress(self, vors = []) {
     const to = w[active];
     const reached = distanceNm(self, to) < kReachedNm || alongTrackNm(from, to, self) >= distanceNm(from, to);
     if (!reached) break;
+    // Marked on the Debrief timeline (companion/flights.go).
+    AddFlightEvent('waypoint', to.ident || to.name || `WPT ${active}`).catch(() => {});
     active++;
   }
   setActiveIndex(active, route);

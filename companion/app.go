@@ -46,6 +46,9 @@ type statusEvent struct {
 	ScDesync               *ScDesync          `json:"scDesync,omitempty"`
 	SelfPos                *MapPosition       `json:"selfPos"`
 	PeerPos                []MapPosition      `json:"peerPos"`
+	LandingsVersion        int                `json:"landingsVersion"` // Landings page refetches when it changes
+	Recording              *RecordingInfo     `json:"recording,omitempty"`
+	FlightsVersion         int                `json:"flightsVersion"` // a flight was saved
 }
 
 // App is bound to the frontend via wails.Run's Bind option - every exported
@@ -66,6 +69,12 @@ type App struct {
 	persistedFormationCode     string // cache of what's currently on disk, to skip redundant writes
 	persistedSharedCockpitCode string
 	autoRejoinAttempted        bool
+
+	landings       landingBook
+	recMu          sync.Mutex
+	recorder       flightRecorder
+	flights        flightIndex
+	flightsVersion int // guarded by recMu
 }
 
 func NewApp() *App {
@@ -103,6 +112,11 @@ func (a *App) pollStatus() {
 		a.maybeSyncPrefs()
 
 		selfPos, peerPos := a.plugin.Positions()
+		a.processLandings()
+		recording := a.recordFlight(selfPos, peerPos)
+		a.recMu.Lock()
+		flightsVersion := a.flightsVersion
+		a.recMu.Unlock()
 		checklistRemote, watchValues, scDesync := a.plugin.ChecklistState()
 		runtime.EventsEmit(a.ctx, "status", statusEvent{
 			Formation:              formation,
@@ -127,6 +141,9 @@ func (a *App) pollStatus() {
 			ScDesync:               scDesync,
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
+			LandingsVersion:        a.landings.currentVersion(),
+			Recording:              recording,
+			FlightsVersion:         flightsVersion,
 		})
 	}
 }

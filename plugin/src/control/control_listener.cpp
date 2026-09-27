@@ -108,6 +108,19 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_route_share && !payload.empty() && payload.size() <= kMaxRoutePayload) {
             callbacks_.on_route_share(payload);
         }
+    } else if (cmd == "SHOW_OVERLAY") {
+        double seconds = 0.0;
+        ls >> seconds;
+        std::string text;
+        std::getline(ls >> std::ws, text);
+        if (!text.empty() && text.back() == '\r') text.pop_back();
+        // Printable ASCII only - X-Plane's font has nothing else anyway.
+        bool printable = true;
+        for (unsigned char c : text) printable = printable && c >= 0x20 && c < 0x7f;
+        if (callbacks_.on_show_overlay && printable && !text.empty() && text.size() <= 200 && seconds > 0.0 &&
+            seconds <= 60.0) {
+            callbacks_.on_show_overlay(seconds, text);
+        }
     } else if (cmd == "ROUTE_CLEAR") {
         if (callbacks_.on_route_share) callbacks_.on_route_share("");
     } else if (cmd == "LEARN_START" || cmd == "LEARN_STOP") {
@@ -128,7 +141,7 @@ void ControlListener::SendStatus() {
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
                              "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ +
                              "\nROUTE_SHARED " + shared_route_ + "\nWIND " + wind_ + "\nCHECKLIST_REMOTE " +
-                             checklist_remote_ + "\nSC_DESYNC " + sc_desync_ + "\nWATCH_VALUES " + watch_values_ + "\n";
+                             checklist_remote_ + "\nSC_DESYNC " + sc_desync_ + "\nWATCH_VALUES " + watch_values_ + "\nLANDINGS " + landings_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -261,6 +274,12 @@ void ControlListener::SetPositions(const std::string& self, const std::string& p
 
 void ControlListener::SetPluginVersion(const std::string& version) {
     plugin_version_ = version;
+    SendStatus();
+}
+
+void ControlListener::SetLandings(const std::string& encoded) {
+    if (encoded == landings_) return;
+    landings_ = encoded;
     SendStatus();
 }
 

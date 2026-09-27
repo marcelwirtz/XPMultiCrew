@@ -28,6 +28,24 @@ type AirportData struct {
 	// Per-airport details for the map's info popup - kept on the Go side
 	// (GetAirportInfo), not sent with the bulk list.
 	Details map[string]AirportDetail `json:"-"`
+	// Runway geometry for the landing rating (landings.go) - Go side only.
+	RunwayGeometry []RunwayGeometry `json:"-"`
+}
+
+// RunwayGeometry is one land runway (apt.dat row 100) with both ends.
+type RunwayGeometry struct {
+	Airport string       `json:"a"`
+	WidthM  float64      `json:"w"`
+	Ends    [2]RunwayEnd `json:"e"`
+}
+
+// RunwayEnd is one runway end: the physical end of the pavement and how
+// far the landing threshold is displaced from it.
+type RunwayEnd struct {
+	Name       string  `json:"n"`
+	Lat        float64 `json:"la"`
+	Lon        float64 `json:"lo"`
+	DisplacedM float64 `json:"d"`
 }
 
 // AirportDetail is what the map shows when an airport is clicked.
@@ -44,13 +62,14 @@ type Frequency struct {
 	Name string `json:"name"`
 }
 
-const airportCacheVersion = 2
+const airportCacheVersion = 3
 
 type airportCacheFile struct {
 	Version int                      `json:"version"`
 	Key     string                   `json:"key"`
 	Data    AirportData              `json:"data"`
 	Details map[string]AirportDetail `json:"details"`
+	Runways []RunwayGeometry         `json:"runwayGeometry"`
 }
 
 func aptDatPath(xplaneRoot string) string {
@@ -81,6 +100,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 			var cached airportCacheFile
 			if json.Unmarshal(raw, &cached) == nil && cached.Version == airportCacheVersion && cached.Key == key {
 				cached.Data.Details = cached.Details
+				cached.Data.RunwayGeometry = cached.Runways
 				return cached.Data, nil
 			}
 		}
@@ -97,7 +117,7 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 	}
 
 	if cachePath != "" {
-		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data, Details: data.Details}); err == nil {
+		if raw, err := json.Marshal(airportCacheFile{Version: airportCacheVersion, Key: key, Data: data, Details: data.Details, Runways: data.RunwayGeometry}); err == nil {
 			_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
 			tmp := cachePath + ".tmp"
 			if os.WriteFile(tmp, raw, 0644) == nil {
@@ -114,7 +134,8 @@ func loadAirports(xplaneRoot string) (AirportData, error) {
 // when present), 100 land runway, 101 water runway, 102 helipad. Airports
 // without a datum get the midpoint of their first runway/helipad.
 func parseAptDat(r io.Reader) (AirportData, error) {
-	data := AirportData{Airports: [][]interface{}{}, Runways: [][4]float64{}, Details: map[string]AirportDetail{}}
+	data := AirportData{Airports: [][]interface{}{}, Runways: [][4]float64{}, Details: map[string]AirportDetail{},
+		RunwayGeometry: []RunwayGeometry{}}
 	freqTypes := map[int]string{50: "ATIS", 51: "UNICOM", 52: "DEL", 53: "GND", 54: "TWR", 55: "APP", 56: "DEP"}
 
 	type current struct {
@@ -191,6 +212,16 @@ func parseAptDat(r io.Reader) (AirportData, error) {
 				continue
 			}
 			data.Runways = append(data.Runways, [4]float64{round6(lat1), round6(lon1), round6(lat2), round6(lon2)})
+			width, _ := num(f[1])
+			disp1, _ := num(f[11])
+			disp2 := 0.0
+			if len(f) > 20 {
+				disp2, _ = num(f[20])
+			}
+			data.RunwayGeometry = append(data.RunwayGeometry, RunwayGeometry{Airport: cur.ident, WidthM: width, Ends: [2]RunwayEnd{
+				{Name: f[8], Lat: lat1, Lon: lon1, DisplacedM: disp1},
+				{Name: f[17], Lat: lat2, Lon: lon2, DisplacedM: disp2},
+			}})
 			cur.detail.Runways = append(cur.detail.Runways, f[8]+"/"+f[17])
 			if !cur.hasFallback {
 				cur.fallbackLat, cur.fallbackLon, cur.hasFallback = (lat1+lat2)/2, (lon1+lon2)/2, true

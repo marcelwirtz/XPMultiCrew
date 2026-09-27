@@ -38,6 +38,15 @@ type MapPosition struct {
 	Heading       float64 `json:"heading"`
 	GroundspeedKt float64 `json:"groundspeedKt,omitempty"`
 	MagVar        float64 `json:"magVar,omitempty"` // own aircraft only: local variation, east positive
+	// Own aircraft only, since v0.4.0 (for the flight recorder): HasFlight
+	// says whether the plugin sent on_ground/IAS/VS, HasEngine whether it
+	// sent the engine state too.
+	HasFlight      bool    `json:"-"`
+	HasEngine      bool    `json:"-"`
+	OnGround       bool    `json:"onGround,omitempty"`
+	IasKt          float64 `json:"iasKt,omitempty"`
+	VsFpm          float64 `json:"vsFpm,omitempty"`
+	EnginesRunning bool    `json:"enginesRunning,omitempty"`
 }
 
 // LearnStatus mirrors control_listener.h's LEARN / LEARN_CHANGES lines -
@@ -112,6 +121,7 @@ type PluginClient struct {
 	scDesync               *ScDesync
 	selfPos                *MapPosition
 	peerPos                []MapPosition
+	landings               []Landing
 }
 
 // LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
@@ -308,6 +318,13 @@ func (c *PluginClient) ChecklistState() (remote string, values map[string]float6
 		desync = &d
 	}
 	return c.checklistRemote, values, desync
+}
+
+// Landings returns the plugin's latest LANDINGS list (unrated).
+func (c *PluginClient) Landings() []Landing {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Landing{}, c.landings...)
 }
 
 // WindLayer is one of X-Plane's wind layers around the aircraft - see
@@ -519,6 +536,8 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.selfPos = parseSelfPos(value)
 		case "PEER_POS":
 			c.peerPos = parsePeerPos(value)
+		case "LANDINGS":
+			c.landings = parseLandings(value)
 		}
 	}
 }
@@ -628,13 +647,14 @@ func parseOptionalPct(value string) *int {
 }
 
 // parseSelfPos decodes SELF_POS "<lat> <lon> <alt_ft> <heading> <gs_kt>
-// [<magvar>]" (magvar since v0.3.3), nil if empty or malformed.
+// [<magvar> [<on_ground> <ias_kt> <vs_fpm> [<engines_running>]]]" (magvar
+// since v0.3.3, the rest since v0.4.0), nil if empty or malformed.
 func parseSelfPos(value string) *MapPosition {
 	f := strings.Fields(value)
-	if len(f) != 5 && len(f) != 6 {
+	if len(f) != 5 && len(f) != 6 && len(f) != 9 && len(f) != 10 {
 		return nil
 	}
-	var v [6]float64
+	var v [10]float64
 	for i := range f {
 		x, err := strconv.ParseFloat(f[i], 64)
 		if err != nil {
@@ -642,7 +662,9 @@ func parseSelfPos(value string) *MapPosition {
 		}
 		v[i] = x
 	}
-	return &MapPosition{Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3], GroundspeedKt: v[4], MagVar: v[5]}
+	return &MapPosition{Lat: v[0], Lon: v[1], AltFt: v[2], Heading: v[3], GroundspeedKt: v[4], MagVar: v[5],
+		HasFlight: len(f) >= 9, OnGround: v[6] != 0, IasKt: v[7], VsFpm: v[8],
+		HasEngine: len(f) == 10, EnginesRunning: v[9] != 0}
 }
 
 // parsePeerPos decodes PEER_POS "<id>:<lat>:<lon>:<alt_ft>:<heading>;...".

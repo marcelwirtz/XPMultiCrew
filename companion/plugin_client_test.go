@@ -343,3 +343,17 @@ func TestApplyStatusMessageLearn(t *testing.T) {
 		t.Fatalf("unexpected change: %+v", l.Changes[1])
 	}
 }
+
+func TestParseSelfPosEngine(t *testing.T) {
+	p := parseSelfPos("50.1 8.2 1500 90 100 2.5 0 95 -300 1")
+	if p == nil || !p.HasFlight || !p.HasEngine || !p.EnginesRunning || p.IasKt != 95 || p.VsFpm != -300 || p.OnGround {
+		t.Fatalf("10-field SELF_POS parsed wrong: %+v", p)
+	}
+	p = parseSelfPos("50.1 8.2 1500 90 100 2.5 1 0 0")
+	if p == nil || !p.HasFlight || p.HasEngine || !p.OnGround {
+		t.Fatalf("9-field SELF_POS parsed wrong: %+v", p)
+	}
+	if p := parseSelfPos("50.1 8.2 1500 90 100 2.5"); p == nil || p.HasFlight {
+		t.Fatalf("6-field SELF_POS parsed wrong: %+v", p)
+	}
+}

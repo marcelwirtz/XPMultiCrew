@@ -502,6 +502,53 @@
     width: 100%; min-height: 300px; margin-top: 12px; background: #101317; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; user-select: text;
   }
+  /* --- Landings (Butter-Board) --- */
+  .lb-hero { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: center; }
+  .lb-ring { position: relative; width: 120px; height: 120px; }
+  .lb-ring svg { width: 120px; height: 120px; transform: rotate(-90deg); }
+  .lb-ring .lb-score { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .lb-ring .lb-score b { font-size: 34px; line-height: 1; }
+  .lb-ring .lb-score span { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .lb-verdict { font-size: 22px; font-weight: 700; margin: 0 0 2px; }
+  .lb-who { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .lb-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+  .lb-stat { background: #101317; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  .lb-stat span { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .lb-stat b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .lb-runway { margin-top: 14px; }
+  .lb-runway svg { width: 100%; height: auto; display: block; }
+  .lb-runway .hint { margin-top: 2px; }
+  .lb-notes { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .lb-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .lb-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  .lb-table td { padding: 5px 6px; border-bottom: 1px solid #22262d; }
+  .lb-table tr[data-key] { cursor: pointer; }
+  .lb-table tr[data-key]:hover td { background: #22272f; }
+  .lb-table tr.own td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .lb-table td.num, .lb-table th.num { text-align: right; }
+  .lb-table button.row-delete { background: transparent; color: var(--muted); padding: 0 6px; font-size: 14px; flex: none; }
+  .lb-table button.row-delete:hover { color: var(--err); }
+  .lb-pill { display: inline-block; min-width: 30px; text-align: center; border-radius: 10px; padding: 1px 6px; font-weight: 700; color: #05070a; }
+  .lb-records { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  /* --- Debrief --- */
+  #page-debrief.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .debrief-stats { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .debrief-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #debrief-map-wrap { position: relative; flex: 1; min-height: 160px; }
+  #debrief-map { position: absolute; inset: 0; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  #debrief-legend { position: absolute; left: 8px; bottom: 8px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px;
+    background: rgba(20, 23, 28, 0.85); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; max-width: calc(100% - 16px); }
+  #debrief-legend:empty { display: none; }
+  #debrief-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  .debrief-charts { position: relative; margin-top: 8px; }
+  .debrief-chart { width: 100%; height: 84px; display: block; cursor: crosshair; }
+  .debrief-chart text { font-size: 10px; fill: var(--muted); }
+  .debrief-readout { position: absolute; right: 0; top: -2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; pointer-events: none; }
+  .debrief-readout b { color: var(--text); font-weight: 600; }
+  #debrief-slider { width: 100%; margin: 4px 0 0; accent-color: var(--accent); }
+  .debrief-events { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; max-height: 54px; overflow-y: auto; }
+  .debrief-events button { flex: none; padding: 2px 8px; font-size: 11px; font-weight: 500; background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .debrief-events button:hover { border-color: var(--accent); }
   .map-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
   .map-toolbar select {
     background: #101317;
@@ -606,6 +653,8 @@
       <button type="button" data-page="shared-cockpit"><span class="nav-dot" id="nav-dot-shared-cockpit"></span>Shared Cockpit</button>
       <button type="button" data-page="map"><span class="nav-dot"></span>Map</button>
       <button type="button" data-page="checklists"><span class="nav-dot"></span>Checklists</button>
+      <button type="button" data-page="landings"><span class="nav-dot" id="nav-dot-landings"></span>Landings</button>
+      <button type="button" data-page="debrief"><span class="nav-dot" id="nav-dot-debrief"></span>Debrief</button>
       <button type="button" data-page="profiles"><span class="nav-dot"></span>Profiles</button>
       <button type="button" data-page="setup"><span class="nav-dot"></span>Setup</button>
       <button type="button" data-page="diagnostics"><span class="nav-dot"></span>Diagnostics</button>
@@ -708,6 +757,51 @@
               <button id="checklist-cancel" class="secondary" type="button">Cancel</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Butter-Board (landings.js, companion/landings.go): every landing
+           in the session rated against the runway from apt.dat. -->
+      <div class="page" id="page-landings">
+        <div class="panel" id="landing-hero">
+          <div class="hint" id="landing-empty" style="margin-top: 0;">No landings yet - fly a circuit! Every landing is measured automatically
+            (sink rate, G, where on the runway) and everyone in your Multiplayer session shows up here too.</div>
+        </div>
+        <div class="panel" style="margin-top: 16px;">
+          <h2>This session</h2>
+          <div class="hint" id="session-empty" style="margin-top: 0;">Landings of everyone in the session since the app was started.</div>
+          <table class="lb-table" id="session-table"></table>
+        </div>
+        <div class="panel" style="margin-top: 16px;">
+          <h2>My landings</h2>
+          <div class="lb-records" id="landing-records"></div>
+          <table class="lb-table" id="log-table"></table>
+        </div>
+      </div>
+
+      <!-- Debrief (debrief.js, companion/flights.go): every flight recorded
+           automatically, replayed on a map with its profile. -->
+      <div class="page" id="page-debrief">
+        <div class="map-toolbar">
+          <select id="debrief-flight" title="Recorded flights" style="flex: 1; min-width: 0;"></select>
+          <button id="debrief-play" type="button" title="Replay the flight">▶ Play</button>
+          <select id="debrief-speed" title="Replay speed">
+            <option value="10">10×</option>
+            <option value="30" selected>30×</option>
+            <option value="60">60×</option>
+            <option value="120">120×</option>
+          </select>
+          <button id="debrief-delete" class="secondary" type="button" title="Delete this flight">Delete</button>
+        </div>
+        <div class="debrief-stats" id="debrief-stats"></div>
+        <div class="status" id="debrief-message" style="display: none; margin-bottom: 10px;"></div>
+        <div id="debrief-map-wrap"><div id="debrief-map"></div><div id="debrief-legend"></div></div>
+        <div class="debrief-charts" id="debrief-charts">
+          <div class="debrief-readout" id="debrief-readout"></div>
+          <svg id="debrief-alt" class="debrief-chart" role="img" aria-label="Altitude profile"></svg>
+          <svg id="debrief-speed-chart" class="debrief-chart" role="img" aria-label="Ground speed and indicated airspeed"></svg>
+          <input type="range" id="debrief-slider" min="0" max="1000" value="0" aria-label="Time in the flight">
+          <div class="debrief-events" id="debrief-events"></div>
         </div>
       </div>
 

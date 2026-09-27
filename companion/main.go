@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 
@@ -53,7 +54,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		OnStartup: app.startup,
+		OnStartup:  app.startup,
+		OnShutdown: func(_ context.Context) { app.shutdown() },
 		Bind: []interface{}{
 			app,
 		},

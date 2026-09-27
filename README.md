@@ -34,6 +34,30 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.0: Butter-Board and Debrief
+
+- **Landing rating ("Butter-Board", new Landings page):** every landing is
+  measured by the plugin - sink rate at the moment the gear touches, peak G
+  (0.2 s average, X-Plane's one-frame contact spike filtered out), bounces,
+  drift/crab, float distance from 50 ft - and placed on the runway from your
+  own apt.dat: distance past the (displaced) threshold and offset from the
+  centerline. It's scored 0-100 with every deduction explained, and shown in
+  X-Plane right after touchdown ("TOUCHDOWN -118 fpm | 1.16 G | 360 m past
+  thr 08 | 2.2 m R of CL | Score 90 - Smooth"). Everyone in the Multiplayer
+  session gets everyone's landings: the page ranks the session, keeps your
+  own landing log with records, and draws each touchdown on a runway sketch.
+- **Flight recorder ("Debrief", new page):** every flight is recorded
+  automatically from engine start to engine shutdown - including the other
+  pilots of the session. The Debrief page shows it on a map with altitude
+  and speed profiles and the events (takeoff, finished checklists, route
+  waypoints reached, landings with their score). Hover the profile or drag
+  the slider to put every aircraft at that moment, or replay the whole
+  flight at 10-120x. The flight in progress can be watched live too.
+- Plugin protocol: new LANDINGS status line and SHOW_OVERLAY command,
+  SELF_POS gains on-ground/IAS/vertical speed/engine state (see
+  `control_listener.h`); landings travel through the session sealed like
+  routes (magic FTL1). Older companions ignore all of it.
+
 ## What's new in v0.3.4: Shared Cockpit
 
 - **Buttons, not just values:** profiles can now list X-Plane *commands*

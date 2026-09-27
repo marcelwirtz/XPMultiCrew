@@ -40,6 +40,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   CHECKLIST_SYNC <payload>   - shared checklist state, relayed to the Shared Cockpit peer as-is
 //   SC_RESYNC                  - both sides re-send the values of the categories they own
 //   WATCH <name[idx]>;...      - datarefs whose values the companion wants (checklist auto-check)
+//   SHOW_OVERLAY <seconds> <text> - one line of text on the sim screen (the landing rating)
 //   GET_STATUS
 // ROUTE_SHARE sends a planned route (the companion's own text encoding,
 // passed through untouched, no spaces, at most kMaxRoutePayload bytes) to
@@ -132,8 +133,13 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //     it shows everyone's planes) or another plugin such as LiveTraffic
 //     (then our peers are drawn but missing from TCAS and X-Plane's map).
 //   SELF_POS <lat> <lon> <alt_ft> <heading_deg_true> <groundspeed_kt> <magnetic_variation_deg_east>
+//            <on_ground 0|1> <ias_kt> <vs_fpm> <engines_running 0|1>   (the last four since v0.4.0)
 //   PEER_POS <sender_id>:<lat>:<lon>:<alt_ft>:<heading_deg>;... (Formation, dead-reckoned)
 //     Both pushed about once a second, for the companion's map page.
+//   LANDINGS <entry>;... (the last 20 landings - ours and the session's, oldest first)
+//     <entry> = <sender_id, 0 = ours>:<id, unix time>:<lat>:<lon>:<heading_true>:<vs_fpm>:<peak_g>:
+//               <groundspeed_kt>:<drift_deg>:<bounces>:<flare_m, -1 = unknown>:<touch_and_go 0|1>:<icao|->:<callsign|->
+//     See sync/touchdown_detector.h - the companion rates them against the runway.
 //   SHARED_COCKPIT_AIRCRAFT_MISMATCH <own icao>:<master icao> (empty if matching/unknown)
 //   SIM_READY <0|1>
 //   PLUGIN_VERSION <version>
@@ -196,6 +202,7 @@ public:
         std::function<void(const std::string& list)> on_watch;
         std::function<void(bool start)> on_learn;
         std::function<void(const std::string& payload)> on_route_share; // "" = clear
+        std::function<void(double seconds, const std::string& text)> on_show_overlay;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -247,6 +254,7 @@ public:
     // Both in one push (they're refreshed together once a second) - see
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
+    void SetLandings(const std::string& encoded);
 
 private:
     void HandleLine(const std::string& line);
@@ -277,6 +285,7 @@ private:
     std::string watch_values_;
     std::string self_pos_;
     std::string peer_pos_;
+    std::string landings_;
 };
 
 } // namespace flytogether

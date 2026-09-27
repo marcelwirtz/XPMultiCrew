@@ -38,10 +38,35 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 import { updateProgress } from './route-progress.js';
 import { recordTracks } from './tracks.js';
 import { showChecklists, updateChecklists } from './checklists.js';
+import { showLandings, updateLandings } from './landings.js';
 
 // The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
 let mapModule = null;
 let lastStatusForMap = null;
+// The Debrief page brings its own map - loaded the same way.
+let debriefModule = null;
+let lastStatusForDebrief = null;
+let debriefSeenFlightsVersion = null;
+function openDebriefPage() {
+  import('./debrief.js').then((m) => {
+    debriefModule = m;
+    m.showDebrief();
+    if (lastStatusForDebrief) m.updateDebrief(lastStatusForDebrief, true);
+  });
+}
+
+// Sidebar dot on Debrief: while a flight is being recorded, and after one
+// was saved until the page is opened.
+function renderDebriefDot(data) {
+  if (debriefSeenFlightsVersion === null) debriefSeenFlightsVersion = data.flightsVersion;
+  const visible = document.getElementById('page-debrief').classList.contains('active');
+  if (visible) debriefSeenFlightsVersion = data.flightsVersion;
+  const dot = document.getElementById('nav-dot-debrief');
+  const show = !!data.recording || data.flightsVersion !== debriefSeenFlightsVersion;
+  dot.className = show ? 'nav-dot shown ok' : 'nav-dot';
+  dot.title = data.recording ? 'Recording this flight' : show ? 'New flight recorded' : '';
+}
+
 function openMapPage() {
   import('./map.js').then((m) => {
     mapModule = m;
@@ -69,6 +94,8 @@ function showPage(page) {
   // created the first time its page is actually shown.
   if (page === 'map') openMapPage();
   if (page === 'checklists') showChecklists();
+  if (page === 'landings') showLandings();
+  if (page === 'debrief') openDebriefPage();
   try {
     localStorage.setItem(kLastPageStorageKey, page);
   } catch (e) {
@@ -681,6 +708,10 @@ EventsOn('status', (data) => {
   renderDesync(data.scDesync);
   recordTracks(data);
   updateChecklists(data);
+  updateLandings(data, document.getElementById('page-landings').classList.contains('active'));
+  lastStatusForDebrief = data;
+  renderDebriefDot(data);
+  if (debriefModule) debriefModule.updateDebrief(data, document.getElementById('page-debrief').classList.contains('active'));
   renderRouteBanner(data.selfPos);
   lastSimReady = data.simReady;
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
