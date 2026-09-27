@@ -11,6 +11,7 @@ import {
   GetAvailablePluginVersion,
   GetPrefs,
   GetInstalledPluginVersion,
+  GetLastPage,
   GetRecentLogLines,
   GetSavedServers,
   GetXPlanePath,
@@ -23,6 +24,7 @@ import {
   SaveServer,
   ScResync,
   SearchDatarefs,
+  SetLastPage,
   SetPrefs,
   StartLearn,
   StartSharedCockpit,
@@ -89,10 +91,8 @@ function openMapPage() {
 
 // Sidebar navigation - one .page shown at a time (see index.html's
 // .app-layout comment for why this replaced one long stacked page).
-// Persists the last-open page in localStorage purely as a per-viewer
-// convenience (wrapped in try/catch: private windows/blocked storage must
-// still leave the app usable, just without remembering the choice) - never
-// anything read back by Go or shared between machines.
+// The open page is remembered in the config file (SetLastPage below);
+// this key is where older versions kept it.
 const kLastPageStorageKey = 'xpmulticrew.lastPage';
 
 function showPage(page) {
@@ -109,11 +109,7 @@ function showPage(page) {
   if (page === 'landings') showLandings();
   if (page === 'airports') showAirports();
   if (page === 'debrief') openDebriefPage();
-  try {
-    localStorage.setItem(kLastPageStorageKey, page);
-  } catch (e) {
-    // Ignore - see kLastPageStorageKey's comment.
-  }
+  SetLastPage(page).catch(() => {});
 }
 
 document.querySelectorAll('.sidebar button').forEach((btn) => {
@@ -125,16 +121,22 @@ document.querySelectorAll('.sidebar button').forEach((btn) => {
 // needs the X-Plane path chosen and the plugin installed before Formation/
 // Shared Cockpit are even usable. Once there's a stored page (i.e. every
 // launch after the first), that takes over instead - see below.
-let initialPage = 'setup';
-try {
-  const stored = localStorage.getItem(kLastPageStorageKey);
-  if (stored && document.getElementById(`page-${stored}`)) {
-    initialPage = stored;
+// Kept in the companion's config file (app.go's SetLastPage) - WebKit's
+// localStorage turned out not to be written reliably when the window is
+// closed on Linux. The old localStorage value is only a one-time fallback.
+function legacyStoredPage() {
+  try {
+    return localStorage.getItem(kLastPageStorageKey);
+  } catch (e) {
+    return null;
   }
-} catch (e) {
-  // Ignore - see kLastPageStorageKey's comment.
 }
-showPage(initialPage);
+GetLastPage()
+  .catch(() => '')
+  .then((stored) => {
+    const page = stored || legacyStoredPage();
+    showPage(page && document.getElementById(`page-${page}`) ? page : 'setup');
+  });
 
 let role = 'MASTER';
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // companionConfig persists small local settings across app restarts - the
@@ -32,6 +33,11 @@ type companionConfig struct {
 	ShowLabels *bool  `json:"showLabels,omitempty"`
 	EnvSync    *bool  `json:"envSync,omitempty"`
 	RightSeat  *bool  `json:"rightSeat,omitempty"`
+
+	// The page (sidebar entry) open when the app was last used, and the
+	// window's size/position - see window.go.
+	LastPage string       `json:"lastPage,omitempty"`
+	Window   *WindowState `json:"window,omitempty"`
 }
 
 // pluginPrefs returns the settings to push to the plugin, with defaults
@@ -123,17 +129,29 @@ func loadConfig() companionConfig {
 // other session) untouched - session is nil to clear it (e.g. on an
 // explicit Disconnect, see app.go).
 func persistLastFormation(session *PersistedSession) error {
-	cfg := loadConfig()
-	cfg.LastFormation = session
-	return saveConfig(cfg)
+	return updateConfig(func(cfg *companionConfig) { cfg.LastFormation = session })
 }
 
 func persistLastSharedCockpit(session *PersistedSession) error {
+	return updateConfig(func(cfg *companionConfig) { cfg.LastSharedCockpit = session })
+}
+
+// configMu serializes read-modify-write cycles: the status loop (sessions,
+// window size) and the frontend (settings, last page) change different
+// fields of the same file and must not overwrite each other's changes.
+var configMu sync.Mutex
+
+// updateConfig loads the config, applies `change` and saves it.
+func updateConfig(change func(cfg *companionConfig)) error {
+	configMu.Lock()
+	defer configMu.Unlock()
 	cfg := loadConfig()
-	cfg.LastSharedCockpit = session
+	change(&cfg)
 	return saveConfig(cfg)
 }
 
+// saveConfig writes via a temporary file and a rename, so a crash mid-write
+// can't leave a truncated config behind.
 func saveConfig(cfg companionConfig) error {
 	path, err := configFilePath()
 	if err != nil {
@@ -146,5 +164,9 @@ func saveConfig(cfg companionConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

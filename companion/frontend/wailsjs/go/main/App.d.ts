@@ -46,6 +46,8 @@ export function GetInstalledPluginVersion():Promise<string>;
 
 export function GetLandingBoard():Promise<main.LandingBoard>;
 
+export function GetLastPage():Promise<string>;
+
 export function GetNavData():Promise<main.NavData>;
 
 export function GetPrefs():Promise<main.PluginPrefs>;
@@ -89,6 +91,8 @@ export function SearchAirports(arg1:string):Promise<Array<main.AirportHit>>;
 export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
 
 export function SetChecklistWatch(arg1:Array<string>):Promise<void>;
+
+export function SetLastPage(arg1:string):Promise<void>;
 
 export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean):Promise<main.PluginPrefs>;
 

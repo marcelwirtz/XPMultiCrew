@@ -90,6 +90,10 @@ export function GetLandingBoard() {
   return window['go']['main']['App']['GetLandingBoard']();
 }
 
+export function GetLastPage() {
+  return window['go']['main']['App']['GetLastPage']();
+}
+
 export function GetNavData() {
   return window['go']['main']['App']['GetNavData']();
 }
@@ -176,6 +180,10 @@ export function SearchDatarefs(arg1) {
 
 export function SetChecklistWatch(arg1) {
   return window['go']['main']['App']['SetChecklistWatch'](arg1);
+}
+
+export function SetLastPage(arg1) {
+  return window['go']['main']['App']['SetLastPage'](arg1);
 }
 
 export function SetPrefs(arg1, arg2, arg3, arg4) {

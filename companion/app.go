@@ -70,6 +70,8 @@ type App struct {
 	persistedSharedCockpitCode string
 	autoRejoinAttempted        bool
 
+	windowReady bool // set once OnDomReady restored the position, guarded by mu
+
 	landings       landingBook
 	recMu          sync.Mutex
 	recorder       flightRecorder
@@ -110,6 +112,7 @@ func (a *App) pollStatus() {
 			a.maybeAutoRejoin()
 		}
 		a.maybeSyncPrefs()
+		a.trackWindow()
 
 		selfPos, peerPos := a.plugin.Positions()
 		a.processLandings()
@@ -172,15 +175,16 @@ func (a *App) GetPrefs() PluginPrefs {
 // (8 characters of A-Z, 0-9 and '-').
 func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat bool) (PluginPrefs, error) {
 	callsign = sanitizeCallsign(callsign)
-	cfg := loadConfig()
-	cfg.Callsign = callsign
-	cfg.ShowLabels = &showLabels
-	cfg.EnvSync = &envSync
-	cfg.RightSeat = &rightSeat
-	if err := saveConfig(cfg); err != nil {
+	var prefs PluginPrefs
+	if err := updateConfig(func(cfg *companionConfig) {
+		cfg.Callsign = callsign
+		cfg.ShowLabels = &showLabels
+		cfg.EnvSync = &envSync
+		cfg.RightSeat = &rightSeat
+		prefs = cfg.pluginPrefs()
+	}); err != nil {
 		return PluginPrefs{}, err
 	}
-	prefs := cfg.pluginPrefs()
 	_ = a.plugin.Send("SET_PREFS " + prefs.encode())
 	return prefs, nil
 }
@@ -436,15 +440,15 @@ func (a *App) SaveServer(label, hostPort string) error {
 	if label == "" || hostPort == "" {
 		return errors.New("a label and a server address are both required")
 	}
-	cfg := loadConfig()
-	for i, s := range cfg.SavedServers {
-		if s.Label == label {
-			cfg.SavedServers[i].HostPort = hostPort
-			return saveConfig(cfg)
+	return updateConfig(func(cfg *companionConfig) {
+		for i, s := range cfg.SavedServers {
+			if s.Label == label {
+				cfg.SavedServers[i].HostPort = hostPort
+				return
+			}
 		}
-	}
-	cfg.SavedServers = append(cfg.SavedServers, SavedServer{Label: label, HostPort: hostPort})
-	return saveConfig(cfg)
+		cfg.SavedServers = append(cfg.SavedServers, SavedServer{Label: label, HostPort: hostPort})
+	})
 }
 
 // DeleteSavedServer removes a server from the address book by label. A
@@ -452,14 +456,14 @@ func (a *App) SaveServer(label, hostPort string) error {
 // something already gone isn't a failure. Bound to the frontend's address
 // book entries' delete action.
 func (a *App) DeleteSavedServer(label string) error {
-	cfg := loadConfig()
-	for i, s := range cfg.SavedServers {
-		if s.Label == label {
-			cfg.SavedServers = append(cfg.SavedServers[:i], cfg.SavedServers[i+1:]...)
-			return saveConfig(cfg)
+	return updateConfig(func(cfg *companionConfig) {
+		for i, s := range cfg.SavedServers {
+			if s.Label == label {
+				cfg.SavedServers = append(cfg.SavedServers[:i], cfg.SavedServers[i+1:]...)
+				return
+			}
 		}
-	}
-	return nil
+	})
 }
 
 // GetRecentLogLines returns the plugin's own new lines from X-Plane's
@@ -492,9 +496,7 @@ func (a *App) ChooseXPlanePath() (*ChooseXPlaneResult, error) {
 		return nil, nil
 	}
 
-	cfg := loadConfig()
-	cfg.XPlanePath = path
-	if err := saveConfig(cfg); err != nil {
+	if err := updateConfig(func(cfg *companionConfig) { cfg.XPlanePath = path }); err != nil {
 		return nil, err
 	}
 

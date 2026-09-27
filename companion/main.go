@@ -44,17 +44,25 @@ func windowTitle() string {
 func main() {
 	app := NewApp()
 
+	width, height, maximised := initialWindowSize(loadConfig())
+	startState := options.Normal
+	if maximised {
+		startState = options.Maximised
+	}
+
 	err := wails.Run(&options.App{
 		Title:            windowTitle(),
-		Width:            760,
-		Height:           520,
-		MinWidth:         600,
-		MinHeight:        420,
+		Width:            width,
+		Height:           height,
+		WindowStartState: startState,
+		MinWidth:         minWindowWidth,
+		MinHeight:        minWindowHeight,
 		BackgroundColour: &options.RGBA{R: 20, G: 23, B: 28, A: 1},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
 		OnStartup:  app.startup,
+		OnDomReady: app.restoreWindowPosition,
 		OnShutdown: func(_ context.Context) { app.shutdown() },
 		Bind: []interface{}{
 			app,
