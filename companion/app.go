@@ -527,12 +527,11 @@ func (a *App) GetAvailablePluginVersion() string {
 
 // CheckForUpdate asks GitHub for the latest companion app release and
 // compares it against this build's own version (see updater.go's
-// CheckForUpdate) - called once from the frontend on load, the same way
-// refreshVersions() checks the plugin's own Installed/Available versions,
-// not on the 1s status-poll ticker (an API call that often would be
-// wasteful and risks GitHub's unauthenticated rate limit for no benefit -
-// a new release doesn't appear more than a few times a year). Returns nil
-// (no error) if already up to date or this is a local dev build.
+// CheckForUpdate) - called by the frontend on load and every 6 hours, not
+// on the 1s status-poll ticker (an API call that often would be wasteful
+// and eat into GitHub's unauthenticated rate limit; updater.go falls back
+// to the release page when the API refuses anyway). Returns nil (no error)
+// if already up to date or this is a local dev build.
 func (a *App) CheckForUpdate() (*UpdateInfo, error) {
 	return CheckForUpdate()
 }

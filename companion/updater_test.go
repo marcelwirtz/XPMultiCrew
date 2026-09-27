@@ -262,3 +262,57 @@ func TestIsNewerVersion(t *testing.T) {
 		}
 	}
 }
+
+// fakeGitHubWebServer stands in for github.com: the API is rate-limited
+// (403), the release page redirects to the tag, downloads have fixed URLs.
+func fakeGitHubWebServer(t *testing.T, tagName string, assets map[string][]byte) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/releases/latest", githubRepo), func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"API rate limit exceeded"}`, http.StatusForbidden)
+	})
+	mux.HandleFunc(fmt.Sprintf("/%s/releases/latest", githubRepo), func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, fmt.Sprintf("/%s/releases/tag/%s", githubRepo, tagName), http.StatusFound)
+	})
+	for name, data := range assets {
+		data := data
+		mux.HandleFunc(fmt.Sprintf("/%s/releases/download/%s/%s", githubRepo, tagName, name), func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(data)
+		})
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	oldAPI, oldWeb := githubAPIBaseURL, githubWebBaseURL
+	githubAPIBaseURL, githubWebBaseURL = srv.URL, srv.URL
+	t.Cleanup(func() { githubAPIBaseURL, githubWebBaseURL = oldAPI, oldWeb })
+}
+
+func TestUpdateFallsBackToReleasePageWhenAPIRateLimited(t *testing.T) {
+	zipName, exeName, ok := platformAssetName()
+	if !ok {
+		t.Skip("no release build for this platform")
+	}
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	f, _ := zw.Create(exeName)
+	_, _ = f.Write([]byte("new binary"))
+	_ = zw.Close()
+	sum := sha256.Sum256(zipBuf.Bytes())
+	fakeGitHubWebServer(t, "v0.4.2", map[string][]byte{
+		zipName:      zipBuf.Bytes(),
+		"SHA256SUMS": []byte(hex.EncodeToString(sum[:]) + "  " + zipName + "\n"),
+	})
+
+	oldVersion := companionVersion
+	companionVersion = "v0.4.1"
+	defer func() { companionVersion = oldVersion }()
+
+	info, err := CheckForUpdate()
+	if err != nil || info == nil || info.Version != "v0.4.2" {
+		t.Fatalf("expected v0.4.2 via the release page, got %+v, %v", info, err)
+	}
+	exe, err := prepareUpdate()
+	if err != nil || string(exe) != "new binary" {
+		t.Fatalf("download via the release page failed: %q, %v", exe, err)
+	}
+}

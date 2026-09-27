@@ -177,14 +177,27 @@ GetXPlanePath().then((path) => {
   refreshVersions();
 });
 
-// Checked once on load, not on the 1s status-poll ticker - see
+// Checked on load and then every 6 hours (the app often stays open for a
+// whole flying evening), not on the 1s status-poll ticker - see
 // App.CheckForUpdate's comment (companion/app.go). Resolves to null both
-// when already up to date and for a local dev build.
-CheckForUpdate().then((info) => {
-  if (!info) return;
-  document.getElementById('update-banner-text').textContent = `Update available: ${info.version}`;
-  document.getElementById('update-banner').style.display = '';
-});
+// when already up to date and for a local dev build. A failed check (no
+// internet, GitHub refusing) is retried after 15 minutes.
+const kUpdateCheckIntervalMs = 6 * 60 * 60 * 1000;
+const kUpdateRetryMs = 15 * 60 * 1000;
+function checkForUpdate() {
+  CheckForUpdate()
+    .then((info) => {
+      setTimeout(checkForUpdate, kUpdateCheckIntervalMs);
+      if (!info) return;
+      document.getElementById('update-banner-text').textContent = `Update available: ${info.version}`;
+      document.getElementById('update-banner').style.display = '';
+    })
+    .catch((e) => {
+      console.warn('update check failed, retrying in 15 min:', e);
+      setTimeout(checkForUpdate, kUpdateRetryMs);
+    });
+}
+checkForUpdate();
 
 // Address book - one shared saved-servers list backing both the
 // Formation and Shared Cockpit server-address rows (a server isn't

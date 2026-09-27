@@ -22,9 +22,11 @@ import (
 // (`git tag vX.Y.Z && git push origin vX.Y.Z` triggers it).
 const githubRepo = "marcelwirtz/XPMultiCrew"
 
-// githubAPIBaseURL is a var, not a const, so updater_test.go can point it
-// at a local httptest server instead of the real GitHub API.
+// githubAPIBaseURL/githubWebBaseURL are vars, not consts, so
+// updater_test.go can point them at a local httptest server instead of the
+// real GitHub.
 var githubAPIBaseURL = "https://api.github.com"
+var githubWebBaseURL = "https://github.com"
 
 // platformAssetName is the release asset (a zip - see release.yml's
 // Package steps) that contains this platform's companion executable.
@@ -58,7 +60,52 @@ type githubRelease struct {
 	Assets  []githubAsset `json:"assets"`
 }
 
+// fetchLatestRelease asks the GitHub API first. Unauthenticated API calls
+// are limited to 60 an hour per IP address - shared by everything on the
+// same internet connection - so when the API refuses, the release page is
+// used instead: /releases/latest redirects to the newest tag, and release
+// downloads have fixed URLs. Neither counts against the API limit.
 func fetchLatestRelease() (*githubRelease, error) {
+	release, apiErr := fetchLatestReleaseAPI()
+	if apiErr == nil {
+		return release, nil
+	}
+	release, webErr := fetchLatestReleaseWeb()
+	if webErr != nil {
+		return nil, fmt.Errorf("%v; release page: %v", apiErr, webErr)
+	}
+	return release, nil
+}
+
+func fetchLatestReleaseWeb() (*githubRelease, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		// Only the redirect target is wanted, not the page behind it.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(fmt.Sprintf("%s/%s/releases/latest", githubWebBaseURL, githubRepo))
+	if err != nil {
+		return nil, err
+	}
+	resp.Body.Close()
+	location := resp.Header.Get("Location")
+	_, tag, found := strings.Cut(location, "/releases/tag/")
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 || !found || tag == "" || strings.ContainsAny(tag, "/?#") {
+		return nil, fmt.Errorf("unexpected answer %s (%q)", resp.Status, location)
+	}
+	release := &githubRelease{TagName: tag}
+	names := []string{"SHA256SUMS"}
+	if zipName, _, ok := platformAssetName(); ok {
+		names = append(names, zipName)
+	}
+	for _, name := range names {
+		release.Assets = append(release.Assets, githubAsset{Name: name,
+			BrowserDownloadURL: fmt.Sprintf("%s/%s/releases/download/%s/%s", githubWebBaseURL, githubRepo, tag, name)})
+	}
+	return release, nil
+}
+
+func fetchLatestReleaseAPI() (*githubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("%s/repos/%s/releases/latest", githubAPIBaseURL, githubRepo), nil)
