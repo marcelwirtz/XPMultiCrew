@@ -34,6 +34,23 @@ import { clearTracks, tracksGeoJson } from './tracks.js';
 
 maplibregl.setWorkerUrl(workerUrl);
 
+// On Windows, WebView2 serves the app from http://wails.localhost/, which
+// only exists because Wails intercepts the page's requests - a request made
+// for a web worker isn't reliably intercepted, so the worker never starts
+// and the map stays black without any error. Fetch the worker script from
+// the page itself and hand MapLibre a blob: URL instead. Only for http(s)
+// pages: on wails:// (Linux, macOS) blob URLs get an opaque origin, and the
+// direct URL works there anyway.
+const workerReady = /^https?:$/.test(location.protocol)
+  ? fetch(workerUrl)
+    .then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.text();
+    })
+    .then((code) => maplibregl.setWorkerUrl(URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))))
+    .catch((e) => console.warn('MapLibre worker: keeping the direct URL', e))
+  : Promise.resolve();
+
 const kStyles = {
   dark: 'https://tiles.openfreemap.org/styles/dark',
   liberty: 'https://tiles.openfreemap.org/styles/liberty',
@@ -44,6 +61,7 @@ const kRouteStorageKey = 'xpmulticrew.route';
 const kLayerStorageKey = 'xpmulticrew.mapLayers';
 
 let map = null;
+let mapCreating = false;
 let mapFailed = false;
 let styleReady = false; // own flag: map.isStyleLoaded() stays false while tiles are still loading
 let lastData = null; // latest status event, applied once the map/style is ready
@@ -846,7 +864,8 @@ async function loadNav() {
   renderRoute(); // magnetic courses now that VORs (variation) are known
 }
 
-function createMap() {
+async function createMap() {
+  await workerReady; // the worker URL must be final before the first Map exists
   const styleName = kStyles[storageGet(kStyleStorageKey)] ? storageGet(kStyleStorageKey) : 'dark';
   document.getElementById('map-style').value = styleName;
   followSelf = storageGet(kFollowStorageKey) !== '0';
@@ -876,6 +895,16 @@ function createMap() {
     styleReady = true;
     addOverlays();
     applyData();
+  });
+  // A map that never finishes loading shows nothing but its background -
+  // say so instead of leaving a black box.
+  const slowText = 'The map is taking unusually long to load - no internet connection, or the map engine couldn\'t start in this system\'s webview.';
+  const loadWatchdog = setTimeout(() => {
+    if (!map.loaded() && !document.getElementById('map-message').textContent) setMapMessage(slowText);
+  }, 20000);
+  map.once('load', () => {
+    clearTimeout(loadWatchdog);
+    if (document.getElementById('map-message').textContent === slowText) setMapMessage('');
   });
   map.on('dragstart', () => setFollow(false));
   map.on('moveend', refreshAirspaces);
@@ -911,9 +940,12 @@ function createMap() {
 
 // Called by main.js every time the Map page is shown.
 export function showMap() {
-  if (mapFailed) return;
+  if (mapFailed || mapCreating) return;
   if (!map) {
-    createMap();
+    mapCreating = true;
+    createMap().finally(() => {
+      mapCreating = false;
+    });
   } else {
     map.resize();
   }

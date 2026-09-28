@@ -34,6 +34,13 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.4
+
+- Fixed on Windows: the Map page stayed black. The map engine's background
+  worker couldn't be loaded inside the Windows webview; it's now started
+  from the page itself. If the map still doesn't finish loading, the page
+  says so after 20 seconds instead of staying blank.
+
 ## What's new in v0.4.3
 
 - Fixed on Windows: updating the plugin while X-Plane was running could
