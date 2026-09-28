@@ -33,6 +33,7 @@ type companionConfig struct {
 	ShowLabels *bool  `json:"showLabels,omitempty"`
 	EnvSync    *bool  `json:"envSync,omitempty"`
 	RightSeat  *bool  `json:"rightSeat,omitempty"`
+	DirectP2P  *bool  `json:"directP2P,omitempty"`
 
 	// The page (sidebar entry) open when the app was last used, and the
 	// window's size/position - see window.go.
@@ -43,7 +44,7 @@ type companionConfig struct {
 // pluginPrefs returns the settings to push to the plugin, with defaults
 // filled in.
 func (c companionConfig) pluginPrefs() PluginPrefs {
-	p := PluginPrefs{Callsign: c.Callsign, ShowLabels: true, EnvSync: true, RightSeat: true}
+	p := PluginPrefs{Callsign: c.Callsign, ShowLabels: true, EnvSync: true, RightSeat: true, DirectP2P: true}
 	if c.RightSeat != nil {
 		p.RightSeat = *c.RightSeat
 	}
@@ -52,6 +53,9 @@ func (c companionConfig) pluginPrefs() PluginPrefs {
 	}
 	if c.EnvSync != nil {
 		p.EnvSync = *c.EnvSync
+	}
+	if c.DirectP2P != nil {
+		p.DirectP2P = *c.DirectP2P
 	}
 	return p
 }

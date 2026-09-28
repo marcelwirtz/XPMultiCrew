@@ -115,7 +115,7 @@ void RendezvousClient::SendRelay(const void* data, size_t len) {
 }
 
 void RendezvousClient::SendDirectToPeers(const void* data, size_t len) {
-    if (direct_peers_.empty()) {
+    if (!direct_enabled_ || direct_peers_.empty()) {
         return;
     }
     std::vector<char> datagram(sizeof(kDirectDatagramTag) + len);
@@ -211,7 +211,9 @@ void RendezvousClient::PollIncoming(std::chrono::steady_clock::duration timeout)
         }
         if (static_cast<size_t>(received) >= sizeof(kDirectDatagramTag) &&
             std::memcmp(buf, kDirectDatagramTag, sizeof(kDirectDatagramTag)) == 0) {
-            HandleDirectDatagram(buf, static_cast<size_t>(received), from_host, from_port);
+            if (direct_enabled_) {
+                HandleDirectDatagram(buf, static_cast<size_t>(received), from_host, from_port);
+            }
             continue; // peer traffic, not proof the server is alive
         }
 

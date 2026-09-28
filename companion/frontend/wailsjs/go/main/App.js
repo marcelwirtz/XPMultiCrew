@@ -190,8 +190,8 @@ export function SetLastPage(arg1) {
   return window['go']['main']['App']['SetLastPage'](arg1);
 }
 
-export function SetPrefs(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3, arg4);
+export function SetPrefs(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ShareChecklistState(arg1) {

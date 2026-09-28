@@ -34,7 +34,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   RELOAD_CSL
-//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1>]
+//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1> [<directp2p 0|1>]]
 //   LEARN_START / LEARN_STOP
 //   ROUTE_SHARE <payload> / ROUTE_CLEAR
 //   CHECKLIST_SYNC <payload>   - shared checklist state, relayed to the Shared Cockpit peer as-is
@@ -53,6 +53,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // others ("-" = use the aircraft's tail number), whether XPMP2 draws
 // labels/map icons for remote aircraft, and whether Formation time &
 // weather sync is on (the session creator shares, everyone else follows).
+// directp2p 0 turns off direct peer-to-peer (hole punching) for both
+// Formation and Shared Cockpit - relay through the server only; absent = on.
 // Echoed back as PREFS, so the companion re-sends them whenever the plugin
 // lost them (X-Plane restart).
 // The optional trailing SPECTATOR token on CREATE_SESSION/JOIN_SESSION
@@ -196,7 +198,8 @@ public:
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_claim_ownership;
         std::function<void()> on_reload_csl;
-        std::function<void(const std::string& callsign, bool labels, bool envSync, bool rightSeat)> on_set_prefs;
+        std::function<void(const std::string& callsign, bool labels, bool envSync, bool rightSeat, bool directP2P)>
+            on_set_prefs;
         std::function<void(const std::string& payload)> on_checklist_sync;
         std::function<void()> on_sc_resync;
         std::function<void(const std::string& list)> on_watch;

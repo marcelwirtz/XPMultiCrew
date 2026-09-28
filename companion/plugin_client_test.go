@@ -291,12 +291,12 @@ func TestApplyStatusMessageV03Fields(t *testing.T) {
 }
 
 func TestPluginPrefsDefaultsAndEncoding(t *testing.T) {
-	if got := (companionConfig{}).pluginPrefs().encode(); got != "- 1 1 1" {
+	if got := (companionConfig{}).pluginPrefs().encode(); got != "- 1 1 1 1" {
 		t.Fatalf("defaults should be no callsign, labels on, env sync on - got %q", got)
 	}
 	off := false
 	cfg := companionConfig{Callsign: "N123", ShowLabels: &off}
-	if got := cfg.pluginPrefs().encode(); got != "N123 0 1 1" {
+	if got := cfg.pluginPrefs().encode(); got != "N123 0 1 1 1" {
 		t.Fatalf("got %q", got)
 	}
 	if got := sanitizeCallsign(" d-eabc x;yz123 "); got != "D-EABCXY" {

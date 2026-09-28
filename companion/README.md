@@ -91,7 +91,7 @@ X-Plane instance on the same machine, not a remote one):
   DISCONNECT_SHARED_COCKPIT
   CLAIM_OWNERSHIP <engine|avionics|systems|flight>
   RELOAD_CSL
-  SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1>
+  SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1> [<directp2p 0|1>]]
   GET_STATUS
   ```
   The full, authoritative list is in `plugin/include/control/control_listener.h`.

@@ -828,6 +828,7 @@ export namespace main {
 	    showLabels: boolean;
 	    envSync: boolean;
 	    rightSeat: boolean;
+	    directP2P: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PluginPrefs(source);
@@ -839,6 +840,7 @@ export namespace main {
 	        this.showLabels = source["showLabels"];
 	        this.envSync = source["envSync"];
 	        this.rightSeat = source["rightSeat"];
+	        this.directP2P = source["directP2P"];
 	    }
 	}
 	export class ProfileEntry {

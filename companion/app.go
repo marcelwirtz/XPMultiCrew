@@ -173,7 +173,7 @@ func (a *App) GetPrefs() PluginPrefs {
 // SetPrefs saves the settings and pushes them to the plugin right away.
 // The callsign is upper-cased and cut to what the wire format carries
 // (8 characters of A-Z, 0-9 and '-').
-func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat bool) (PluginPrefs, error) {
+func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat, directP2P bool) (PluginPrefs, error) {
 	callsign = sanitizeCallsign(callsign)
 	var prefs PluginPrefs
 	if err := updateConfig(func(cfg *companionConfig) {
@@ -181,6 +181,7 @@ func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat bool) (Pl
 		cfg.ShowLabels = &showLabels
 		cfg.EnvSync = &envSync
 		cfg.RightSeat = &rightSeat
+		cfg.DirectP2P = &directP2P
 		prefs = cfg.pluginPrefs()
 	}); err != nil {
 		return PluginPrefs{}, err

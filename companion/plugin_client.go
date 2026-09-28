@@ -75,6 +75,7 @@ type PluginPrefs struct {
 	ShowLabels bool   `json:"showLabels"`
 	EnvSync    bool   `json:"envSync"`
 	RightSeat  bool   `json:"rightSeat"` // Shared Cockpit: the co-pilot (joined as CLIENT) sits right
+	DirectP2P  bool   `json:"directP2P"` // hole punching; off = everything relayed through the server
 }
 
 // encode renders the SET_PREFS/PREFS argument form.
@@ -89,7 +90,7 @@ func (p PluginPrefs) encode() string {
 		}
 		return "0"
 	}
-	return cs + " " + b(p.ShowLabels) + " " + b(p.EnvSync) + " " + b(p.RightSeat)
+	return cs + " " + b(p.ShowLabels) + " " + b(p.EnvSync) + " " + b(p.RightSeat) + " " + b(p.DirectP2P)
 }
 
 // PluginClient sends commands to the X-Plane plugin's control listener and

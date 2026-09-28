@@ -182,6 +182,7 @@ std::string g_pref_callsign;     // "" = use the aircraft's tail number
 bool g_pref_labels = true;       // XPMP2 labels + map layer
 bool g_pref_env_sync = true;     // Formation: host shares / others follow time & weather
 bool g_pref_right_seat = true;   // Shared Cockpit: whoever joined as CLIENT sits in the right seat
+bool g_pref_direct_p2p = true;   // hole punching on; off = relay through the server only
 
 XPLMDataRef g_zulu_time_ref = nullptr;       // sim/time/zulu_time_sec, float
 XPLMDataRef g_local_date_ref = nullptr;      // sim/time/local_date_days, int
@@ -253,6 +254,16 @@ std::unordered_map<uint32_t, PushedPeer> g_last_pushed_formation_peers;
 
 flytogether::RendezvousClient g_rendezvous_client;
 std::unordered_map<int, flytogether::Peer> g_rendezvous_peers; // peer_id -> addr, for RemovePeer on peer_left
+
+// Shared Cockpit's own rendezvous session, separate from Formation's
+// g_rendezvous_client above (see control_listener.h's updated protocol
+// comment) - peer discovery goes through the same rendezvous/relay server,
+// but keeping a dedicated client/session means a Formation session and a
+// Shared Cockpit session never share one code space or one relay stream
+// (mixing AircraftStatePacket-for-Formation and
+// AircraftStatePacket/DatarefSyncMessage-for-Shared-Cockpit payloads on
+// one relay channel would need a type discriminator neither protocol has).
+flytogether::RendezvousClient g_shared_cockpit_rendezvous;
 // Which aircraft (sender_id) each rendezvous peer is, learned from its
 // packets - lets LINK_QUALITY report direct/relay per aircraft.
 std::unordered_map<int, uint32_t> g_formation_sender_by_peer;
@@ -1130,11 +1141,18 @@ void ApplyLabelPrefs() {
 void PushPrefs() {
     g_control_listener.SetPrefs((g_pref_callsign.empty() ? std::string("-") : g_pref_callsign) + " " +
                                 (g_pref_labels ? "1" : "0") + " " + (g_pref_env_sync ? "1" : "0") + " " +
-                                (g_pref_right_seat ? "1" : "0"));
+                                (g_pref_right_seat ? "1" : "0") + " " + (g_pref_direct_p2p ? "1" : "0"));
 }
 
-void SetPrefs(const std::string& callsign, bool labels, bool env_sync, bool right_seat) {
+void SetPrefs(const std::string& callsign, bool labels, bool env_sync, bool right_seat, bool direct_p2p) {
     g_pref_right_seat = right_seat;
+    if (direct_p2p != g_pref_direct_p2p) {
+        g_pref_direct_p2p = direct_p2p;
+        XPLMDebugString(direct_p2p ? "XPMultiCrew: direct P2P enabled\n"
+                                   : "XPMultiCrew: direct P2P disabled - relaying through the server only\n");
+    }
+    g_rendezvous_client.SetDirectEnabled(direct_p2p);
+    g_shared_cockpit_rendezvous.SetDirectEnabled(direct_p2p);
     char sanitized[8] = {};
     std::memcpy(sanitized, callsign.data(), std::min(callsign.size(), sizeof(sanitized)));
     flytogether::SanitizeCallsign(sanitized);
@@ -1500,15 +1518,6 @@ void PushSharedCockpitOwnershipIfChanged() {
     g_control_listener.SetSharedCockpitOwnership(current);
 }
 
-// Shared Cockpit's own rendezvous session, separate from Formation's
-// g_rendezvous_client above (see control_listener.h's updated protocol
-// comment) - peer discovery goes through the same rendezvous/relay server,
-// but keeping a dedicated client/session means a Formation session and a
-// Shared Cockpit session never share one code space or one relay stream
-// (mixing AircraftStatePacket-for-Formation and
-// AircraftStatePacket/DatarefSyncMessage-for-Shared-Cockpit payloads on
-// one relay channel would need a type discriminator neither protocol has).
-flytogether::RendezvousClient g_shared_cockpit_rendezvous;
 bool g_shared_cockpit_rendezvous_active = false;
 
 // Shared Cockpit's own encryption key - same idea as g_formation_crypto
@@ -2891,8 +2900,9 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_disconnect_formation = []() { DisconnectFormation(); };
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
     control_callbacks.on_reload_csl = []() { ReloadCsl(); };
-    control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync, bool right_seat) {
-        SetPrefs(callsign, labels, env_sync, right_seat);
+    control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync, bool right_seat,
+                                        bool direct_p2p) {
+        SetPrefs(callsign, labels, env_sync, right_seat, direct_p2p);
     };
     control_callbacks.on_checklist_sync = [](const std::string& payload) { ShareChecklistState(payload); };
     control_callbacks.on_sc_resync = []() { RequestSharedCockpitResync(); };

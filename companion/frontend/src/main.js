@@ -833,6 +833,7 @@ function applyPrefsToForm(prefs) {
   document.getElementById('pref-labels').checked = prefs.showLabels;
   document.getElementById('pref-env-sync').checked = prefs.envSync;
   document.getElementById('pref-right-seat').checked = prefs.rightSeat;
+  document.getElementById('pref-direct-p2p').checked = prefs.directP2P;
 }
 
 async function savePrefs() {
@@ -842,6 +843,7 @@ async function savePrefs() {
       document.getElementById('pref-labels').checked,
       document.getElementById('pref-env-sync').checked,
       document.getElementById('pref-right-seat').checked,
+      document.getElementById('pref-direct-p2p').checked,
     );
     applyPrefsToForm(prefs);
   } catch (e) {
@@ -857,6 +859,7 @@ document.getElementById('callsign').addEventListener('keydown', (e) => {
 document.getElementById('pref-labels').addEventListener('change', savePrefs);
 document.getElementById('pref-env-sync').addEventListener('change', savePrefs);
 document.getElementById('pref-right-seat').addEventListener('change', savePrefs);
+document.getElementById('pref-direct-p2p').addEventListener('change', savePrefs);
 document.getElementById('sc-resync-btn').addEventListener('click', () => ScResync().catch(alert));
 
 // --- Profiles page: Shared Cockpit dataref profile editor (see

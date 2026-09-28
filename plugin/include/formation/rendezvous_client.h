@@ -102,6 +102,13 @@ public:
 
     bool InSession() const { return in_session_; }
 
+    // Off = relay-only: no hole punching, nothing sent straight to peers,
+    // and direct datagrams that still arrive are dropped - everything goes
+    // through the server. The companion's "direct P2P" setting (SET_PREFS),
+    // for connections where the direct path misbehaves. Takes effect
+    // immediately; a direct path that was up just times out.
+    void SetDirectEnabled(bool enabled) { direct_enabled_ = enabled; }
+
     // Peers we've received a direct (non-relayed) datagram from within
     // kDirectPathTimeout - i.e. hole punching towards them worked.
     size_t DirectPeerCount() const;
@@ -162,6 +169,7 @@ private:
     std::string server_host_;
     uint16_t server_port_ = 0;
     bool in_session_ = false;
+    bool direct_enabled_ = true;
     std::chrono::steady_clock::time_point last_keepalive_sent_{};
     std::chrono::steady_clock::time_point last_received_{};
     bool has_rtt_ = false;
