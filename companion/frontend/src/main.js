@@ -525,7 +525,7 @@ function renderPeerList(peers, linkQuality) {
 // Hidden entirely rather than shown with "?" placeholders when there's
 // nothing to report yet (no session, or no reading has arrived), since a
 // wall of unknowns isn't useful at a glance.
-function renderFormationLinkQuality(linkQuality, peers) {
+function renderFormationLinkQuality(linkQuality) {
   const el = document.getElementById('formation-link-quality');
   const rttKnown = linkQuality && linkQuality.formationServerRttMs != null;
   const lossByPeer = (linkQuality && linkQuality.formationPeerLossPct) || {};
@@ -720,7 +720,7 @@ EventsOn('status', (data) => {
   lastStatusForMap = data;
   if (mapModule) mapModule.updateMap(data);
   renderOwnership(data.sharedCockpitOwnership);
-  renderFormationLinkQuality(data.linkQuality, data.peers);
+  renderFormationLinkQuality(data.linkQuality);
   renderSharedCockpitLinkQuality(data.linkQuality);
   renderAircraftMismatch(data.sharedCockpitMismatch);
 
@@ -763,7 +763,6 @@ EventsOn('status', (data) => {
   renderDebriefDot(data);
   if (debriefModule) debriefModule.updateDebrief(data, document.getElementById('page-debrief').classList.contains('active'));
   renderRouteBanner(data.selfPos);
-  lastSimReady = data.simReady;
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
   renderLearn(data.learn);
   document.getElementById('reload-csl-btn').disabled = !data.simReady || Date.now() < cslReloadBlockedUntil;
@@ -1001,7 +1000,7 @@ async function createNewProfile() {
   }
   const templateIcao = document.getElementById('profile-new-template').value;
   let entries = [];
-  let validated = false;
+  let validated;
   try {
     if (templateIcao) {
       const template = await LoadProfile(templateIcao);
@@ -1167,7 +1166,6 @@ document.querySelector('.content').addEventListener('scroll', hideSuggestions);
 
 // --- "Learn from cockpit" (plugin's LEARN_START/LEARN_STOP, see
 // shared_cockpit/dataref_learner.h) ---
-let lastSimReady = false;
 let learnPanelOpen = false;
 let lastLearn = null;
 const learnUnchecked = new Set(); // names the user unticked

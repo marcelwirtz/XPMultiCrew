@@ -161,6 +161,23 @@ jobs:
         working-directory: companion
         run: wails build
 
+  companion-frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: companion/frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: companion/frontend
+        run: npm run lint
+
   server:
     runs-on: ubuntu-latest
     steps:

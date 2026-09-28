@@ -162,8 +162,6 @@ function renderInfo() {
 // widths don't scale with the zoom, labels are re-sized on every zoom so
 // they stay readable.
 
-const kSvgNs = 'http://www.w3.org/2000/svg';
-
 function pathFromRing(ring) {
   return ring.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${-y}`).join('') + 'Z';
 }
@@ -382,7 +380,7 @@ async function refreshNearby() {
   if (!self) return;
   if (nearbyAt && distNm(nearbyAt.lat, nearbyAt.lon, self.lat, self.lon) < 5) return;
   nearbyAt = { lat: self.lat, lon: self.lon };
-  let hits = [];
+  let hits;
   try {
     hits = await NearestAirports(self.lat, self.lon);
   } catch (e) {
@@ -430,7 +428,7 @@ setupDiagramInput();
 export function showAirports() {
   refreshNearby();
   if (!layout) {
-    let stored = null;
+    let stored;
     try {
       stored = localStorage.getItem('xpmulticrew.airport');
     } catch (e) {
