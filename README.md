@@ -34,6 +34,18 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.6
+
+- Aircraft no longer float above (or sink into) the runway when your
+  scenery and your co-pilot's put the ground at different heights (add-on
+  airport, different mesh). Near the ground, other aircraft are now placed
+  on *your* terrain; above 100 m the correction fades out, above 500 m the
+  real altitude is used. Needs v0.4.6 on both sides. When it kicks in,
+  `Log.txt` says by how much the two sceneries differ.
+- New setting "Direct peer-to-peer connection" (You panel, on by
+  default). Turned off, everything goes through the server only - for
+  connections where the direct link misbehaves.
+
 ## What's new in v0.4.5
 
 - Fixed on Windows: the Map page stayed black (the actual cause - v0.4.4's

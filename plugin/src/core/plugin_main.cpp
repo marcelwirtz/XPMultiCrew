@@ -1284,6 +1284,9 @@ flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id,
 
     std::memcpy(packet.icao_type, g_icao_type, sizeof(packet.icao_type));
 
+    if (g_y_agl_ref) {
+        packet.agl_m = std::max(0.0f, XPLMGetDataf(g_y_agl_ref));
+    }
     if (g_y_agl_ref && g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0) {
         const float y_agl = XPLMGetDataf(g_y_agl_ref);
         if (y_agl >= 0.0f && y_agl < 15.0f) {

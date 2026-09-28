@@ -23,7 +23,7 @@ constexpr uint32_t kAircraftStateMagic = 0x46545331; // "FTS1"
 // introduced in>` - never on exact equality, so a receiver correctly
 // treats "newer than me" the same as "current" (it just won't read fields
 // it doesn't know about yet) instead of rejecting the packet outright.
-constexpr uint32_t kAircraftStateProtocolVersion = 2;
+constexpr uint32_t kAircraftStateProtocolVersion = 3;
 
 // The oldest protocol_version this build still understands enough of to
 // accept at all - deliberately a *separate*, frozen constant from
@@ -136,17 +136,30 @@ struct AircraftStatePacket {
     float slat_ratio = 0.0f;          // 0..1
 
     uint8_t flags = 0; // bitmask of StateFlags::k*
+
+    // --- protocol_version 3 ---
+
+    // Current height of the reference point above the sender's own terrain
+    // (sim/flightmodel/position/y_agl), in meters. `elevation_m - agl_m` is
+    // the ground under the sender in THEIR scenery - the receiver compares
+    // it with its own ground there, so an aircraft taxiing or landing sits
+    // on the receiver's runway even when the two sceneries' elevations
+    // differ. Negative = unknown (older sender).
+    float agl_m = -1.0f;
 };
 #pragma pack(pop)
 
 // Size as of protocol_version 2. kAircraftStateMinSize above stays at the
 // version 1 baseline on purpose - see its comment.
 constexpr size_t kAircraftStateV2Size = 146;
-static_assert(sizeof(AircraftStatePacket) == kAircraftStateV2Size,
+constexpr size_t kAircraftStateV3Size = 150;
+static_assert(sizeof(AircraftStatePacket) == kAircraftStateV3Size,
               "AircraftStatePacket's size changed - add a new kAircraftStateV<N>Size, don't touch "
               "kAircraftStateMinSize (see its comment)");
 static_assert(offsetof(AircraftStatePacket, ref_height_agl_m) == kAircraftStateMinSize,
               "protocol_version 2 fields must start right after the version 1 baseline");
+static_assert(offsetof(AircraftStatePacket, agl_m) == kAircraftStateV2Size,
+              "protocol_version 3 fields must start right after the version 2 layout");
 
 // Rejects poses no real aircraft can have (NaN/Inf, out-of-range lat/lon,
 // absurd altitude) before they reach XPMP2 or - in Shared Cockpit - the
@@ -163,7 +176,7 @@ inline bool IsPlausibleAircraftState(const AircraftStatePacket& p) {
                         std::isfinite(p.prop_rpm) && std::isfinite(p.tire_rot_rad_s) &&
                         std::isfinite(p.nose_wheel_deg) && std::isfinite(p.yoke_pitch_ratio) &&
                         std::isfinite(p.yoke_roll_ratio) && std::isfinite(p.yoke_heading_ratio) &&
-                        std::isfinite(p.slat_ratio);
+                        std::isfinite(p.slat_ratio) && std::isfinite(p.agl_m);
     return finite && std::fabs(p.latitude) <= 90.0 && std::fabs(p.longitude) <= 180.0 &&
            p.elevation_m > -1000.0 && p.elevation_m < 30000.0;
 }

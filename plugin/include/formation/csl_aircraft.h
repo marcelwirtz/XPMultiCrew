@@ -20,6 +20,7 @@ public:
     // (plugin/Resources/CSL/Generic), matched via the "GENR" default ICAO
     // regardless of the real type, so this never fails to find a model.
     RemoteAircraftXPMP(const std::string& icaoType, uint32_t senderId);
+    ~RemoteAircraftXPMP() override;
 
     // `latest` supplies what isn't dead-reckoned: callsign and the extra
     // animation inputs (protocol_version 2 fields - defaults for older
@@ -34,12 +35,18 @@ public:
     void UpdatePosition(float elapsedSinceLastCall, int flCounter) override;
 
 private:
+    // How much higher our ground is than the sender's under the aircraft
+    // (0 if unknown) - see UpdatePosition.
+    double GroundMismatchM(const AircraftPose& pose, double gear_altitude_m);
+
     std::string requested_icao_;
     std::string applied_callsign_;
     AircraftPose pose_;
     AircraftStatePacket latest_;
     float tire_angle_deg_ = 0.0f;
     float prop_angle_deg_ = 0.0f;
+    XPLMProbeRef ground_probe_ = nullptr;
+    bool mismatch_logged_ = false;
 };
 
 } // namespace flytogether

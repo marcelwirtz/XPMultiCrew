@@ -1,5 +1,8 @@
 #include "formation/csl_aircraft.h"
 
+#include "XPLMGraphics.h"
+#include "XPLMUtilities.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +19,17 @@ namespace {
 // VERT_OFFSET used to hard-code before the height was sent explicitly.
 constexpr double kDefaultRefHeightAglM = 2.5;
 constexpr double kMaxPlausibleRefHeightAglM = 15.0;
+
+// Near the ground, a remote aircraft is placed relative to OUR terrain
+// rather than at the sender's absolute altitude: the full ground mismatch
+// is applied up to kGroundFollowFullM above the ground, fading out to none
+// at kGroundFollowNoneM, so it rolls on our runway and climbs out smoothly.
+// Mismatches beyond kMaxGroundMismatchM are ignored (probe hit something
+// odd, or the sender's terrain wasn't loaded yet).
+constexpr double kGroundFollowFullM = 100.0;
+constexpr double kGroundFollowNoneM = 500.0;
+constexpr double kMaxGroundMismatchM = 150.0;
+constexpr double kLogGroundMismatchM = 1.0;
 
 double RefHeightAglM(float reported) {
     if (!std::isfinite(reported) || reported < 0.0f || reported > kMaxPlausibleRefHeightAglM) {
@@ -44,6 +58,53 @@ RemoteAircraftXPMP::RemoteAircraftXPMP(const std::string& icaoType, uint32_t sen
     // already accounts for objects like helipads/ship decks. It's just
     // off by default (XPMP2::Aircraft::bClampToGround).
     bClampToGround = true;
+}
+
+RemoteAircraftXPMP::~RemoteAircraftXPMP() {
+    if (ground_probe_) {
+        XPLMDestroyProbe(ground_probe_);
+    }
+}
+
+double RemoteAircraftXPMP::GroundMismatchM(const AircraftPose& pose, double gear_altitude_m) {
+    if (latest_.protocol_version < 3 || !std::isfinite(latest_.agl_m) || latest_.agl_m < 0.0f) {
+        return 0.0; // older sender - no idea where its ground was
+    }
+    const double sender_ground_m = latest_.elevation_m - latest_.agl_m;
+    const double height_m = latest_.agl_m - RefHeightAglM(latest_.ref_height_agl_m); // gear above ground
+    if (height_m >= kGroundFollowNoneM) {
+        return 0.0;
+    }
+
+    if (!ground_probe_) {
+        ground_probe_ = XPLMCreateProbe(xplm_ProbeY);
+        if (!ground_probe_) return 0.0;
+    }
+    double x = 0.0, y = 0.0, z = 0.0;
+    XPLMWorldToLocal(pose.latitude, pose.longitude, gear_altitude_m, &x, &y, &z);
+    XPLMProbeInfo_t info{};
+    info.structSize = sizeof(info);
+    if (XPLMProbeTerrainXYZ(ground_probe_, float(x), float(y), float(z), &info) != xplm_ProbeHitTerrain) {
+        return 0.0;
+    }
+    double lat = 0.0, lon = 0.0, local_ground_m = 0.0;
+    XPLMLocalToWorld(info.locationX, info.locationY, info.locationZ, &lat, &lon, &local_ground_m);
+
+    const double mismatch_m = local_ground_m - sender_ground_m;
+    if (std::fabs(mismatch_m) > kMaxGroundMismatchM) {
+        return 0.0;
+    }
+    if (!mismatch_logged_ && std::fabs(mismatch_m) >= kLogGroundMismatchM && height_m < 5.0) {
+        mismatch_logged_ = true;
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: %s's ground is %.1fm %s in your scenery than in theirs - placing it on your "
+                      "ground near the surface\n",
+                      label.c_str(), std::fabs(mismatch_m), mismatch_m > 0 ? "higher" : "lower");
+        XPLMDebugString(buf);
+    }
+    const double fade = std::clamp((kGroundFollowNoneM - height_m) / (kGroundFollowNoneM - kGroundFollowFullM), 0.0, 1.0);
+    return mismatch_m * fade;
 }
 
 void RemoteAircraftXPMP::SetPose(const AircraftPose& pose, const AircraftStatePacket& latest) {
@@ -79,7 +140,11 @@ void RemoteAircraftXPMP::UpdatePosition(float elapsedSinceLastCall, int /*flCoun
     // aircraft reference point, which sits metres above that - so subtract
     // the sender's measured gap. Makes every CSL package sit on the ground
     // correctly instead of only a model with a hand-tuned VERT_OFFSET.
-    const double gear_altitude_m = pose_.elevation_m - RefHeightAglM(pose_.ref_height_agl_m);
+    // Near the ground, also shift by how much our terrain differs from the
+    // sender's there (different scenery/mesh) - otherwise it floats above or
+    // sinks into our runway by exactly that difference.
+    double gear_altitude_m = pose_.elevation_m - RefHeightAglM(pose_.ref_height_agl_m);
+    gear_altitude_m += GroundMismatchM(pose_, gear_altitude_m);
     SetLocation(pose_.latitude, pose_.longitude, gear_altitude_m / XPMP2::M_per_FT);
     drawInfo.heading = pose_.heading_deg;
     drawInfo.pitch = pose_.pitch_deg;
