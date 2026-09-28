@@ -47,6 +47,18 @@ import { openAirport, showAirports, updateAirports } from './airports.js';
 // The map (MapLibre, ~1 MB) is only loaded the first time its page opens.
 let mapModule = null;
 let lastStatusForMap = null;
+// A page module that fails to load would otherwise leave its page blank
+// without a word (a rejected import() is only logged to the console).
+function pageLoadFailed(page, e) {
+  console.error(`${page} page failed to load`, e);
+  const el = document.getElementById(`page-${page}`);
+  if (!el || el.querySelector('.page-load-error')) return;
+  const msg = document.createElement('div');
+  msg.className = 'status err page-load-error';
+  msg.textContent = `This page couldn't be loaded (${(e && e.message) || e}).`;
+  el.prepend(msg);
+}
+
 // The Debrief page brings its own map - loaded the same way.
 let debriefModule = null;
 let lastStatusForDebrief = null;
@@ -56,7 +68,7 @@ function openDebriefPage() {
     debriefModule = m;
     m.showDebrief();
     if (lastStatusForDebrief) m.updateDebrief(lastStatusForDebrief, true);
-  });
+  }).catch((e) => pageLoadFailed('debrief', e));
 }
 
 // Airports page <-> map: "Details" in the map's airport popup, "Show on
@@ -67,7 +79,7 @@ window.addEventListener('xpmc-open-airport', (e) => {
 });
 window.addEventListener('xpmc-show-on-map', (e) => {
   showPage('map');
-  import('./map.js').then((m) => m.centerOn(e.detail.lat, e.detail.lon));
+  import('./map.js').then((m) => m.centerOn(e.detail.lat, e.detail.lon)).catch((err) => pageLoadFailed('map', err));
 });
 
 // Sidebar dot on Debrief: while a flight is being recorded, and after one
@@ -87,7 +99,7 @@ function openMapPage() {
     mapModule = m;
     if (lastStatusForMap) m.updateMap(lastStatusForMap);
     m.showMap();
-  });
+  }).catch((e) => pageLoadFailed('map', e));
 }
 
 // Sidebar navigation - one .page shown at a time (see index.html's
@@ -110,6 +122,7 @@ function showPage(page) {
   if (page === 'landings') showLandings();
   if (page === 'airports') showAirports();
   if (page === 'debrief') openDebriefPage();
+  if (page === 'profiles') refreshProfileList();
   SetLastPage(page).catch(() => {});
 }
 
@@ -1049,8 +1062,6 @@ document.getElementById('profile-revert-btn').addEventListener('click', async ()
     alert(e);
   }
 });
-document.querySelector('.sidebar button[data-page="profiles"]').addEventListener('click', () => refreshProfileList());
-if (initialPage === 'profiles') refreshProfileList();
 
 // --- Dataref suggestions while typing (companion/profiles.go's
 // searchDatarefs: name or description, writable only) ---

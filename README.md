@@ -34,6 +34,16 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.5
+
+- Fixed on Windows: the Map page stayed black (the actual cause - v0.4.4's
+  change didn't help). A leftover line from v0.4.2 stopped part of the
+  companion's page script at startup; WebView2 then also refused to load
+  the map. The same bug broke the profile editor's dataref suggestions and
+  the Learn panel on all platforms since v0.4.2.
+- If a page (Map, Debrief) fails to load, it now says so instead of
+  staying blank.
+
 ## What's new in v0.4.4
 
 - Fixed on Windows: the Map page stayed black. The map engine's background
