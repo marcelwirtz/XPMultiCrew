@@ -86,6 +86,10 @@ flytogether::ControlListener g_control_listener;
 
 // --- Phase 0 spike state (unchanged) ----------------------------------------
 
+// Set via SET_PREFS (see the other g_pref_* below): the periodic position/
+// peer-count lines in Log.txt. Off = startup, state changes and errors only.
+bool g_pref_debug_log = false;
+
 XPLMDataRef g_latitude_ref = nullptr;
 XPLMDataRef g_longitude_ref = nullptr;
 XPLMDataRef g_elevation_ref = nullptr;
@@ -97,7 +101,7 @@ float LogPositionCallback(float /*elapsedSinceLastCall*/,
                            float /*elapsedTimeSinceLastFlightLoop*/,
                            int /*counter*/,
                            void* /*refcon*/) {
-    if (g_latitude_ref && g_longitude_ref && g_elevation_ref) {
+    if (g_pref_debug_log && g_latitude_ref && g_longitude_ref && g_elevation_ref) {
         const double lat = XPLMGetDatad(g_latitude_ref);
         const double lon = XPLMGetDatad(g_longitude_ref);
         const double elev = XPLMGetDatad(g_elevation_ref);
@@ -196,10 +200,15 @@ flytogether::TimeSyncPacket ReadSimTime() {
 }
 
 // Jumps the sim clock to `remote` if it's drifted more than
-// kTimeSyncMaxDriftS away (see sync/time_sync.h). "Use system time" has to
-// go off first, or X-Plane snaps straight back to the PC clock.
-void MaybeApplySimTime(const flytogether::TimeSyncPacket& remote) {
+// kTimeSyncMaxDriftS away (see sync/time_sync.h) - but only when
+// `follower` says so: once after joining, then on the user's request.
+// "Use system time" has to go off first, or X-Plane snaps straight back
+// to the PC clock.
+void MaybeApplySimTime(flytogether::SimTimeFollower& follower, const flytogether::TimeSyncPacket& remote) {
     if (!g_zulu_time_ref || !g_local_date_ref) {
+        return;
+    }
+    if (!follower.TakeCheck()) {
         return;
     }
     if (!flytogether::TimeSyncShouldApply(ReadSimTime(), remote)) {
@@ -215,6 +224,7 @@ void MaybeApplySimTime(const flytogether::TimeSyncPacket& remote) {
 // session creator (rendezvous peer 1) shares, everyone else with the
 // preference on follows; relay/direct only, sealed with the Formation key.
 flytogether::WeatherSync g_formation_weather;
+flytogether::SimTimeFollower g_formation_time;
 double g_formation_next_time_broadcast_s = 0.0;
 
 // Route sharing (ROUTE_SHARE/ROUTE_CLEAR, see control_listener.h): the
@@ -532,7 +542,7 @@ void SetupRendezvousCallbacksOnce() {
         if (magic == flytogether::kTimeSyncMagic) {
             if (from_peer_id == 1 && g_formation_weather.role() == flytogether::SharedCockpitRole::kClient) {
                 if (const auto time = flytogether::DecodeTimeSyncPacket(opened->data(), opened->size())) {
-                    MaybeApplySimTime(*time);
+                    MaybeApplySimTime(g_formation_time, *time);
                 }
             }
             return;
@@ -1141,11 +1151,17 @@ void ApplyLabelPrefs() {
 void PushPrefs() {
     g_control_listener.SetPrefs((g_pref_callsign.empty() ? std::string("-") : g_pref_callsign) + " " +
                                 (g_pref_labels ? "1" : "0") + " " + (g_pref_env_sync ? "1" : "0") + " " +
-                                (g_pref_right_seat ? "1" : "0") + " " + (g_pref_direct_p2p ? "1" : "0"));
+                                (g_pref_right_seat ? "1" : "0") + " " + (g_pref_direct_p2p ? "1" : "0") + " " +
+                                (g_pref_debug_log ? "1" : "0"));
 }
 
-void SetPrefs(const std::string& callsign, bool labels, bool env_sync, bool right_seat, bool direct_p2p) {
+void SetPrefs(const std::string& callsign, bool labels, bool env_sync, bool right_seat, bool direct_p2p,
+              bool debug_log) {
     g_pref_right_seat = right_seat;
+    if (debug_log != g_pref_debug_log) {
+        g_pref_debug_log = debug_log;
+        XPLMDebugString(debug_log ? "XPMultiCrew: debug logging on\n" : "XPMultiCrew: debug logging off\n");
+    }
     if (direct_p2p != g_pref_direct_p2p) {
         g_pref_direct_p2p = direct_p2p;
         XPLMDebugString(direct_p2p ? "XPMultiCrew: direct P2P enabled\n"
@@ -1449,7 +1465,7 @@ float UpdateFormationCallback(float /*elapsedSinceLastCall*/,
             }
         });
 
-    if (now - g_last_formation_log_s >= 1.0) {
+    if (g_pref_debug_log && now - g_last_formation_log_s >= 1.0) {
         g_last_formation_log_s = now;
         char buf[160];
         std::snprintf(buf, sizeof(buf),
@@ -1481,6 +1497,7 @@ XPLMDataRef g_quaternion_ref = nullptr; // float[4]
 flytogether::SharedCockpitSync g_shared_cockpit;
 flytogether::DatarefSync g_dataref_sync;
 flytogether::WeatherSync g_weather_sync;
+flytogether::SimTimeFollower g_shared_cockpit_time;
 double g_shared_cockpit_next_time_broadcast_s = 0.0;
 uint32_t g_shared_cockpit_sequence = 0;
 bool g_physics_override_active = false;
@@ -2165,6 +2182,7 @@ void StopSharedCockpit() {
     g_shared_cockpit.Stop();
     g_dataref_sync.Stop();
     g_weather_sync.Stop();
+    g_shared_cockpit_time.Reset();
     g_shared_cockpit_active = false;
 
     // A stopped session has no master to compare against - clear any
@@ -2281,6 +2299,7 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     g_digest_next_send_s = XPLMGetElapsedTime() + kDigestIntervalS;
     g_checklist_next_send_s = 0.0;
 
+    g_shared_cockpit_time.Reset();
     if (!g_weather_sync.Start(role, peers)) {
         XPLMDebugString("XPMultiCrew: weather sync port busy - relay/P2P via the rendezvous socket only\n");
     }
@@ -2442,7 +2461,7 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         if (magic == flytogether::kTimeSyncMagic) {
             if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
                 if (const auto time = flytogether::DecodeTimeSyncPacket(plain.data(), plain.size())) {
-                    MaybeApplySimTime(*time);
+                    MaybeApplySimTime(g_shared_cockpit_time, *time);
                 }
             }
         } else if (magic == flytogether::kAircraftStateMagic) {
@@ -2701,6 +2720,9 @@ float PollFormationEnvCallback(float /*elapsedSinceLastCall*/,
         role = g_formation_own_peer_id == 1 ? SharedCockpitRole::kMaster : SharedCockpitRole::kClient;
     }
     g_formation_weather.SetRole(role);
+    if (role != SharedCockpitRole::kClient) {
+        g_formation_time.Reset(); // follow the host's clock once again after the next join
+    }
 
     const double now = XPLMGetElapsedTime();
     const double latitude = g_latitude_ref ? XPLMGetDatad(g_latitude_ref) : 0.0;
@@ -2904,8 +2926,18 @@ PLUGIN_API int XPluginEnable() {
     control_callbacks.on_disconnect_shared_cockpit = []() { DisconnectSharedCockpit(); };
     control_callbacks.on_reload_csl = []() { ReloadCsl(); };
     control_callbacks.on_set_prefs = [](const std::string& callsign, bool labels, bool env_sync, bool right_seat,
-                                        bool direct_p2p) {
-        SetPrefs(callsign, labels, env_sync, right_seat, direct_p2p);
+                                        bool direct_p2p, bool debug_log) {
+        SetPrefs(callsign, labels, env_sync, right_seat, direct_p2p, debug_log);
+    };
+    control_callbacks.on_sync_env = []() {
+        // Whichever of the two is following picks it up: the weather on its
+        // next poll (latest packet already held), the time with the host's
+        // next broadcast (every kTimeSyncBroadcastIntervalS).
+        g_formation_weather.RequestApply();
+        g_weather_sync.RequestApply();
+        g_formation_time.Request();
+        g_shared_cockpit_time.Request();
+        XPLMDebugString("XPMultiCrew: time & weather re-sync requested\n");
     };
     control_callbacks.on_checklist_sync = [](const std::string& payload) { ShareChecklistState(payload); };
     control_callbacks.on_sc_resync = []() { RequestSharedCockpitResync(); };

@@ -48,6 +48,17 @@ int main() {
     assert(!DecodeTimeSyncPacket(bytes, sizeof(bytes)).has_value());
     std::printf("DecodeTimeSyncPacket rejects short/out-of-range packets: OK\n");
 
+    SimTimeFollower follower;
+    assert(follower.TakeCheck());  // first packet after joining
+    assert(!follower.TakeCheck()); // then never on its own
+    assert(!follower.TakeCheck());
+    follower.Request();
+    assert(follower.TakeCheck()); // once per request
+    assert(!follower.TakeCheck());
+    follower.Reset();
+    assert(follower.TakeCheck()); // next join
+    std::printf("SimTimeFollower checks once per join and per request: OK\n");
+
     std::printf("\nALL TIME SYNC CHECKS PASSED\n");
     return 0;
 }

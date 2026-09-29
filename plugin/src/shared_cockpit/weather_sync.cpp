@@ -1,5 +1,6 @@
 #include "shared_cockpit/weather_sync.h"
 
+#include "XPLMUtilities.h"
 #include "XPLMWeather.h"
 
 #include <algorithm>
@@ -9,9 +10,9 @@ namespace flytogether {
 
 namespace {
 
-// Weather changes slowly - this interval satisfies both XPLMWeather.h's
-// own "not intended to be used per-frame" guidance and the fact that
-// there's nothing to gain from syncing it any faster.
+// How often the master reads and shares its weather - satisfies
+// XPLMWeather.h's "not intended to be used per-frame" guidance. The client
+// only keeps the latest; it applies one on join or on request only.
 constexpr double kWeatherApplyIntervalS = 30.0;
 
 // Matches XPLM_DEFAULT_WXR_RADIUS_NM/XPLM_DEFAULT_WXR_LIMIT_MSL_FT
@@ -123,9 +124,9 @@ bool WeatherSync::Start(SharedCockpitRole role, const std::vector<Peer>& peers) 
     role_ = role;
     peers_ = peers;
     next_broadcast_time_s_ = 0.0;
-    next_apply_time_s_ = 0.0;
     has_pending_packet_ = false;
     has_applied_once_ = false;
+    apply_requested_ = false;
 
     if (!socket_.Open()) {
         return false;
@@ -151,11 +152,16 @@ void WeatherSync::SetRole(SharedCockpitRole role) {
     if (role == role_) {
         return;
     }
+    const bool joined_or_left = role_ == SharedCockpitRole::kNone || role == SharedCockpitRole::kNone;
     role_ = role;
     next_broadcast_time_s_ = 0.0;
-    next_apply_time_s_ = 0.0;
     has_pending_packet_ = false;
-    has_applied_once_ = false;
+    if (joined_or_left) {
+        has_applied_once_ = false;
+        apply_requested_ = false;
+    } else {
+        has_applied_once_ = true; // master/client swap: the weather is already the same on both sides
+    }
 }
 
 void WeatherSync::Stop() {
@@ -164,6 +170,7 @@ void WeatherSync::Stop() {
     peers_.clear();
     has_pending_packet_ = false;
     has_applied_once_ = false;
+    apply_requested_ = false;
 }
 
 void WeatherSync::MaybeBroadcast(double latitude, double longitude, double altitude_m, double now_s) {
@@ -184,7 +191,7 @@ void WeatherSync::MaybeBroadcast(double latitude, double longitude, double altit
     }
 }
 
-void WeatherSync::PollIncoming(double latitude, double longitude, double ground_altitude_m, double now_s) {
+void WeatherSync::PollIncoming(double latitude, double longitude, double ground_altitude_m, double /*now_s*/) {
     if (role_ != SharedCockpitRole::kClient) {
         return;
     }
@@ -201,13 +208,14 @@ void WeatherSync::PollIncoming(double latitude, double longitude, double ground_
     if (!has_pending_packet_) {
         return;
     }
-    if (has_applied_once_ && now_s < next_apply_time_s_) {
+    if (has_applied_once_ && !apply_requested_) {
         return;
     }
 
     ApplyPendingToSim(latitude, longitude, ground_altitude_m);
     has_applied_once_ = true;
-    next_apply_time_s_ = now_s + kWeatherApplyIntervalS;
+    apply_requested_ = false;
+    XPLMDebugString("XPMultiCrew: weather synced to the session\n");
 }
 
 void WeatherSync::IngestRelayedPacket(const void* data, size_t len) {

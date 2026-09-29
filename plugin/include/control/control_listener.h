@@ -34,7 +34,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   DISCONNECT_FORMATION
 //   DISCONNECT_SHARED_COCKPIT
 //   RELOAD_CSL
-//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1> [<directp2p 0|1>]]
+//   SET_PREFS <callsign|-> <labels 0|1> <envsync 0|1> [<rightseat 0|1> [<directp2p 0|1> [<debuglog 0|1>]]]
+//   SYNC_ENV                   - follow the host's time & weather once more (see below)
 //   LEARN_START / LEARN_STOP
 //   ROUTE_SHARE <payload> / ROUTE_CLEAR
 //   CHECKLIST_SYNC <payload>   - shared checklist state, relayed to the Shared Cockpit peer as-is
@@ -55,6 +56,11 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 // weather sync is on (the session creator shares, everyone else follows).
 // directp2p 0 turns off direct peer-to-peer (hole punching) for both
 // Formation and Shared Cockpit - relay through the server only; absent = on.
+// debuglog 1 writes the periodic position/peer-count lines to Log.txt;
+// absent = off (startup, state changes and errors only).
+// A follower takes over the host's time & weather once after joining;
+// re-applying them periodically froze its sim for seconds each time, so
+// after that only SYNC_ENV (the companion's button) does it again.
 // Echoed back as PREFS, so the companion re-sends them whenever the plugin
 // lost them (X-Plane restart).
 // The optional trailing SPECTATOR token on CREATE_SESSION/JOIN_SESSION
@@ -121,7 +127,7 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   LINK_QUALITY formation_server_rtt_ms:<ms|?> formation_peer_loss_pct:<id>:<pct>;...
 //                formation_peer_path:<id>:<direct|relay>;...
 //                sc_server_rtt_ms:<ms|?> sc_master_loss_pct:<pct|?> sc_path:<direct|relay|?>
-//   PREFS <callsign|-> <labels 0|1> <envsync 0|1> <rightseat 0|1>
+//   PREFS <callsign|-> <labels 0|1> <envsync 0|1> <rightseat 0|1> <directp2p 0|1> <debuglog 0|1>
 //   CHECKLIST_REMOTE <payload> (the peer's latest CHECKLIST_SYNC, empty if none)
 //   SC_DESYNC <profiles_differ 0|1> <name>=<our value>;... (datarefs that differ from the peer)
 //   WATCH_VALUES <name[idx]>=<value>;... (see WATCH)
@@ -198,8 +204,10 @@ public:
         std::function<void()> on_disconnect_shared_cockpit;
         std::function<void(DatarefCategory)> on_claim_ownership;
         std::function<void()> on_reload_csl;
-        std::function<void(const std::string& callsign, bool labels, bool envSync, bool rightSeat, bool directP2P)>
+        std::function<void(const std::string& callsign, bool labels, bool envSync, bool rightSeat, bool directP2P,
+                           bool debugLog)>
             on_set_prefs;
+        std::function<void()> on_sync_env;
         std::function<void(const std::string& payload)> on_checklist_sync;
         std::function<void()> on_sc_resync;
         std::function<void(const std::string& list)> on_watch;

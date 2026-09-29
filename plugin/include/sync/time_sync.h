@@ -40,6 +40,31 @@ double TimeSyncDifferenceS(const TimeSyncPacket& local, const TimeSyncPacket& re
 
 bool TimeSyncShouldApply(const TimeSyncPacket& local, const TimeSyncPacket& remote);
 
+// When a follower looks at the session's clock at all: once, for the first
+// packet after joining, and after that only when the user asks for it (the
+// companion's "Sync time & weather now"). Setting the sim time makes
+// X-Plane recompute lighting and weather, which froze the follower's sim for
+// seconds whenever it happened again mid-flight.
+class SimTimeFollower {
+public:
+    void Reset() { checked_once_ = false; requested_ = false; }
+    void Request() { requested_ = true; }
+    // True if this packet should be compared against the sim clock (and
+    // applied if it's drifted); consumes the pending request.
+    bool TakeCheck() {
+        if (checked_once_ && !requested_) {
+            return false;
+        }
+        checked_once_ = true;
+        requested_ = false;
+        return true;
+    }
+
+private:
+    bool checked_once_ = false;
+    bool requested_ = false;
+};
+
 // Pure, no XPLM - the sim reads/writes live in plugin_main.cpp.
 
 } // namespace flytogether

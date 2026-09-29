@@ -77,14 +77,17 @@ int main() {
     callbacks.on_reload_csl = [&]() { reload_csl_called = true; };
     int prefs_calls = 0;
     std::string prefs_callsign;
-    bool prefs_labels = false, prefs_env_sync = false;
+    bool prefs_labels = false, prefs_env_sync = false, prefs_debug_log = true;
     callbacks.on_set_prefs = [&](const std::string& callsign, bool labels, bool env_sync, bool /*right_seat*/,
-                                  bool /*direct_p2p*/) {
+                                  bool /*direct_p2p*/, bool debug_log) {
         ++prefs_calls;
         prefs_callsign = callsign;
         prefs_labels = labels;
         prefs_env_sync = env_sync;
+        prefs_debug_log = debug_log;
     };
+    int sync_env_calls = 0;
+    callbacks.on_sync_env = [&]() { ++sync_env_calls; };
 
     double overlay_seconds = 0.0;
     std::string overlay_text;
@@ -217,7 +220,18 @@ int main() {
     assert(prefs_calls == 2); // the bare SET_PREFS (no callsign token) is ignored
     assert(prefs_callsign.empty()); // "-" = no callsign
     assert(!prefs_labels && prefs_env_sync);
+    assert(!prefs_debug_log); // absent = off
+    const std::string cmd_prefs_debug = "SET_PREFS - 1 1 1 1 1\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_prefs_debug.data(), cmd_prefs_debug.size());
+    PumpFor(listener, 200ms);
+    assert(prefs_calls == 3 && prefs_debug_log);
     std::printf("SET_PREFS parsed correctly: OK\n");
+
+    const std::string cmd_sync_env = "SYNC_ENV\n";
+    companion.SendTo("127.0.0.1", kControlUdpPort, cmd_sync_env.data(), cmd_sync_env.size());
+    PumpFor(listener, 200ms);
+    assert(sync_env_calls == 1);
+    std::printf("SYNC_ENV parsed correctly: OK\n");
 
     claimed_category = DatarefCategory::kSystems;
     const std::string cmd_flight = "CLAIM_OWNERSHIP flight\n";

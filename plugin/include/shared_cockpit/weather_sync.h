@@ -20,11 +20,12 @@ namespace flytogether {
 // frame, by design: its own docs say those calls "should be called only
 // during the pre-flight loop callback", i.e. occasionally, not every
 // tick - MaybeBroadcast/PollIncoming below are both safe to call every
-// frame like the other sync engines (the throttling happens internally),
-// but only actually touch XPLMWeather.h at most once every
-// kWeatherApplyIntervalS seconds, plus once immediately for the client's
-// very first received packet (so a freshly-connected client doesn't wait
-// out a full interval for its first real update).
+// frame like the other sync engines (the throttling happens internally).
+// The master reads and broadcasts every kWeatherApplyIntervalS seconds;
+// the client applies only the first packet after joining, and after that
+// only on RequestApply() (the companion's "Sync time & weather now") -
+// every XPLMSetWeatherAtLocation with updateImmediately regenerates the
+// weather and froze the client's sim for a few seconds each time.
 //
 // See weather_sync_protocol.h's file comment for why this isn't adapted
 // from JoinFS (it has no X-Plane-side weather sync to adapt from).
@@ -48,9 +49,13 @@ public:
     void Stop();
 
     // Changes who shares and who follows without restarting - Shared
-    // Cockpit's role swap, Formation's host detection. Becoming a client
-    // applies the next received packet immediately.
+    // Cockpit's role swap, Formation's host detection. Joining as a client
+    // (from kNone) applies the next received packet immediately; a swap
+    // between master and client doesn't (both already share the weather).
     void SetRole(SharedCockpitRole role);
+
+    // Client: apply the latest received weather on the next PollIncoming.
+    void RequestApply() { apply_requested_ = true; }
     SharedCockpitRole role() const { return role_; }
 
     // Master only: reads local weather via XPLMGetWeatherAtLocation at
@@ -60,11 +65,8 @@ public:
 
     // Client only: drains incoming packets (cheap, every frame) and
     // applies the latest one via XPLMSetWeatherAtLocation at the given
-    // (client-side, presumably moving) position - immediately for the
-    // first packet ever received, otherwise throttled to
-    // kWeatherApplyIntervalS (re-applying periodically even without a
-    // new packet, since the client's own position may have drifted
-    // outside the last report's radius of effect). No-op unless
+    // (client-side) position - for the first packet after joining and
+    // after RequestApply(), never on its own otherwise. No-op unless
     // role() == kClient.
     void PollIncoming(double latitude, double longitude, double ground_altitude_m, double now_s);
 
@@ -84,9 +86,9 @@ private:
     UdpSocket socket_;
     std::vector<Peer> peers_;
     double next_broadcast_time_s_ = 0.0; // master
-    double next_apply_time_s_ = 0.0;     // client
     bool has_pending_packet_ = false;
     bool has_applied_once_ = false;
+    bool apply_requested_ = false;
     WeatherStatePacket pending_packet_;
     std::function<void(const void*, size_t)> relay_sender_;
 };

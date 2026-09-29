@@ -85,12 +85,14 @@ void ControlListener::HandleLine(const std::string& line) {
     } else if (cmd == "RELOAD_CSL") {
         if (callbacks_.on_reload_csl) callbacks_.on_reload_csl();
     } else if (cmd == "SET_PREFS") {
-        std::string callsign, labels, env_sync, right_seat, direct_p2p;
-        ls >> callsign >> labels >> env_sync >> right_seat >> direct_p2p;
+        std::string callsign, labels, env_sync, right_seat, direct_p2p, debug_log;
+        ls >> callsign >> labels >> env_sync >> right_seat >> direct_p2p >> debug_log;
         if (callbacks_.on_set_prefs && !callsign.empty()) {
             callbacks_.on_set_prefs(callsign == "-" ? "" : callsign, labels != "0", env_sync != "0", right_seat == "1",
-                                    direct_p2p != "0");
+                                    direct_p2p != "0", debug_log == "1");
         }
+    } else if (cmd == "SYNC_ENV") {
+        if (callbacks_.on_sync_env) callbacks_.on_sync_env();
     } else if (cmd == "CHECKLIST_SYNC") {
         std::string payload;
         ls >> payload;
