@@ -34,6 +34,22 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.7
+
+- Fixed: with time & weather sync on, the sim of whoever joined the
+  session froze for a few seconds again and again. The host's weather
+  and time are now taken over once when you join. After that, use the new
+  "Sync time & weather now" button (You panel) whenever you want them
+  again.
+- Fixed: Shared Cockpit never really started for the pilot who joined,
+  and showed "The two cockpits use different profiles" even with
+  identical profiles. Needs v0.4.7 on the joining side.
+- New setting "Debug logging" (off by default). Only when it's on do the
+  position and peer lines land in `Log.txt` every few seconds. Otherwise
+  the log keeps startup, changes and errors only.
+- The companion's menu is grouped, and it can be collapsed to a slim icon
+  bar (button at the top) so the map gets more room.
+
 ## What's new in v0.4.6
 
 - Aircraft no longer float above (or sink into) the runway when your
