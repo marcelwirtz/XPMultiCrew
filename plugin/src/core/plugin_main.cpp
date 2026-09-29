@@ -1554,6 +1554,10 @@ uint16_t g_shared_cockpit_reconnect_port = 0;
 flytogether::SharedCockpitRole g_shared_cockpit_reconnect_role = flytogether::SharedCockpitRole::kNone;
 std::string g_shared_cockpit_reconnect_code; // updated on_session_ready, same reasoning as Formation's
 flytogether::SharedCockpitRole g_pending_shared_cockpit_role = flytogether::SharedCockpitRole::kNone;
+// The server tells a joiner about the host (peer_joined) BEFORE handing it
+// the session salt (session_created), so the first on_peer_joined has no
+// key yet - the start is remembered here and done in on_session_ready.
+bool g_shared_cockpit_start_pending = false;
 std::vector<flytogether::DatarefSyncSpec> g_pending_shared_cockpit_datarefs;
 std::vector<flytogether::CommandSyncSpec> g_pending_shared_cockpit_commands;
 flytogether::CommandSync g_command_sync;
@@ -1620,7 +1624,9 @@ void SendDigest() {
 }
 
 void OnPeerDigest(const uint8_t* body, size_t len) {
-    if (len < 6) return;
+    // Not running on this side (yet) - nothing to compare against, and an
+    // empty dataref list would read as "different profiles".
+    if (len < 6 || !g_shared_cockpit_active) return;
     uint32_t profile = 0;
     uint16_t count = 0;
     std::memcpy(&profile, body, 4);
@@ -2366,12 +2372,21 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
         // on_disconnected below) rejoins this exact session - same
         // reasoning as Formation's on_session_ready.
         g_shared_cockpit_reconnect_code = code;
+
+        if (g_shared_cockpit_start_pending) {
+            g_shared_cockpit_start_pending = false;
+            StartSharedCockpit(g_pending_shared_cockpit_role, {}, g_pending_shared_cockpit_datarefs);
+        }
     };
     g_shared_cockpit_rendezvous.on_peer_joined = [](int peer_id, const std::string& host, uint16_t port) {
         char buf[256];
         std::snprintf(buf, sizeof(buf), "XPMultiCrew: shared cockpit peer %d found at %s:%u\n", peer_id,
                       host.c_str(), port);
         XPLMDebugString(buf);
+        if (!g_shared_cockpit_crypto) {
+            g_shared_cockpit_start_pending = true; // see its comment
+            return;
+        }
         // No direct peers for the sync engines' own sockets: direct P2P runs
         // over g_shared_cockpit_rendezvous's socket (the address the server
         // reported), inside the relay senders wired up in
@@ -2528,6 +2543,7 @@ void StartSharedCockpitRendezvous(const std::string& host, uint16_t port,
     }
 
     g_pending_shared_cockpit_role = role;
+    g_shared_cockpit_start_pending = false;
     g_pending_shared_cockpit_datarefs = datarefs;
     g_pending_shared_cockpit_commands = commands;
     g_sc_joined_as_client = role == flytogether::SharedCockpitRole::kClient;
@@ -2560,6 +2576,7 @@ void DisconnectSharedCockpit() {
     g_shared_cockpit.SetCrypto(nullptr);
     g_dataref_sync.SetCrypto(nullptr);
     g_shared_cockpit_crypto.reset();
+    g_shared_cockpit_start_pending = false;
     g_control_listener.SetSharedCockpitCode("");
     g_control_listener.SetSharedCockpitStatus("not started");
 }
