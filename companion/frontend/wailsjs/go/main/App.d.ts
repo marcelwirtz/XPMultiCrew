@@ -50,6 +50,8 @@ export function GetLandingBoard():Promise<main.LandingBoard>;
 
 export function GetLastPage():Promise<string>;
 
+export function GetNavCollapsed():Promise<boolean>;
+
 export function GetNavData():Promise<main.NavData>;
 
 export function GetPrefs():Promise<main.PluginPrefs>;
@@ -96,7 +98,9 @@ export function SetChecklistWatch(arg1:Array<string>):Promise<void>;
 
 export function SetLastPage(arg1:string):Promise<void>;
 
-export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean,arg5:boolean):Promise<main.PluginPrefs>;
+export function SetNavCollapsed(arg1:boolean):Promise<void>;
+
+export function SetPrefs(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean,arg5:boolean,arg6:boolean):Promise<main.PluginPrefs>;
 
 export function ShareChecklistState(arg1:string):Promise<void>;
 
@@ -107,3 +111,5 @@ export function StartLearn():Promise<void>;
 export function StartSharedCockpit(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function StopLearn():Promise<void>;
+
+export function SyncEnv():Promise<void>;

@@ -98,6 +98,10 @@ export function GetLastPage() {
   return window['go']['main']['App']['GetLastPage']();
 }
 
+export function GetNavCollapsed() {
+  return window['go']['main']['App']['GetNavCollapsed']();
+}
+
 export function GetNavData() {
   return window['go']['main']['App']['GetNavData']();
 }
@@ -190,8 +194,12 @@ export function SetLastPage(arg1) {
   return window['go']['main']['App']['SetLastPage'](arg1);
 }
 
-export function SetPrefs(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3, arg4, arg5);
+export function SetNavCollapsed(arg1) {
+  return window['go']['main']['App']['SetNavCollapsed'](arg1);
+}
+
+export function SetPrefs(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SetPrefs'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function ShareChecklistState(arg1) {
@@ -212,4 +220,8 @@ export function StartSharedCockpit(arg1, arg2, arg3) {
 
 export function StopLearn() {
   return window['go']['main']['App']['StopLearn']();
+}
+
+export function SyncEnv() {
+  return window['go']['main']['App']['SyncEnv']();
 }

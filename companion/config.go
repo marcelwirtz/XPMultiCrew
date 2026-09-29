@@ -34,11 +34,13 @@ type companionConfig struct {
 	EnvSync    *bool  `json:"envSync,omitempty"`
 	RightSeat  *bool  `json:"rightSeat,omitempty"`
 	DirectP2P  *bool  `json:"directP2P,omitempty"`
+	DebugLog   bool   `json:"debugLog,omitempty"` // default off
 
 	// The page (sidebar entry) open when the app was last used, and the
 	// window's size/position - see window.go.
-	LastPage string       `json:"lastPage,omitempty"`
-	Window   *WindowState `json:"window,omitempty"`
+	LastPage     string       `json:"lastPage,omitempty"`
+	NavCollapsed bool         `json:"navCollapsed,omitempty"` // menu shown as an icon rail
+	Window       *WindowState `json:"window,omitempty"`
 }
 
 // pluginPrefs returns the settings to push to the plugin, with defaults
@@ -57,6 +59,7 @@ func (c companionConfig) pluginPrefs() PluginPrefs {
 	if c.DirectP2P != nil {
 		p.DirectP2P = *c.DirectP2P
 	}
+	p.DebugLog = c.DebugLog
 	return p
 }
 

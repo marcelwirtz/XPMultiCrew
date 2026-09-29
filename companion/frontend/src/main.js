@@ -21,11 +21,14 @@ import {
   ListProfiles,
   LoadProfile,
   ReloadCsl,
+  SyncEnv,
   SaveProfile,
   SaveServer,
   ScResync,
   SearchDatarefs,
   SetLastPage,
+  GetNavCollapsed,
+  SetNavCollapsed,
   SetPrefs,
   StartLearn,
   StartSharedCockpit,
@@ -109,7 +112,7 @@ function openMapPage() {
 const kLastPageStorageKey = 'xpmulticrew.lastPage';
 
 function showPage(page) {
-  document.querySelectorAll('.sidebar button').forEach((btn) => {
+  document.querySelectorAll('.sidebar button[data-page]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.page === page);
   });
   document.querySelectorAll('.page').forEach((el) => {
@@ -126,9 +129,29 @@ function showPage(page) {
   SetLastPage(page).catch(() => {});
 }
 
-document.querySelectorAll('.sidebar button').forEach((btn) => {
+document.querySelectorAll('.sidebar button[data-page]').forEach((btn) => {
   btn.addEventListener('click', () => showPage(btn.dataset.page));
 });
+
+// Collapsed menu = icon rail without the header, so the map gets the room.
+// Kept in config.json like the last page (see legacyStoredPage's comment
+// for why not localStorage).
+function setNavCollapsed(collapsed) {
+  document.body.classList.toggle('nav-collapsed', collapsed);
+  const toggle = document.getElementById('nav-toggle');
+  toggle.title = collapsed ? 'Expand menu' : 'Collapse menu';
+  toggle.querySelector('.nav-label').textContent = collapsed ? 'Expand' : 'Collapse';
+  // map.js resizes MapLibre on window resize; the container changed size too.
+  window.dispatchEvent(new Event('resize'));
+}
+document.getElementById('nav-toggle').addEventListener('click', () => {
+  const collapsed = !document.body.classList.contains('nav-collapsed');
+  setNavCollapsed(collapsed);
+  SetNavCollapsed(collapsed).catch(() => {});
+});
+GetNavCollapsed()
+  .then(setNavCollapsed)
+  .catch(() => {});
 
 // 'setup' as the fallback (not 'formation', despite it being first in the
 // sidebar - see index.html's comment) since a genuinely first-ever launch
@@ -766,6 +789,7 @@ EventsOn('status', (data) => {
   document.getElementById('profile-learn-btn').disabled = !data.simReady;
   renderLearn(data.learn);
   document.getElementById('reload-csl-btn').disabled = !data.simReady || Date.now() < cslReloadBlockedUntil;
+  document.getElementById('sync-env-btn').disabled = !data.simReady;
 
   // Only meaningful while a Shared Cockpit session is actually running,
   // and pointless to click on a category already owned by this side (see
@@ -834,6 +858,7 @@ function applyPrefsToForm(prefs) {
   document.getElementById('pref-env-sync').checked = prefs.envSync;
   document.getElementById('pref-right-seat').checked = prefs.rightSeat;
   document.getElementById('pref-direct-p2p').checked = prefs.directP2P;
+  document.getElementById('pref-debug-log').checked = prefs.debugLog;
 }
 
 async function savePrefs() {
@@ -844,6 +869,7 @@ async function savePrefs() {
       document.getElementById('pref-env-sync').checked,
       document.getElementById('pref-right-seat').checked,
       document.getElementById('pref-direct-p2p').checked,
+      document.getElementById('pref-debug-log').checked,
     );
     applyPrefsToForm(prefs);
   } catch (e) {
@@ -860,6 +886,10 @@ document.getElementById('pref-labels').addEventListener('change', savePrefs);
 document.getElementById('pref-env-sync').addEventListener('change', savePrefs);
 document.getElementById('pref-right-seat').addEventListener('change', savePrefs);
 document.getElementById('pref-direct-p2p').addEventListener('change', savePrefs);
+document.getElementById('pref-debug-log').addEventListener('change', savePrefs);
+// See control_listener.h's SYNC_ENV - the weather follows on the plugin's
+// next poll, the time with the host's next broadcast (up to 10 s).
+document.getElementById('sync-env-btn').addEventListener('click', () => SyncEnv().catch(alert));
 document.getElementById('sc-resync-btn').addEventListener('click', () => ScResync().catch(alert));
 
 // --- Profiles page: Shared Cockpit dataref profile editor (see

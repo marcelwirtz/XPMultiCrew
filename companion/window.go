@@ -133,3 +133,16 @@ func (a *App) SetLastPage(page string) error {
 	}
 	return updateConfig(func(cfg *companionConfig) { cfg.LastPage = page })
 }
+
+// GetNavCollapsed reports whether the menu was collapsed to an icon rail.
+func (a *App) GetNavCollapsed() bool {
+	return loadConfig().NavCollapsed
+}
+
+// SetNavCollapsed remembers the menu's collapsed state.
+func (a *App) SetNavCollapsed(collapsed bool) error {
+	if loadConfig().NavCollapsed == collapsed {
+		return nil
+	}
+	return updateConfig(func(cfg *companionConfig) { cfg.NavCollapsed = collapsed })
+}

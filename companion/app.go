@@ -173,7 +173,7 @@ func (a *App) GetPrefs() PluginPrefs {
 // SetPrefs saves the settings and pushes them to the plugin right away.
 // The callsign is upper-cased and cut to what the wire format carries
 // (8 characters of A-Z, 0-9 and '-').
-func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat, directP2P bool) (PluginPrefs, error) {
+func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat, directP2P, debugLog bool) (PluginPrefs, error) {
 	callsign = sanitizeCallsign(callsign)
 	var prefs PluginPrefs
 	if err := updateConfig(func(cfg *companionConfig) {
@@ -182,6 +182,7 @@ func (a *App) SetPrefs(callsign string, showLabels, envSync, rightSeat, directP2
 		cfg.EnvSync = &envSync
 		cfg.RightSeat = &rightSeat
 		cfg.DirectP2P = &directP2P
+		cfg.DebugLog = debugLog
 		prefs = cfg.pluginPrefs()
 	}); err != nil {
 		return PluginPrefs{}, err
@@ -390,6 +391,13 @@ func (a *App) ClaimOwnership(category string) error {
 // comes back asynchronously as CSL_STATUS.
 func (a *App) ReloadCsl() error {
 	return a.plugin.Send("RELOAD_CSL")
+}
+
+// SyncEnv asks the plugin to take over the session host's time & weather
+// once more - see control_listener.h's SYNC_ENV. A follower only does that
+// on its own right after joining.
+func (a *App) SyncEnv() error {
+	return a.plugin.Send("SYNC_ENV")
 }
 
 // DisconnectFormation asks the plugin to leave its current Formation

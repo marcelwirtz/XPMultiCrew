@@ -80,6 +80,18 @@ func TestReloadCslSendsCommand(t *testing.T) {
 	}
 }
 
+func TestSyncEnvSendsCommand(t *testing.T) {
+	_, recv := recvLine(t)
+	app := NewApp()
+
+	if err := app.SyncEnv(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := recv(); got != "SYNC_ENV" {
+		t.Fatalf("unexpected command line: %q", got)
+	}
+}
+
 func TestDisconnectFormationSendsCommand(t *testing.T) {
 	_, recv := recvLine(t)
 	app := NewApp()

@@ -47,3 +47,17 @@ func TestLastPageAndConcurrentConfigUpdates(t *testing.T) {
 		t.Fatalf("an update got lost: %+v", cfg)
 	}
 }
+
+func TestNavCollapsedIsSaved(t *testing.T) {
+	useTempConfigDir(t)
+	a := NewApp()
+	if a.GetNavCollapsed() {
+		t.Fatal("menu expanded on the first start")
+	}
+	if err := a.SetNavCollapsed(true); err != nil || !a.GetNavCollapsed() {
+		t.Fatalf("collapsed state not saved: %v", err)
+	}
+	if err := a.SetNavCollapsed(false); err != nil || a.GetNavCollapsed() {
+		t.Fatalf("expanded state not saved: %v", err)
+	}
+}
