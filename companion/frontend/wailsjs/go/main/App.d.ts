@@ -94,6 +94,8 @@ export function SearchAirports(arg1:string):Promise<Array<main.AirportHit>>;
 
 export function SearchDatarefs(arg1:string):Promise<Array<main.DatarefInfo>>;
 
+export function SetApproachCoach(arg1:boolean):Promise<void>;
+
 export function SetChecklistWatch(arg1:Array<string>):Promise<void>;
 
 export function SetLastPage(arg1:string):Promise<void>;

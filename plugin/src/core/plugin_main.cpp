@@ -30,6 +30,7 @@
 #include "XPLMDefs.h"
 #include "XPLMDisplay.h"
 #include "XPLMGraphics.h"
+#include "XPLMMenus.h"
 #include "XPLMPlugin.h"
 #include "XPLMProcessing.h"
 #include "XPLMUtilities.h"
@@ -53,6 +54,7 @@
 #include "shared_cockpit/shared_cockpit_sync.h"
 #include "shared_cockpit/weather_sync.h"
 #include "sync/time_sync.h"
+#include "sync/approach_coach.h"
 #include "sync/touchdown_detector.h"
 
 #include <algorithm>
@@ -1687,10 +1689,12 @@ void UpdateRightSeat() {
 // after a role swap, so nobody has to look at the companion to know.
 std::string g_overlay_text;
 double g_overlay_until_s = 0.0;
+bool g_overlay_alert = false; // red instead of the usual amber (Approach Coach warnings)
 
-void ShowOverlay(const std::string& text, double seconds) {
+void ShowOverlay(const std::string& text, double seconds, bool alert = false) {
     g_overlay_text = text;
     g_overlay_until_s = XPLMGetElapsedTime() + seconds;
+    g_overlay_alert = alert;
 }
 
 int DrawOverlayCallback(XPLMDrawingPhase /*phase*/, int /*isBefore*/, void* /*refcon*/) {
@@ -1705,6 +1709,11 @@ int DrawOverlayCallback(XPLMDrawingPhase /*phase*/, int /*isBefore*/, void* /*re
     const int y = height - 120;
     XPLMDrawTranslucentDarkBox(x - 16, y + 22, x + text_w + 16, y - 12);
     float color[3] = {0.96f, 0.82f, 0.26f};
+    if (g_overlay_alert) {
+        color[0] = 1.0f;
+        color[1] = 0.36f;
+        color[2] = 0.30f;
+    }
     XPLMDrawString(color, x, y, const_cast<char*>(g_overlay_text.c_str()), nullptr, xplmFont_Proportional);
     return 1;
 }
@@ -1806,6 +1815,137 @@ void OnOwnLanding(const flytogether::LandingResult& r) {
     XPLMDebugString(("XPMultiCrew: landing " + payload + "\n").c_str());
 }
 
+// --- Approach Coach (sync/approach_coach.h) -----------------------------------
+// Callouts on the sim screen at the 1000/500 ft gates and below, plus a
+// summary per approach for the companion (APPROACHES), which puts it next
+// to the Butter-Board landing. On/off is saved by the plugin itself
+// (XPMultiCrew.prf next to X-Plane's own preferences) so it survives
+// restarts and can be switched from X-Plane's Plugins menu, a key/button
+// bound to the command below, or the companion - all showing the same state.
+constexpr size_t kMaxApproachEntries = 20;
+flytogether::ApproachCoach g_approach_coach;
+bool g_approach_coach_enabled = false; // off until switched on (companion, Plugins menu or command)
+std::vector<std::string> g_approaches; // APPROACHES entries, oldest first
+XPLMDataRef g_vso_ref = nullptr;          // sim/aircraft/view/acf_Vso, kias
+XPLMDataRef g_gear_retract_ref = nullptr; // sim/aircraft/gear/acf_gear_retract, int
+XPLMDataRef g_weight_ref = nullptr;       // sim/flightmodel/weight/m_total, kg
+XPLMDataRef g_max_weight_ref = nullptr;   // sim/aircraft/weight/acf_m_max, kg
+XPLMDataRef g_nav1_hdef_ref = nullptr;    // sim/cockpit2/radios/indicators/nav1_hdef_dots_pilot
+XPLMDataRef g_nav1_vdef_ref = nullptr;    // sim/cockpit2/radios/indicators/nav1_vdef_dots_pilot
+XPLMDataRef g_nav1_show_h_ref = nullptr;  // sim/cockpit2/radios/indicators/nav1_display_horizontal
+XPLMDataRef g_nav1_show_v_ref = nullptr;  // sim/cockpit2/radios/indicators/nav1_display_vertical
+XPLMDataRef g_nav1_gs_flag_ref = nullptr; // sim/cockpit2/radios/indicators/nav1_flag_glideslope
+XPLMMenuID g_plugin_menu = nullptr;
+int g_approach_coach_menu_item = -1;
+XPLMCommandRef g_approach_coach_cmd = nullptr;
+
+std::string ApproachCoachPrefsPath() {
+    char buf[1024] = {};
+    XPLMGetPrefsPath(buf); // .../Output/preferences/X-Plane.prf
+    std::string path(buf);
+    const size_t sep = path.find_last_of("/\\:");
+    return (sep == std::string::npos ? std::string() : path.substr(0, sep + 1)) + "XPMultiCrew.prf";
+}
+
+void LoadApproachCoachPref() {
+    std::ifstream file(ApproachCoachPrefsPath());
+    std::string key, value;
+    while (file >> key >> value) {
+        if (key == "approach_coach") g_approach_coach_enabled = value != "0";
+    }
+}
+
+void SaveApproachCoachPref() {
+    std::ofstream file(ApproachCoachPrefsPath(), std::ios::trunc);
+    file << "approach_coach " << (g_approach_coach_enabled ? 1 : 0) << "\n";
+}
+
+void SetApproachCoachEnabled(bool enabled) {
+    if (enabled != g_approach_coach_enabled) {
+        g_approach_coach_enabled = enabled;
+        SaveApproachCoachPref();
+        XPLMDebugString(enabled ? "XPMultiCrew: Approach Coach on\n" : "XPMultiCrew: Approach Coach off\n");
+        ShowOverlay(enabled ? "Approach Coach ON" : "Approach Coach OFF", 3.0);
+    }
+    g_approach_coach.Reset(); // start fresh either way - no half-watched approach
+    if (g_plugin_menu && g_approach_coach_menu_item >= 0) {
+        XPLMCheckMenuItem(g_plugin_menu, g_approach_coach_menu_item, enabled ? xplm_Menu_Checked : xplm_Menu_Unchecked);
+    }
+    g_control_listener.SetApproachCoach(enabled);
+}
+
+void PluginMenuHandler(void* /*menuRef*/, void* itemRef) {
+    if (itemRef == &g_approach_coach_enabled) SetApproachCoachEnabled(!g_approach_coach_enabled);
+}
+
+int ApproachCoachCommandHandler(XPLMCommandRef /*cmd*/, XPLMCommandPhase phase, void* /*refcon*/) {
+    if (phase == xplm_CommandBegin) SetApproachCoachEnabled(!g_approach_coach_enabled);
+    return 1;
+}
+
+void OnApproachSummary(const flytogether::ApproachSummary& r) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%lld:%d:%u:%u:%.0f:%d", static_cast<long long>(std::time(nullptr)),
+                  r.stable_at_500 ? 1 : 0, r.deviations_at_500, r.warnings_below_500, r.max_sink_below_500_fpm,
+                  r.go_around ? 1 : 0);
+    g_approaches.push_back(buf);
+    if (g_approaches.size() > kMaxApproachEntries) {
+        g_approaches.erase(g_approaches.begin());
+    }
+    std::string joined;
+    for (const auto& e : g_approaches) {
+        joined += (joined.empty() ? "" : ";") + e;
+    }
+    g_control_listener.SetApproaches(joined);
+    XPLMDebugString((std::string("XPMultiCrew: approach ") + buf + "\n").c_str());
+}
+
+// Called from TouchdownCallback's frame, under the same conditions (not
+// paused, not a replay, not the Shared Cockpit co-pilot).
+void UpdateApproachCoach(double running_time_s) {
+    if (!g_approach_coach_enabled) {
+        return;
+    }
+    flytogether::ApproachSample s;
+    s.time_s = running_time_s;
+    s.on_ground = XPLMGetDatai(g_on_ground_ref) != 0;
+    s.agl_ft = (g_y_agl_ref ? XPLMGetDataf(g_y_agl_ref) : 0.0) / 0.3048;
+    s.vs_fpm = g_vs_fpm_ref ? XPLMGetDataf(g_vs_fpm_ref) : 0.0;
+    s.ias_kt = g_ias_ref ? XPLMGetDataf(g_ias_ref) : 0.0;
+    s.bank_deg = g_roll_ref ? XPLMGetDataf(g_roll_ref) : 0.0;
+    s.gear_retractable = g_gear_retract_ref && XPLMGetDatai(g_gear_retract_ref) != 0;
+    s.gear_ratio = ReadFirstArrayElement(g_gear_ref);
+    const double vso = g_vso_ref ? XPLMGetDataf(g_vso_ref) : 0.0;
+    const double weight = g_weight_ref ? XPLMGetDataf(g_weight_ref) : 0.0;
+    const double max_weight = g_max_weight_ref ? XPLMGetDataf(g_max_weight_ref) : 0.0;
+    s.vref_kt = flytogether::ApproachCoach::EstimateVrefKt(vso, weight, max_weight);
+    // Logged whenever it moves noticeably (new aircraft, fuel burn on a
+    // heavy) - the speed checks are only as good as this estimate.
+    static double logged_vref = -100.0;
+    if (std::fabs(s.vref_kt - logged_vref) >= 5.0) {
+        logged_vref = s.vref_kt;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: Approach Coach Vref ~%.0f kt (Vso %.0f kt, weight %.0f of %.0f kg)%s\n", s.vref_kt,
+                      vso, weight, max_weight, s.vref_kt > 0.0 ? "" : " - no speed checks");
+        XPLMDebugString(buf);
+    }
+    // A VOR also drives the horizontal needle - only an ILS has both.
+    s.on_ils = g_nav1_show_h_ref && g_nav1_show_v_ref && XPLMGetDatai(g_nav1_show_h_ref) != 0 &&
+               XPLMGetDatai(g_nav1_show_v_ref) != 0 && !(g_nav1_gs_flag_ref && XPLMGetDatai(g_nav1_gs_flag_ref) != 0);
+    s.loc_dots = g_nav1_hdef_ref ? XPLMGetDataf(g_nav1_hdef_ref) : 0.0;
+    s.gs_dots = g_nav1_vdef_ref ? XPLMGetDataf(g_nav1_vdef_ref) : 0.0;
+
+    std::vector<flytogether::ApproachCallout> callouts;
+    const auto summary = g_approach_coach.Update(s, callouts);
+    for (const auto& c : callouts) {
+        ShowOverlay(c.text, c.seconds, c.alert);
+    }
+    if (summary) {
+        OnApproachSummary(*summary);
+    }
+}
+
 float TouchdownCallback(float /*elapsedSinceLastCall*/,
                         float /*elapsedTimeSinceLastFlightLoop*/,
                         int /*counter*/,
@@ -1823,10 +1963,12 @@ float TouchdownCallback(float /*elapsedSinceLastCall*/,
     if (!g_running_time_ref || !g_on_ground_ref || !g_latitude_ref || (g_replay_ref && XPLMGetDatai(g_replay_ref) != 0) ||
         g_physics_override_active) {
         g_touchdown.Reset();
+        g_approach_coach.Reset();
         return -1.0f;
     }
     flytogether::TouchdownSample s;
     s.time_s = XPLMGetDataf(g_running_time_ref);
+    UpdateApproachCoach(s.time_s);
     s.on_ground = XPLMGetDatai(g_on_ground_ref) != 0;
     s.vs_fpm = g_vs_fpm_ref ? XPLMGetDataf(g_vs_fpm_ref) : 0.0;
     s.g_normal = g_g_normal_ref ? XPLMGetDataf(g_g_normal_ref) : 1.0;
@@ -2863,6 +3005,27 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_replay_ref = XPLMFindDataRef("sim/time/is_in_replay");
     g_ias_ref = XPLMFindDataRef("sim/flightmodel/position/indicated_airspeed");
     g_engine_running_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_running");
+    g_vso_ref = XPLMFindDataRef("sim/aircraft/view/acf_Vso");
+    g_gear_retract_ref = XPLMFindDataRef("sim/aircraft/gear/acf_gear_retract");
+    g_weight_ref = XPLMFindDataRef("sim/flightmodel/weight/m_total");
+    g_max_weight_ref = XPLMFindDataRef("sim/aircraft/weight/acf_m_max");
+    g_nav1_hdef_ref = XPLMFindDataRef("sim/cockpit2/radios/indicators/nav1_hdef_dots_pilot");
+    g_nav1_vdef_ref = XPLMFindDataRef("sim/cockpit2/radios/indicators/nav1_vdef_dots_pilot");
+    g_nav1_show_h_ref = XPLMFindDataRef("sim/cockpit2/radios/indicators/nav1_display_horizontal");
+    g_nav1_show_v_ref = XPLMFindDataRef("sim/cockpit2/radios/indicators/nav1_display_vertical");
+    g_nav1_gs_flag_ref = XPLMFindDataRef("sim/cockpit2/radios/indicators/nav1_flag_glideslope");
+
+    LoadApproachCoachPref();
+    const int menu_item = XPLMAppendMenuItem(XPLMFindPluginsMenu(), "XPMultiCrew", nullptr, 0);
+    g_plugin_menu = XPLMCreateMenu("XPMultiCrew", XPLMFindPluginsMenu(), menu_item, PluginMenuHandler, nullptr);
+    if (g_plugin_menu) {
+        g_approach_coach_menu_item =
+            XPLMAppendMenuItem(g_plugin_menu, "Approach Coach", &g_approach_coach_enabled, 0);
+        XPLMCheckMenuItem(g_plugin_menu, g_approach_coach_menu_item,
+                          g_approach_coach_enabled ? xplm_Menu_Checked : xplm_Menu_Unchecked);
+    }
+    g_approach_coach_cmd = XPLMCreateCommand("xpmulticrew/approach_coach_toggle", "XPMultiCrew: Approach Coach on/off");
+    g_control_listener.SetApproachCoach(g_approach_coach_enabled);
     RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
     std::random_device rd;
@@ -2876,6 +3039,11 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
 }
 
 PLUGIN_API void XPluginStop() {
+    if (g_plugin_menu) {
+        XPLMDestroyMenu(g_plugin_menu);
+        g_plugin_menu = nullptr;
+        g_approach_coach_menu_item = -1;
+    }
     g_latitude_ref = nullptr;
     g_longitude_ref = nullptr;
     g_elevation_ref = nullptr;
@@ -2971,6 +3139,7 @@ PLUGIN_API int XPluginEnable() {
         g_control_listener.SetSharedRoute("0 " + payload);
     };
     control_callbacks.on_show_overlay = [](double seconds, const std::string& text) { ShowOverlay(text, seconds); };
+    control_callbacks.on_set_approach_coach = [](bool enabled) { SetApproachCoachEnabled(enabled); };
     control_callbacks.on_learn = [](bool start) {
         if (start) {
             StartLearning();
@@ -3010,6 +3179,9 @@ PLUGIN_API int XPluginEnable() {
     XPLMRegisterFlightLoopCallback(PollFormationEnvCallback, 1.0f, nullptr);
     XPLMRegisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
     XPLMRegisterFlightLoopCallback(TouchdownCallback, -1.0f, nullptr);
+    if (g_approach_coach_cmd) {
+        XPLMRegisterCommandHandler(g_approach_coach_cmd, ApproachCoachCommandHandler, 1, nullptr);
+    }
 
     if (g_udp_socket.Open()) {
         XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
@@ -3066,6 +3238,9 @@ PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(PollFormationEnvCallback, nullptr);
     XPLMUnregisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
     XPLMUnregisterFlightLoopCallback(TouchdownCallback, nullptr);
+    if (g_approach_coach_cmd) {
+        XPLMUnregisterCommandHandler(g_approach_coach_cmd, ApproachCoachCommandHandler, 1, nullptr);
+    }
     g_formation_weather.Stop();
     XPLMUnregisterFlightLoopCallback(SendPositionOverUdpCallback, nullptr);
     g_udp_socket.Close();

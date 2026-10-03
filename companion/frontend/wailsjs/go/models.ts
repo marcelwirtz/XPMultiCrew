@@ -341,6 +341,28 @@ export namespace main {
 	    }
 	}
 	
+	export class ApproachRating {
+	    time: number;
+	    stableAt500: boolean;
+	    atGate: string[];
+	    warningsBelow: string[];
+	    maxSinkFpm: number;
+	    goAround: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApproachRating(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.stableAt500 = source["stableAt500"];
+	        this.atGate = source["atGate"];
+	        this.warningsBelow = source["warningsBelow"];
+	        this.maxSinkFpm = source["maxSinkFpm"];
+	        this.goAround = source["goAround"];
+	    }
+	}
 	export class ChecklistCondition {
 	    key: string;
 	    op: string;
@@ -525,6 +547,7 @@ export namespace main {
 	    score: number;
 	    verdict: string;
 	    notes: string[];
+	    approach?: ApproachRating;
 	
 	    static createFrom(source: any = {}) {
 	        return new Landing(source);
@@ -557,7 +580,26 @@ export namespace main {
 	        this.score = source["score"];
 	        this.verdict = source["verdict"];
 	        this.notes = source["notes"];
+	        this.approach = this.convertValues(source["approach"], ApproachRating);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class PeerTrack {
 	    id: number;

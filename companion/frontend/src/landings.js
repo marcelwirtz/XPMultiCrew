@@ -38,6 +38,17 @@ function timeText(unix) {
   return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// The Approach Coach's verdict on the approach that ended in this landing.
+function approachHtml(l) {
+  const a = l.approach;
+  if (!a) return '';
+  const gate = a.stableAt500
+    ? '<b class="ok">stable at 500 ft</b>'
+    : `<b class="bad">unstable at 500 ft</b> (${a.atGate.map(escapeHtml).join(', ')})`;
+  const below = a.warningsBelow.length ? ` · warnings below 500 ft: ${a.warningsBelow.map(escapeHtml).join(', ')}` : '';
+  return `<div class="lb-approach">Approach: ${gate}${below} · max sink ${Math.round(a.maxSinkFpm)} fpm</div>`;
+}
+
 function fmtSigned(v, digits = 0) {
   return (v > 0 ? '+' : '') + v.toFixed(digits);
 }
@@ -121,7 +132,8 @@ function renderHero() {
       </div>
     </div>
     <div class="lb-runway">${runwaySvg(l)}</div>
-    <div class="lb-notes">${l.notes && l.notes.length ? `Deductions: ${l.notes.map(escapeHtml).join(' · ')}` : 'No deductions - textbook.'}</div>`;
+    <div class="lb-notes">${l.notes && l.notes.length ? `Deductions: ${l.notes.map(escapeHtml).join(' · ')}` : 'No deductions - textbook.'}</div>
+    ${approachHtml(l)}`;
 }
 
 // --- Tables --------------------------------------------------------------------

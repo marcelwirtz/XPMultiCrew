@@ -600,6 +600,9 @@
   .lb-runway svg { width: 100%; height: auto; display: block; }
   .lb-runway .hint { margin-top: 2px; }
   .lb-notes { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .lb-approach { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .lb-approach b.ok { color: var(--ok); }
+  .lb-approach b.bad { color: var(--err); }
   .lb-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
   .lb-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--border); }
   .lb-table td { padding: 5px 6px; border-bottom: 1px solid #22262d; }
@@ -982,34 +985,32 @@
       </div>
 
       <div class="page" id="page-setup">
-        <div class="panel">
-          <h2>Setup</h2>
-
-          <label>X-Plane installation folder</label>
-          <div class="row">
-            <input type="text" id="xplane-path" placeholder="Not set — choose your X-Plane folder" readonly>
-            <button id="choose-xplane-btn" class="secondary" style="flex: 0 0 auto;">Choose…</button>
-          </div>
-
-          <div class="row buttons">
-            <button id="install-plugin-btn">Install / Update Plugin</button>
-          </div>
-
-          <div class="status" id="setup-status"><span class="dot"></span><span id="setup-status-text">choose your X-Plane folder, then install the plugin</span></div>
-
-          <div class="version-info" id="version-info">
-            <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
-            <span>Available (bundled with this app): <b id="available-version">—</b></span>
-            <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
-            <span id="duplicate-plugins-row" class="duplicate-plugins" style="display: none;">X-Plane may load one of these other plugin copies instead - close X-Plane and delete them: <b id="duplicate-plugins"></b></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="page" id="page-formation">
         <div class="grid">
           <div class="panel">
-            <h2>You</h2>
+            <h2>Setup</h2>
+
+            <label>X-Plane installation folder</label>
+            <div class="row">
+              <input type="text" id="xplane-path" placeholder="Not set — choose your X-Plane folder" readonly>
+              <button id="choose-xplane-btn" class="secondary" style="flex: 0 0 auto;">Choose…</button>
+            </div>
+
+            <div class="row buttons">
+              <button id="install-plugin-btn">Install / Update Plugin</button>
+            </div>
+
+            <div class="status" id="setup-status"><span class="dot"></span><span id="setup-status-text">choose your X-Plane folder, then install the plugin</span></div>
+
+            <div class="version-info" id="version-info">
+              <span id="installed-version-row">Installed: <b id="installed-version">—</b></span>
+              <span>Available (bundled with this app): <b id="available-version">—</b></span>
+              <span id="running-version-row" style="display: none;">Currently loaded in X-Plane: <b id="running-version"></b> (restart X-Plane to load a newer install)</span>
+              <span id="duplicate-plugins-row" class="duplicate-plugins" style="display: none;">X-Plane may load one of these other plugin copies instead - close X-Plane and delete them: <b id="duplicate-plugins"></b></span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Preferences</h2>
             <div class="settings-row">
               <div>
                 <label for="callsign">Callsign (shown to others; empty = your aircraft's tail number)</label>
@@ -1025,10 +1026,6 @@
               <input type="checkbox" id="pref-env-sync">
               <span>Sync time &amp; weather — the session creator shares theirs, everyone else takes it over once when joining</span>
             </label>
-            <div class="settings-row" style="align-items: center; margin-bottom: 8px;">
-              <span class="hint" style="flex: 1; margin: 0;">Weather changed on the host, or clocks drifted apart?</span>
-              <button id="sync-env-btn" class="secondary" type="button" disabled>Sync time &amp; weather now</button>
-            </div>
             <label class="checkbox-row">
               <input type="checkbox" id="pref-direct-p2p">
               <span>Direct peer-to-peer connection — turn off if you keep losing each other; everything then goes through the server</span>
@@ -1037,8 +1034,17 @@
               <input type="checkbox" id="pref-debug-log">
               <span>Debug logging — write position and peer updates to X-Plane's Log.txt every few seconds (for bug reports)</span>
             </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="pref-approach-coach" disabled>
+              <span>Approach Coach — callouts in the sim whether your approach is stable (500 ft gate; speed, sink rate, bank, gear, ILS). Also in X-Plane: Plugins › XPMultiCrew, or bind the command <code>xpmulticrew/approach_coach_toggle</code> to a key</span>
+            </label>
+            <div class="hint" id="approach-coach-hint">Available while X-Plane is running with plugin v0.4.8 or newer.</div>
           </div>
+        </div>
+      </div>
 
+      <div class="page" id="page-formation">
+        <div class="grid">
           <div class="panel">
             <h2>Multiplayer / Internet play</h2>
 
@@ -1071,6 +1077,11 @@
             </div>
 
             <div class="status" id="formation-status"><span class="dot"></span><span id="formation-status-text">loading…</span></div>
+
+            <div class="settings-row" style="align-items: center; margin: 8px 0;">
+              <span class="hint" style="flex: 1; margin: 0;">Weather changed on the host, or clocks drifted apart?</span>
+              <button id="sync-env-btn" class="secondary" type="button" disabled>Sync time &amp; weather now</button>
+            </div>
 
             <div class="peer-list" id="peer-list">
               <div class="empty">no peers connected</div>

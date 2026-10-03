@@ -61,6 +61,7 @@ func (a *App) processLandings() {
 	if len(fresh) == 0 {
 		return
 	}
+	approaches := a.plugin.Approaches()
 	go func() {
 		runways := runwayGeometry()
 		for _, l := range fresh {
@@ -75,6 +76,9 @@ func (a *App) processLandings() {
 				}
 			}
 			rateLanding(&l, runways)
+			if l.Own {
+				l.Approach = approachForLanding(l, approaches)
+			}
 			if l.Own && isRecent(l, time.Now()) {
 				_ = a.plugin.Send("SHOW_OVERLAY 12 " + overlayText(l))
 			}
@@ -125,6 +129,16 @@ func (a *App) shutdown() {
 	if f != nil {
 		a.storeFlight(f)
 	}
+}
+
+// SetApproachCoach switches the plugin's Approach Coach on or off. The
+// plugin saves the setting itself (it can also be switched from X-Plane's
+// Plugins menu), so there's nothing to store here.
+func (a *App) SetApproachCoach(enabled bool) error {
+	if enabled {
+		return a.plugin.Send("SET_APPROACH_COACH 1")
+	}
+	return a.plugin.Send("SET_APPROACH_COACH 0")
 }
 
 // GetLandingBoard returns the session's landings and our own landing log.

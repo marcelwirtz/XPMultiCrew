@@ -26,6 +26,7 @@ import {
   SaveServer,
   ScResync,
   SearchDatarefs,
+  SetApproachCoach,
   SetLastPage,
   GetNavCollapsed,
   SetNavCollapsed,
@@ -718,6 +719,14 @@ function fillCodeFieldIfEmpty(inputId, code) {
 // polling loop needed here, and the event is push-based so status updates
 // show up immediately rather than up to 2s late.
 EventsOn('status', (data) => {
+  // Approach Coach: the plugin owns the setting (it's also switchable from
+  // X-Plane's menu) - just mirror it; null = no plugin that has one.
+  const coach = document.getElementById('pref-approach-coach');
+  const coachKnown = data.approachCoach !== null && data.approachCoach !== undefined;
+  coach.disabled = !coachKnown;
+  if (coachKnown && document.activeElement !== coach) coach.checked = data.approachCoach;
+  document.getElementById('approach-coach-hint').style.display = coachKnown ? 'none' : '';
+
   const formationKind = classify(data.formation);
   const sharedCockpitKind = classify(data.sharedCockpit);
 
@@ -850,7 +859,7 @@ document.getElementById('diagnostics-copy-btn').addEventListener('click', async 
   }
 });
 
-// --- "You" panel: callsign, labels, time & weather sync (companion
+// --- Preferences panel (Setup page): callsign, labels, time & weather sync (companion
 // settings pushed to the plugin, see app.go's SetPrefs) ---
 function applyPrefsToForm(prefs) {
   document.getElementById('callsign').value = prefs.callsign || '';
@@ -890,6 +899,9 @@ document.getElementById('pref-debug-log').addEventListener('change', savePrefs);
 // See control_listener.h's SYNC_ENV - the weather follows on the plugin's
 // next poll, the time with the host's next broadcast (up to 10 s).
 document.getElementById('sync-env-btn').addEventListener('click', () => SyncEnv().catch(alert));
+document.getElementById('pref-approach-coach').addEventListener('change', (e) => {
+  SetApproachCoach(e.target.checked).catch(alert);
+});
 document.getElementById('sc-resync-btn').addEventListener('click', () => ScResync().catch(alert));
 
 // --- Profiles page: Shared Cockpit dataref profile editor (see

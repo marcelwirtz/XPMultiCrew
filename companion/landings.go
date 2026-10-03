@@ -48,6 +48,11 @@ type Landing struct {
 	Score         int      `json:"score"`
 	Verdict       string   `json:"verdict"`
 	Notes         []string `json:"notes"`
+
+	// Our own landings only: the Approach Coach's verdict on the approach
+	// that ended here (nil if the coach was off or the approach started
+	// below its arm height).
+	Approach *ApproachRating `json:"approach,omitempty"`
 }
 
 // parseLandings decodes LANDINGS "<entry>;..." (see control_listener.h).

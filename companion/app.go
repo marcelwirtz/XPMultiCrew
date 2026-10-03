@@ -47,6 +47,7 @@ type statusEvent struct {
 	SelfPos                *MapPosition       `json:"selfPos"`
 	PeerPos                []MapPosition      `json:"peerPos"`
 	LandingsVersion        int                `json:"landingsVersion"` // Landings page refetches when it changes
+	ApproachCoach          *bool              `json:"approachCoach"`   // nil = plugin hasn't said (not running / too old)
 	Recording              *RecordingInfo     `json:"recording,omitempty"`
 	FlightsVersion         int                `json:"flightsVersion"` // a flight was saved
 }
@@ -145,6 +146,7 @@ func (a *App) pollStatus() {
 			SelfPos:                selfPos,
 			PeerPos:                peerPos,
 			LandingsVersion:        a.landings.currentVersion(),
+			ApproachCoach:          a.plugin.ApproachCoach(),
 			Recording:              recording,
 			FlightsVersion:         flightsVersion,
 		})

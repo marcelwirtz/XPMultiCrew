@@ -186,6 +186,10 @@ export function SearchDatarefs(arg1) {
   return window['go']['main']['App']['SearchDatarefs'](arg1);
 }
 
+export function SetApproachCoach(arg1) {
+  return window['go']['main']['App']['SetApproachCoach'](arg1);
+}
+
 export function SetChecklistWatch(arg1) {
   return window['go']['main']['App']['SetChecklistWatch'](arg1);
 }

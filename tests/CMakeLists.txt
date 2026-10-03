@@ -308,3 +308,11 @@ add_executable(touchdown_detector_test
 target_include_directories(touchdown_detector_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
 target_compile_features(touchdown_detector_test PRIVATE cxx_std_17)
 add_test(NAME touchdown_detector_test COMMAND touchdown_detector_test)
+
+add_executable(approach_coach_test
+    approach_coach_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/sync/approach_coach.cpp
+)
+target_include_directories(approach_coach_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(approach_coach_test PRIVATE cxx_std_17)
+add_test(NAME approach_coach_test COMMAND approach_coach_test)

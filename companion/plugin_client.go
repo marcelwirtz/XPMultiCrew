@@ -124,6 +124,8 @@ type PluginClient struct {
 	selfPos                *MapPosition
 	peerPos                []MapPosition
 	landings               []Landing
+	approachCoach          *bool // nil until the plugin reported it (older plugins never do)
+	approaches             []ApproachRating
 }
 
 // LinkQuality mirrors control_listener.h's LINK_QUALITY line - each RTT is
@@ -320,6 +322,25 @@ func (c *PluginClient) ChecklistState() (remote string, values map[string]float6
 		desync = &d
 	}
 	return c.checklistRemote, values, desync
+}
+
+// ApproachCoach returns whether the plugin's Approach Coach is on - nil if
+// the plugin hasn't said (not running, or too old to have one).
+func (c *PluginClient) ApproachCoach() *bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.approachCoach == nil {
+		return nil
+	}
+	on := *c.approachCoach
+	return &on
+}
+
+// Approaches returns the plugin's latest APPROACHES list.
+func (c *PluginClient) Approaches() []ApproachRating {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]ApproachRating{}, c.approaches...)
 }
 
 // Landings returns the plugin's latest LANDINGS list (unrated).
@@ -540,6 +561,11 @@ func (c *PluginClient) applyStatusMessage(payload string) {
 			c.peerPos = parsePeerPos(value)
 		case "LANDINGS":
 			c.landings = parseLandings(value)
+		case "APPROACH_COACH":
+			on := strings.TrimSpace(value) == "1"
+			c.approachCoach = &on
+		case "APPROACHES":
+			c.approaches = parseApproachRatings(value)
 		}
 	}
 }

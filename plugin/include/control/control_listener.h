@@ -42,6 +42,8 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //   SC_RESYNC                  - both sides re-send the values of the categories they own
 //   WATCH <name[idx]>;...      - datarefs whose values the companion wants (checklist auto-check)
 //   SHOW_OVERLAY <seconds> <text> - one line of text on the sim screen (the landing rating)
+//   SET_APPROACH_COACH <0|1>   - Approach Coach on/off (sync/approach_coach.h); the plugin
+//                                saves it itself, so it's also switchable from X-Plane's menu
 //   GET_STATUS
 // ROUTE_SHARE sends a planned route (the companion's own text encoding,
 // passed through untouched, no spaces, at most kMaxRoutePayload bytes) to
@@ -144,6 +146,11 @@ constexpr uint16_t kCompanionUdpPort = 49031;  // companion app listens here
 //            <on_ground 0|1> <ias_kt> <vs_fpm> <engines_running 0|1>   (the last four since v0.4.0)
 //   PEER_POS <sender_id>:<lat>:<lon>:<alt_ft>:<heading_deg>;... (Formation, dead-reckoned)
 //     Both pushed about once a second, for the companion's map page.
+//   APPROACH_COACH <0|1> (whether the Approach Coach is on)
+//   APPROACHES <entry>;... (our last 20 rated approaches, oldest first)
+//     <entry> = <id, unix time at the end>:<stable at 500 ft 0|1>:<deviations at 500 ft>:
+//               <warnings below 500 ft>:<max sink below 500 ft, fpm>:<go-around 0|1>
+//     deviations/warnings are sync/approach_coach.h's ApproachDeviation bits.
 //   LANDINGS <entry>;... (the last 20 landings - ours and the session's, oldest first)
 //     <entry> = <sender_id, 0 = ours>:<id, unix time>:<lat>:<lon>:<heading_true>:<vs_fpm>:<peak_g>:
 //               <groundspeed_kt>:<drift_deg>:<bounces>:<flare_m, -1 = unknown>:<touch_and_go 0|1>:<icao|->:<callsign|->
@@ -214,6 +221,7 @@ public:
         std::function<void(bool start)> on_learn;
         std::function<void(const std::string& payload)> on_route_share; // "" = clear
         std::function<void(double seconds, const std::string& text)> on_show_overlay;
+        std::function<void(bool enabled)> on_set_approach_coach;
     };
 
     bool Start(const Callbacks& callbacks);
@@ -266,6 +274,8 @@ public:
     // SELF_POS/PEER_POS above for the encodings.
     void SetPositions(const std::string& self, const std::string& peers);
     void SetLandings(const std::string& encoded);
+    void SetApproachCoach(bool enabled);
+    void SetApproaches(const std::string& encoded);
 
 private:
     void HandleLine(const std::string& line);
@@ -297,6 +307,8 @@ private:
     std::string self_pos_;
     std::string peer_pos_;
     std::string landings_;
+    bool approach_coach_ = true;
+    std::string approaches_;
 };
 
 } // namespace flytogether

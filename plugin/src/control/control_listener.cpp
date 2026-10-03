@@ -82,6 +82,10 @@ void ControlListener::HandleLine(const std::string& line) {
         if (callbacks_.on_disconnect_formation) callbacks_.on_disconnect_formation();
     } else if (cmd == "DISCONNECT_SHARED_COCKPIT") {
         if (callbacks_.on_disconnect_shared_cockpit) callbacks_.on_disconnect_shared_cockpit();
+    } else if (cmd == "SET_APPROACH_COACH") {
+        std::string on;
+        ls >> on;
+        if (callbacks_.on_set_approach_coach && (on == "0" || on == "1")) callbacks_.on_set_approach_coach(on == "1");
     } else if (cmd == "RELOAD_CSL") {
         if (callbacks_.on_reload_csl) callbacks_.on_reload_csl();
     } else if (cmd == "SET_PREFS") {
@@ -144,7 +148,8 @@ void ControlListener::SendStatus() {
                              "\nTCAS_STATUS " + tcas_status_ + "\nSELF_POS " + self_pos_ + "\nPEER_POS " + peer_pos_ +
                              "\nLEARN " + learn_state_ + "\nLEARN_CHANGES " + learn_changes_ +
                              "\nROUTE_SHARED " + shared_route_ + "\nWIND " + wind_ + "\nCHECKLIST_REMOTE " +
-                             checklist_remote_ + "\nSC_DESYNC " + sc_desync_ + "\nWATCH_VALUES " + watch_values_ + "\nLANDINGS " + landings_ + "\n";
+                             checklist_remote_ + "\nSC_DESYNC " + sc_desync_ + "\nWATCH_VALUES " + watch_values_ + "\nLANDINGS " + landings_ +
+                             "\nAPPROACH_COACH " + (approach_coach_ ? "1" : "0") + "\nAPPROACHES " + approaches_ + "\n";
     socket_.SendTo("127.0.0.1", kCompanionUdpPort, msg.data(), msg.size());
 }
 
@@ -283,6 +288,18 @@ void ControlListener::SetPluginVersion(const std::string& version) {
 void ControlListener::SetLandings(const std::string& encoded) {
     if (encoded == landings_) return;
     landings_ = encoded;
+    SendStatus();
+}
+
+void ControlListener::SetApproachCoach(bool enabled) {
+    if (enabled == approach_coach_) return;
+    approach_coach_ = enabled;
+    SendStatus();
+}
+
+void ControlListener::SetApproaches(const std::string& encoded) {
+    if (encoded == approaches_) return;
+    approaches_ = encoded;
     SendStatus();
 }
 

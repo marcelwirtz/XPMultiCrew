@@ -84,6 +84,7 @@ add_library(XPMultiCrew SHARED
     src/sync/remote_aircraft.cpp
     src/sync/time_sync.cpp
     src/sync/touchdown_detector.cpp
+    src/sync/approach_coach.cpp
     src/net/link_quality.cpp
     src/net/secure_random.cpp
     src/net/session_crypto.cpp
