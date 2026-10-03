@@ -34,6 +34,22 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.4.8
+
+- New: **Approach Coach** (off by default - switch it on under Setup ›
+  Preferences, in X-Plane under Plugins › XPMultiCrew, or bind the command
+  `xpmulticrew/approach_coach_toggle` to a key). Callouts in the sim at the
+  500 ft gate ("STABLE" / "UNSTABLE ... GO AROUND", plus a 1000 ft gate on
+  an ILS) and warnings below 500 ft for sink rate, speed, bank and ILS
+  deviation. The rating shows up next to the landing on the Landings page;
+  a go-around (also a low pass back up to the circuit) is rated on its own
+  and doesn't end up on the next landing. Vref is estimated from the
+  aircraft's stall speed (1.3 x Vso, weight-adjusted above 5.7 t).
+- The settings that used to be in the "You" panel on the Multiplayer page
+  (callsign, labels, time & weather sync, direct P2P, debug logging,
+  Approach Coach) are now under Setup › Preferences. The "Sync time &
+  weather now" button stays on the Multiplayer page.
+
 ## What's new in v0.4.7
 
 - Fixed: with time & weather sync on, the sim of whoever joined the
