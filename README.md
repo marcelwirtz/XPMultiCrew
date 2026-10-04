@@ -34,6 +34,14 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.5.1
+
+- A loading indicator wherever something is fetched (sights on the way of
+  each tour leg, auto route, weather briefing, sights, "Where to?").
+- Sights are kept on disk for 30 days, so tours show theirs right away,
+  even after restarting the companion.
+- Airport fields show "ICAO" as their placeholder.
+
 ## What's new in v0.5.0: Tours & Logbook
 
 - **Auto route** (Map › Route): enter two airports and the companion plans
