@@ -6,7 +6,7 @@ import (
 )
 
 func TestRouteSights(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	useTempCacheDir(t)
 	answer := `{"results":{"bindings":[
 	 {"item":{"value":"http://www.wikidata.org/entity/Q1"},"itemLabel":{"value":"Big Castle"},"coord":{"value":"Point(8.5 50.21)"},"type":{"value":"http://www.wikidata.org/entity/Q23413"},"links":{"value":"12"}},
 	 {"item":{"value":"http://www.wikidata.org/entity/Q2"},"itemLabel":{"value":"Same castle again"},"coord":{"value":"Point(8.501 50.211)"},"type":{"value":"http://www.wikidata.org/entity/Q23413"},"links":{"value":"4"}},
@@ -53,7 +53,7 @@ func TestRouteChunks(t *testing.T) {
 }
 
 func TestTourLegSights(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	useTempCacheDir(t)
 	answer := `{"results":{"bindings":[
 	 {"item":{"value":"http://www.wikidata.org/entity/Q1"},"itemLabel":{"value":"A"},"coord":{"value":"Point(8.3 50.2)"},"type":{"value":"http://www.wikidata.org/entity/Q23413"},"links":{"value":"5"}},
 	 {"item":{"value":"http://www.wikidata.org/entity/Q2"},"itemLabel":{"value":"B"},"coord":{"value":"Point(8.6 50.2)"},"type":{"value":"http://www.wikidata.org/entity/Q23413"},"links":{"value":"9"}},

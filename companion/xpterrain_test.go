@@ -53,7 +53,7 @@ func TestParseDSFElevation(t *testing.T) {
 
 func TestXPlaneElevationPackOrder(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	useTempCacheDir(t)
 	write := func(rel string, data []byte) {
 		p := filepath.Join(root, rel)
 		_ = os.MkdirAll(filepath.Dir(p), 0755)

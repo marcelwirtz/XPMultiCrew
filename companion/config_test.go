@@ -16,6 +16,17 @@ func useTempConfigDir(t *testing.T) {
 	t.Cleanup(func() { userConfigDir = old })
 }
 
+// useTempCacheDir does the same for userCacheDir (airports.go) - on
+// Windows os.UserCacheDir ignores XDG_CACHE_HOME, so tests must not rely on
+// that variable.
+func useTempCacheDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	old := userCacheDir
+	userCacheDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userCacheDir = old })
+}
+
 func TestLoadConfigDefaultsToZeroValue(t *testing.T) {
 	useTempConfigDir(t)
 

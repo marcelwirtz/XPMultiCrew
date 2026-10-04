@@ -108,7 +108,7 @@ func parseSights(body []byte) ([]Sight, error) {
 const sightsDiskTTL = 30 * 24 * time.Hour
 
 func sightsCachePath(u string) string {
-	dir, err := os.UserCacheDir()
+	dir, err := userCacheDir()
 	if err != nil {
 		return ""
 	}

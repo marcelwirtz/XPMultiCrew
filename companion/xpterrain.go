@@ -130,7 +130,7 @@ func loadDemTile(xplaneRoot string, lat, lon int) *demTile {
 }
 
 func demCachePath(dsf string, st os.FileInfo) string {
-	dir, err := os.UserCacheDir()
+	dir, err := userCacheDir()
 	if err != nil {
 		return ""
 	}
