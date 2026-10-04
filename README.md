@@ -34,6 +34,47 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.5.0: Tours & Logbook
+
+- **Auto route** (Map › Route): enter two airports and the companion plans
+  a VFR route over reporting points, VORs, NDBs and airports. It never
+  crosses prohibited/restricted areas, goes around controlled airspace if
+  you tick "Avoid controlled airspace" (or ducks under a class C shelf -
+  every leg gets its own altitude), enters and leaves control zones via
+  their reporting points, crosses danger areas only when going around them
+  is a long detour (and says so), and keeps 1000 ft above the terrain en
+  route (500 ft on the legs out of/into an airport) - the ground comes
+  from your own X-Plane scenery. "Radio nav (no GPS)" sticks to VORs,
+  NDBs and airports; any helper point in between is named as a VOR
+  radial/distance and says which airspace it leads around.
+- **Weather briefing** (Map › Route › Weather): METARs and TAFs near the
+  route, winds aloft per leg at the leg's altitude (used for the leg times
+  too), freezing level, the best runway for the wind at departure and
+  destination, a profile of the route against cloud bases and terrain, and
+  warnings when the planned altitudes don't fit. Real-world weather from
+  aviationweather.gov and Open-Meteo; offline it falls back to the METARs
+  X-Plane last downloaded.
+- **Sights** (Map › Route › Sights): castles, palaces, lakes, mountains,
+  lighthouses, dams, islands... within 8 NM of the route, from Wikidata,
+  ranked by how well known they are. "Add as waypoint" puts one into the
+  route where it lies - handy visual checkpoints without GPS.
+- **Where to?** (Map): three destination ideas for tonight - reachable in
+  the time you have at the slower aircraft's speed, VFR now, back before
+  sunset on a round trip, long enough runway; airports with custom
+  scenery you've installed and ones you've never flown to come first.
+  "Plan route" plans it right away.
+- **Logbook** page: all recorded flights with who flew along, totals,
+  your flying buddies, a map of everything you've flown and the airports
+  you've been to, and milestones (first flight together, first night
+  landing, first butter landing, records, hours). Both pilots of a flight
+  together record it, so both logbooks have it.
+- **Tours** page: a journey over several evenings - round trip, one way to
+  a destination or exploring in a direction - with stops picked like the
+  "Where to?" ideas. Re-roll the legs you don't like, then on the evening
+  "Plan this leg" opens the map with the auto route and the briefing.
+  Legs tick themselves off from the logbook; each one has a note for the
+  travel journal. Share a tour with your buddy as a code to paste.
+
 ## What's new in v0.4.8
 
 - New: **Approach Coach** (off by default - switch it on under Setup ›
