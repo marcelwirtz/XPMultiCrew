@@ -42,6 +42,10 @@ export function DeleteSavedServer(arg1) {
   return window['go']['main']['App']['DeleteSavedServer'](arg1);
 }
 
+export function DeleteTour(arg1) {
+  return window['go']['main']['App']['DeleteTour'](arg1);
+}
+
 export function DeleteUserChecklists(arg1) {
   return window['go']['main']['App']['DeleteUserChecklists'](arg1);
 }
@@ -60,6 +64,10 @@ export function DisconnectSharedCockpit() {
 
 export function ExportFms(arg1) {
   return window['go']['main']['App']['ExportFms'](arg1);
+}
+
+export function GenerateTour(arg1) {
+  return window['go']['main']['App']['GenerateTour'](arg1);
 }
 
 export function GetAirportInfo(arg1) {
@@ -98,6 +106,10 @@ export function GetLastPage() {
   return window['go']['main']['App']['GetLastPage']();
 }
 
+export function GetLogbook() {
+  return window['go']['main']['App']['GetLogbook']();
+}
+
 export function GetNavCollapsed() {
   return window['go']['main']['App']['GetNavCollapsed']();
 }
@@ -114,6 +126,14 @@ export function GetRecentLogLines(arg1) {
   return window['go']['main']['App']['GetRecentLogLines'](arg1);
 }
 
+export function GetRouteBriefing(arg1) {
+  return window['go']['main']['App']['GetRouteBriefing'](arg1);
+}
+
+export function GetRouteSights(arg1) {
+  return window['go']['main']['App']['GetRouteSights'](arg1);
+}
+
 export function GetSavedServers() {
   return window['go']['main']['App']['GetSavedServers']();
 }
@@ -124,6 +144,10 @@ export function GetXPlanePath() {
 
 export function ImportFms() {
   return window['go']['main']['App']['ImportFms']();
+}
+
+export function ImportTourCode(arg1) {
+  return window['go']['main']['App']['ImportTourCode'](arg1);
 }
 
 export function InstallPlugin() {
@@ -142,6 +166,10 @@ export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
 }
 
+export function ListTours() {
+  return window['go']['main']['App']['ListTours']();
+}
+
 export function LoadChecklists(arg1) {
   return window['go']['main']['App']['LoadChecklists'](arg1);
 }
@@ -158,6 +186,10 @@ export function NearestAirports(arg1, arg2) {
   return window['go']['main']['App']['NearestAirports'](arg1, arg2);
 }
 
+export function PlanAutoRoute(arg1) {
+  return window['go']['main']['App']['PlanAutoRoute'](arg1);
+}
+
 export function ReloadCsl() {
   return window['go']['main']['App']['ReloadCsl']();
 }
@@ -172,6 +204,10 @@ export function SaveProfile(arg1, arg2) {
 
 export function SaveServer(arg1, arg2) {
   return window['go']['main']['App']['SaveServer'](arg1, arg2);
+}
+
+export function SaveTour(arg1) {
+  return window['go']['main']['App']['SaveTour'](arg1);
 }
 
 export function ScResync() {
@@ -226,6 +262,18 @@ export function StopLearn() {
   return window['go']['main']['App']['StopLearn']();
 }
 
+export function SuggestDestinations(arg1) {
+  return window['go']['main']['App']['SuggestDestinations'](arg1);
+}
+
 export function SyncEnv() {
   return window['go']['main']['App']['SyncEnv']();
+}
+
+export function TourLegSights(arg1) {
+  return window['go']['main']['App']['TourLegSights'](arg1);
+}
+
+export function TourShareCode(arg1) {
+  return window['go']['main']['App']['TourShareCode'](arg1);
 }

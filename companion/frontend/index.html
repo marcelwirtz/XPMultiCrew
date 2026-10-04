@@ -618,6 +618,62 @@
   #page-debrief.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .debrief-stats { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   .debrief-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #page-tours.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .tours-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
+  .tours-side { width: 230px; flex: none; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .tours-side .route-buttons { display: flex; gap: 6px; }
+  .tours-side .route-buttons button { flex: 1; padding: 6px; font-size: 12px; }
+  .tours-main { flex: 1; min-width: 0; overflow-y: auto; }
+  .tour-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; cursor: pointer; background: var(--panel); font-size: 12px; }
+  .tour-card.active { border-color: var(--accent); }
+  .tour-card .t { font-weight: 600; font-size: 13px; }
+  .tour-card .m { color: var(--muted); margin-top: 2px; }
+  .tour-card .bar, .tour-progress .bar { height: 5px; background: #2a2f37; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .tour-card .bar div, .tour-progress .bar div { height: 100%; background: #3ccf6e; }
+  .tours-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 8px; }
+  .tours-grid .wide { grid-column: 1 / -1; }
+  .tours-grid label { display: block; margin: 0 0 3px; font-size: 12px; color: var(--muted); }
+  .tours-grid input, .tours-grid select { width: 100%; }
+  .tour-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .tour-head input { flex: 1; font-size: 15px; font-weight: 600; }
+  .tour-head button { padding: 5px 10px; font-size: 12px; }
+  .tour-progress { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .tour-progress .bar { flex: 1; margin: 0; }
+  #tours-map-wrap { position: relative; height: 300px; margin-bottom: 12px; }
+  #tours-map { position: absolute; inset: 0; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  .tour-leg { border-top: 1px solid var(--border); padding: 8px 0; font-size: 12px; }
+  .tour-leg .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tour-leg .n { color: var(--muted); width: 22px; flex: none; }
+  .tour-leg .r { font-weight: 600; font-size: 13px; }
+  .tour-leg .meta { color: var(--muted); }
+  .tour-leg .st { margin-left: auto; }
+  .tour-leg .st.done { color: #3ccf6e; }
+  .tour-leg .st.next { color: #f5d142; }
+  .tour-leg .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 4px 30px; }
+  .tour-leg .tags span { padding: 1px 6px; border-radius: 10px; border: 1px solid var(--border); font-size: 11px; }
+  .tour-leg .leg-sights { margin: 2px 0 4px 30px; color: #f0abfc; font-size: 11px; }
+  .tour-leg .leg-sights:empty { display: none; }
+  .tour-leg .acts { margin-left: 30px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .tour-leg .acts button { flex: none; padding: 3px 8px; font-size: 11px; }
+  .tour-leg textarea { margin: 6px 0 0 30px; width: calc(100% - 30px); min-height: 34px; font-size: 12px; background: #101317; color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 6px; resize: vertical; font-family: inherit; }
+  .lbk-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .lbk-tile { background: var(--panel, #171a20); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .lbk-tile .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .lbk-tile .k { font-size: 11px; color: var(--muted); }
+  #logbook-map-wrap { position: relative; height: 320px; margin-bottom: 16px; }
+  #logbook-map { position: absolute; inset: 0; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  .lbk-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .lbk-columns .panel { margin: 0; }
+  .lbk-ms { display: flex; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); font-size: 12px; }
+  .lbk-ms .when { color: var(--muted); flex: none; width: 74px; font-variant-numeric: tabular-nums; }
+  .lbk-ms .what b { display: block; }
+  .lbk-ms .what span { color: var(--muted); }
+  .lbk-ms.link { cursor: pointer; }
+  .lbk-ms.link:hover b { color: var(--accent); }
+  #logbook-table tr.link { cursor: pointer; }
+  #logbook-table tr.link:hover td { color: var(--accent); }
+  .lbk-night { color: #9085e9; }
   #debrief-map-wrap { position: relative; flex: 1; min-height: 160px; }
   #debrief-map { position: absolute; inset: 0; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
   #debrief-legend { position: absolute; left: 8px; bottom: 8px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px;
@@ -695,6 +751,74 @@
   #route-panel .route-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
   #route-panel .route-buttons button { flex: 1 1 45%; padding: 6px; font-size: 12px; }
   #route-panel .route-note { color: var(--muted); margin-top: 6px; }
+  #ideas-panel, #briefing-panel, #sights-panel {
+    position: absolute; top: 10px; right: 50px; bottom: 34px; width: 370px; max-width: calc(100% - 70px);
+    z-index: 5; display: none; flex-direction: column; background: rgba(20, 23, 28, 0.95);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px;
+  }
+  #ideas-panel.open, #briefing-panel.open, #sights-panel.open { display: flex; }
+  #sights-body { overflow-y: auto; flex: 1; }
+  #sights-body .muted { color: var(--muted); }
+  #sights-body .sight { padding: 6px 0; border-top: 1px solid var(--border); }
+  #sights-body .sight-icon { display: inline-block; width: 18px; text-align: center; }
+  #sights-body .sight-acts { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+  #sights-body .sight-acts button { flex: none; padding: 3px 8px; font-size: 11px; }
+  #sights-body .sight-acts a { color: var(--accent); font-size: 11px; }
+  #sights-body .wx-stale { margin: 4px 0 8px; padding: 6px; border: 1px solid #ffb347; border-radius: 5px; color: #ffb347; }
+  #sights-body .wx-legend { font-size: 10px; }
+  .bp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .bp-head h3 { margin: 0; font-size: 13px; flex: 1; }
+  .bp-head button { flex: none; padding: 2px 8px; font-size: 12px; }
+  #briefing-body, #ideas-body { overflow-y: auto; flex: 1; }
+  #ideas-panel .route-fields { display: flex; gap: 6px; }
+  #ideas-panel .route-fields > div { flex: 1 1 0; min-width: 0; }
+  #ideas-panel .route-fields label { margin: 4px 0 2px; }
+  #ideas-panel input[type=text], #ideas-panel input[type=number] {
+    width: 100%; padding: 5px 6px; font-size: 12px; background: #101317; border: 1px solid var(--border);
+    border-radius: 5px; color: var(--text);
+  }
+  #ideas-panel label.checkbox-row { margin: 6px 0; }
+  #ideas-panel .route-buttons { display: flex; gap: 6px; margin-bottom: 8px; }
+  #ideas-panel .route-buttons button { flex: 1; padding: 6px; font-size: 12px; }
+  #ideas-body .muted { color: var(--muted); }
+  #ideas-body .idea { padding: 8px 0; border-top: 1px solid var(--border); }
+  #ideas-body .idea-title { font-weight: 600; font-size: 13px; }
+  #ideas-body .idea-meta { color: var(--muted); margin: 2px 0 4px; }
+  #ideas-body .idea-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  #ideas-body .idea-tags span { padding: 1px 6px; border-radius: 10px; border: 1px solid var(--border); font-size: 11px; }
+  #ideas-body .idea-tags span.warn { border-color: #ffb347; color: #ffb347; }
+  #ideas-body .idea-tags span.good { border-color: #3ccf6e; color: #3ccf6e; }
+  #ideas-body .idea button { flex: none; padding: 3px 8px; font-size: 11px; margin-right: 4px; }
+  #ideas-body .wx-cat { display: inline-block; padding: 0 5px; border-radius: 3px; color: #05070a; font-weight: 700; font-size: 10px; }
+  #ideas-body .notes { color: var(--muted); margin-top: 8px; font-size: 11px; }
+  #briefing-body h4 { margin: 10px 0 4px; font-size: 12px; }
+  #briefing-body .muted, #briefing-body .wx-source { color: var(--muted); }
+  #briefing-body .wx-warnings { margin: 6px 0; padding-left: 16px; color: #ffb347; }
+  #briefing-body .wx-warnings li { margin-bottom: 3px; }
+  #briefing-body .wx-ok { margin: 6px 0; color: #3ccf6e; }
+  #briefing-body .wx-stale { margin: 4px 0 8px; padding: 6px; border: 1px solid #ffb347; border-radius: 5px; color: #ffb347; }
+  #briefing-body .wx-station { padding: 6px 0; border-top: 1px solid var(--border); }
+  #briefing-body .wx-cat { display: inline-block; padding: 0 5px; border-radius: 3px; color: #05070a; font-weight: 700; font-size: 10px; }
+  #briefing-body .wx-raw { font-family: ui-monospace, monospace; font-size: 11px; margin-top: 3px; overflow-wrap: anywhere; }
+  #briefing-body .wx-tafwarn { color: #ffb347; margin-top: 3px; }
+  #briefing-body details summary { cursor: pointer; color: var(--muted); margin-top: 3px; }
+  #briefing-body .wx-legs { border-collapse: collapse; width: 100%; }
+  #briefing-body .wx-legs td { padding: 2px 4px; border-top: 1px solid var(--border); }
+  #briefing-body .wx-legend { font-size: 10px; }
+  .wx-profile { width: 100%; height: auto; background: #101317; border-radius: 5px; }
+  .wx-profile .grid { stroke: #2a2f37; stroke-width: 1; }
+  .wx-profile .axis { fill: #8b93a1; font-size: 8px; }
+  .wx-profile .cloud { fill: #8b93a1; opacity: 0.35; }
+  .wx-profile .terrain { fill: #8a6a45; opacity: 0.55; }
+  .wx-profile .freeze { stroke: #4dd0e1; stroke-width: 1; stroke-dasharray: 4 3; }
+  .wx-profile .freeze-label { fill: #4dd0e1; font-size: 8px; }
+  .wx-profile .route-alt { fill: none; stroke: #f5d142; stroke-width: 2; }
+  .map-toolbar button#map-ideas-btn.active, #route-panel .route-buttons button.active { background: var(--accent); color: #05070a; border-color: var(--accent); }
+  #route-panel .route-auto { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  #route-panel .route-auto .auto-btn { flex: none; align-self: flex-end; }
+  #route-panel .route-auto .auto-btn button { padding: 5px 8px; font-size: 12px; }
+  #route-panel .route-auto label.checkbox-row { margin: 6px 0 0; }
+  #route-panel .route-note ul { margin: 4px 0 0; padding-left: 16px; }
   .shared-route-note { margin-bottom: 10px; }
   .airspace-banner {
     display: none;
@@ -737,12 +861,14 @@
       <button type="button" data-page="formation" title="Multiplayer"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="nav-dot" id="nav-dot-formation"></span><span class="nav-label">Multiplayer</span></button>
       <button type="button" data-page="shared-cockpit" title="Shared Cockpit"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="nav-dot" id="nav-dot-shared-cockpit"></span><span class="nav-label">Shared Cockpit</span></button>
       <div class="nav-group">In flight</div>
+      <button type="button" data-page="tours" title="Tours"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h8.5a3.5 3.5 0 0 0 0-7h-9a3.5 3.5 0 0 1 0-7H16"/></svg><span class="nav-dot"></span><span class="nav-label">Tours</span></button>
       <button type="button" data-page="map" title="Map"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg><span class="nav-dot"></span><span class="nav-label">Map</span></button>
       <button type="button" data-page="airports" title="Airports"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span class="nav-dot"></span><span class="nav-label">Airports</span></button>
       <button type="button" data-page="checklists" title="Checklists"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="nav-dot"></span><span class="nav-label">Checklists</span></button>
       <div class="nav-group">After the flight</div>
       <button type="button" data-page="landings" title="Landings"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg><span class="nav-dot" id="nav-dot-landings"></span><span class="nav-label">Landings</span></button>
       <button type="button" data-page="debrief" title="Debrief"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="nav-dot" id="nav-dot-debrief"></span><span class="nav-label">Debrief</span></button>
+      <button type="button" data-page="logbook" title="Logbook"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span class="nav-dot"></span><span class="nav-label">Logbook</span></button>
       <div class="nav-group">Settings</div>
       <button type="button" data-page="profiles" title="Profiles"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span class="nav-dot"></span><span class="nav-label">Profiles</span></button>
       <button type="button" data-page="setup" title="Setup"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="nav-dot"></span><span class="nav-label">Setup</span></button>
@@ -789,6 +915,7 @@
           <label class="checkbox-row"><input type="checkbox" id="map-follow"><span>Follow me</span></label>
           <button id="map-fit" class="secondary" type="button">Show everyone</button>
           <button id="map-route-btn" class="secondary" type="button">Route</button>
+          <button id="map-ideas-btn" class="secondary" type="button" title="Destination ideas for tonight's flight">Where to?</button>
           <button id="map-measure-btn" class="secondary" type="button" title="Click two points for course and distance">Measure</button>
           <div class="layer-toggles">
             <label class="checkbox-row"><input type="checkbox" id="layer-vfr" checked><span>VFR points &amp; navaids</span></label>
@@ -802,6 +929,42 @@
         <div class="status shared-route-note" id="shared-route-note" style="display: none;"></div>
         <div id="map-wrap">
           <div id="map"></div>
+          <div id="ideas-panel">
+            <div class="bp-head">
+              <h3>Where to tonight?</h3>
+              <button id="ideas-close" class="secondary" type="button" title="Close">✕</button>
+            </div>
+            <div class="ideas-form">
+              <div class="route-fields">
+                <div><label>From</label><input type="text" id="ideas-from" placeholder="EDLM" maxlength="8"></div>
+                <div><label>Time (h)</label><input type="number" id="ideas-hours" value="1.5" step="0.25" min="0.5"></div>
+                <div><label>TAS kt</label><input type="number" id="ideas-tas" value="100" step="5" min="40" title="The slower aircraft"></div>
+                <div><label>Min rwy m</label><input type="number" id="ideas-rwy" value="500" step="50" min="0"></div>
+              </div>
+              <label class="checkbox-row"><input type="checkbox" id="ideas-round" checked><span>Round trip (back home tonight)</span></label>
+              <div class="route-buttons">
+                <button id="ideas-go" type="button">Suggest</button>
+                <button id="ideas-more" class="secondary" type="button">Other ideas</button>
+              </div>
+            </div>
+            <div id="ideas-body"><div class="muted">Enter where you start and how much time you have.</div></div>
+          </div>
+          <div id="sights-panel">
+            <div class="bp-head">
+              <h3>Sights along the route</h3>
+              <button id="sights-refresh" class="secondary" type="button" title="Look again">↻</button>
+              <button id="sights-close" class="secondary" type="button" title="Close">✕</button>
+            </div>
+            <div id="sights-body"></div>
+          </div>
+          <div id="briefing-panel">
+            <div class="bp-head">
+              <h3>Weather briefing</h3>
+              <button id="briefing-refresh" class="secondary" type="button" title="Fetch again">↻</button>
+              <button id="briefing-close" class="secondary" type="button" title="Close">✕</button>
+            </div>
+            <div id="briefing-body"></div>
+          </div>
           <div id="route-panel">
             <h3>Route</h3>
             <div class="route-fields">
@@ -809,11 +972,22 @@
               <div><label>Cruise ft</label><input type="number" id="route-cruise" value="3500" step="500" min="0"></div>
               <div><label>TAS kt</label><input type="number" id="route-tas" value="100" step="5" min="30"></div>
             </div>
+            <div class="route-auto">
+              <div class="route-fields">
+                <div><label>From</label><input type="text" id="auto-from" placeholder="EDFE" maxlength="8"></div>
+                <div><label>To</label><input type="text" id="auto-to" placeholder="EDDS" maxlength="8"></div>
+                <div class="auto-btn"><button id="auto-plan" type="button" title="Plan a VFR route between the two airports at the cruise altitude above">Auto route</button></div>
+              </div>
+              <label class="checkbox-row"><input type="checkbox" id="auto-avoid" checked><span>Avoid controlled airspace (C/D/CTR)</span></label>
+              <label class="checkbox-row" title="Only VORs, NDBs and airports as waypoints; points in between get a radial/DME from the nearest VOR"><input type="checkbox" id="auto-radio"><span>Radio nav (no GPS)</span></label>
+            </div>
             <div id="route-list"></div>
             <div class="route-total" id="route-total"></div>
             <div class="route-note" id="route-wind" style="margin: 0 0 6px;"></div>
             <div class="route-buttons">
               <button id="route-export" type="button">Export to GPS</button>
+              <button id="route-briefing" class="secondary" type="button" title="METARs, TAFs, winds aloft and cloud bases along the route">Weather</button>
+              <button id="route-sights" class="secondary" type="button" title="Castles, lakes, mountains, lighthouses... near the route">Sights</button>
               <button id="route-share" class="secondary" type="button">Share with group</button>
               <button id="route-undo" class="secondary" type="button">Undo last</button>
               <button id="route-clear" class="secondary" type="button">Clear</button>
@@ -906,6 +1080,82 @@
           <h2>My landings</h2>
           <div class="lb-records" id="landing-records"></div>
           <table class="lb-table" id="log-table"></table>
+        </div>
+      </div>
+
+      <!-- Tours (tours.js, companion/tours.go): journeys over several
+           evenings, flown leg by leg. -->
+      <div class="page" id="page-tours">
+        <div class="tours-layout">
+          <div class="tours-side">
+            <div class="route-buttons">
+              <button id="tours-new" type="button">New tour</button>
+              <button id="tours-import" class="secondary" type="button" title="Paste a tour code from a buddy">Import code</button>
+            </div>
+            <div id="tours-list"></div>
+          </div>
+          <div class="tours-main">
+            <div class="status" id="tours-message" style="display: none; margin-bottom: 10px;"></div>
+            <div class="panel" id="tours-form" style="display: none;">
+              <h2>New tour</h2>
+              <div class="tours-grid">
+                <div class="wide"><label>Name</label><input type="text" id="tf-name" placeholder="e.g. Alps with Marco"></div>
+                <div><label>Start airport</label><input type="text" id="tf-from" placeholder="EDLM" maxlength="8"></div>
+                <div><label>Legs (evenings)</label><input type="number" id="tf-legs" value="5" min="1" max="20"></div>
+                <div><label>Hours per evening</label><input type="number" id="tf-hours" value="1.5" step="0.25" min="0.75"></div>
+                <div><label>TAS kt (slower aircraft)</label><input type="number" id="tf-tas" value="100" step="5" min="40"></div>
+                <div><label>Min runway m</label><input type="number" id="tf-rwy" value="500" step="50" min="0"></div>
+                <div><label>Kind</label><select id="tf-mode">
+                  <option value="loop">Round trip (back home)</option>
+                  <option value="oneway">One way to...</option>
+                  <option value="explore">Explore in a direction</option>
+                </select></div>
+                <div id="tf-to-wrap" style="display: none;"><label>Destination</label><input type="text" id="tf-to" placeholder="LOWI" maxlength="8"></div>
+                <div id="tf-dir-wrap"><label>Direction</label><select id="tf-dir">
+                  <option value="0">North</option><option value="45">North-east</option><option value="90">East</option><option value="135">South-east</option>
+                  <option value="180">South</option><option value="225">South-west</option><option value="270">West</option><option value="315">North-west</option>
+                </select></div>
+                <div><label>Cruise ft</label><input type="number" id="tf-cruise" value="3500" step="500" min="1000"></div>
+              </div>
+              <label class="checkbox-row"><input type="checkbox" id="tf-avoid" checked><span>Avoid controlled airspace</span></label>
+              <label class="checkbox-row"><input type="checkbox" id="tf-radio"><span>Radio nav (no GPS)</span></label>
+              <div class="route-buttons" style="margin-top: 10px;">
+                <button id="tf-generate" type="button">Generate</button>
+                <button id="tf-cancel" class="secondary" type="button">Cancel</button>
+              </div>
+            </div>
+            <div id="tour-detail" style="display: none;">
+              <div class="tour-head">
+                <input type="text" id="td-name" title="Tour name">
+                <span id="td-actions"></span>
+              </div>
+              <div class="tour-progress"><div class="bar"><div id="td-bar"></div></div><span id="td-progress"></span></div>
+              <div id="tours-map-wrap"><div id="tours-map"></div></div>
+              <div id="td-legs"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logbook (logbook.js, companion/logbook.go): all recorded flights,
+           totals, flying buddies, airports and milestones. -->
+      <div class="page" id="page-logbook">
+        <div class="lbk-tiles" id="logbook-tiles"></div>
+        <div class="status" id="logbook-message" style="display: none; margin-bottom: 10px;"></div>
+        <div id="logbook-map-wrap"><div id="logbook-map"></div></div>
+        <div class="lbk-columns">
+          <div class="panel">
+            <h2>Milestones</h2>
+            <div id="logbook-milestones"></div>
+          </div>
+          <div class="panel">
+            <h2>Flying buddies</h2>
+            <div id="logbook-buddies"></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top: 16px;">
+          <h2>Flights</h2>
+          <table class="lb-table" id="logbook-table"></table>
         </div>
       </div>
 

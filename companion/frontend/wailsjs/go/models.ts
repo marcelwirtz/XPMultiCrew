@@ -363,6 +363,102 @@ export namespace main {
 	        this.goAround = source["goAround"];
 	    }
 	}
+	export class AutoRouteRequest {
+	    from: string;
+	    to: string;
+	    cruiseFt: number;
+	    avoidControlled: boolean;
+	    radioNav: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoRouteRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = source["from"];
+	        this.to = source["to"];
+	        this.cruiseFt = source["cruiseFt"];
+	        this.avoidControlled = source["avoidControlled"];
+	        this.radioNav = source["radioNav"];
+	    }
+	}
+	export class RouteWaypoint {
+	    kind: string;
+	    ident: string;
+	    name: string;
+	    lat: number;
+	    lon: number;
+	    altFt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RouteWaypoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.altFt = source["altFt"];
+	    }
+	}
+	export class AutoRouteResult {
+	    waypoints: RouteWaypoint[];
+	    distanceNm: number;
+	    directNm: number;
+	    notes: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoRouteResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.waypoints = this.convertValues(source["waypoints"], RouteWaypoint);
+	        this.distanceNm = source["distanceNm"];
+	        this.directNm = source["directNm"];
+	        this.notes = source["notes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BuddyStat {
+	    callsign: string;
+	    flights: number;
+	    minutes: number;
+	    last: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BuddyStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.callsign = source["callsign"];
+	        this.flights = source["flights"];
+	        this.minutes = source["minutes"];
+	        this.last = source["last"];
+	    }
+	}
 	export class ChecklistCondition {
 	    key: string;
 	    op: string;
@@ -519,6 +615,96 @@ export namespace main {
 	        this.units = source["units"];
 	        this.description = source["description"];
 	        this.category = source["category"];
+	    }
+	}
+	export class DestinationIdea {
+	    ident: string;
+	    name: string;
+	    lat: number;
+	    lon: number;
+	    elevFt: number;
+	    distanceNm: number;
+	    bearingDeg: number;
+	    flightMin: number;
+	    runwayM: number;
+	    tags: string[];
+	    category?: string;
+	    metar?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DestinationIdea(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.elevFt = source["elevFt"];
+	        this.distanceNm = source["distanceNm"];
+	        this.bearingDeg = source["bearingDeg"];
+	        this.flightMin = source["flightMin"];
+	        this.runwayM = source["runwayM"];
+	        this.tags = source["tags"];
+	        this.category = source["category"];
+	        this.metar = source["metar"];
+	    }
+	}
+	export class DestinationIdeas {
+	    ideas: DestinationIdea[];
+	    notes: string[];
+	    sunset?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DestinationIdeas(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ideas = this.convertValues(source["ideas"], DestinationIdea);
+	        this.notes = source["notes"];
+	        this.sunset = source["sunset"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DestinationRequest {
+	    from: string;
+	    hours: number;
+	    tasKt: number;
+	    roundTrip: boolean;
+	    minRunwayM: number;
+	    seed: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DestinationRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = source["from"];
+	        this.hours = source["hours"];
+	        this.tasKt = source["tasKt"];
+	        this.roundTrip = source["roundTrip"];
+	        this.minRunwayM = source["minRunwayM"];
+	        this.seed = source["seed"];
 	    }
 	}
 	export class Landing {
@@ -762,6 +948,22 @@ export namespace main {
 	}
 	
 	
+	export class LegWind {
+	    dirDeg: number;
+	    speedKt: number;
+	    altFt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LegWind(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dirDeg = source["dirDeg"];
+	        this.speedKt = source["speedKt"];
+	        this.altFt = source["altFt"];
+	    }
+	}
 	export class LogLinesResult {
 	    lines: string[];
 	    offset: number;
@@ -776,6 +978,149 @@ export namespace main {
 	        this.offset = source["offset"];
 	    }
 	}
+	export class Milestone {
+	    title: string;
+	    detail: string;
+	    date: number;
+	    flightId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Milestone(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.date = source["date"];
+	        this.flightId = source["flightId"];
+	    }
+	}
+	export class VisitedAirport {
+	    ident: string;
+	    name: string;
+	    lat: number;
+	    lon: number;
+	    visits: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new VisitedAirport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.visits = source["visits"];
+	    }
+	}
+	export class LogbookTotals {
+	    flights: number;
+	    airborneMin: number;
+	    distanceNm: number;
+	    landings: number;
+	    airports: number;
+	    flightsTogether: number;
+	    minTogether: number;
+	    bestScore: number;
+	    nightLandings: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogbookTotals(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.flights = source["flights"];
+	        this.airborneMin = source["airborneMin"];
+	        this.distanceNm = source["distanceNm"];
+	        this.landings = source["landings"];
+	        this.airports = source["airports"];
+	        this.flightsTogether = source["flightsTogether"];
+	        this.minTogether = source["minTogether"];
+	        this.bestScore = source["bestScore"];
+	        this.nightLandings = source["nightLandings"];
+	    }
+	}
+	export class LogbookEntry {
+	    id: string;
+	    start: number;
+	    icao: string;
+	    departure: string;
+	    arrival: string;
+	    airborneMin: number;
+	    distanceNm: number;
+	    maxAltFt: number;
+	    landings: number;
+	    bestScore: number;
+	    buddies: string[];
+	    night: boolean;
+	    track: number[][];
+	
+	    static createFrom(source: any = {}) {
+	        return new LogbookEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.start = source["start"];
+	        this.icao = source["icao"];
+	        this.departure = source["departure"];
+	        this.arrival = source["arrival"];
+	        this.airborneMin = source["airborneMin"];
+	        this.distanceNm = source["distanceNm"];
+	        this.maxAltFt = source["maxAltFt"];
+	        this.landings = source["landings"];
+	        this.bestScore = source["bestScore"];
+	        this.buddies = source["buddies"];
+	        this.night = source["night"];
+	        this.track = source["track"];
+	    }
+	}
+	export class Logbook {
+	    entries: LogbookEntry[];
+	    totals: LogbookTotals;
+	    buddies: BuddyStat[];
+	    airports: VisitedAirport[];
+	    milestones: Milestone[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Logbook(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entries = this.convertValues(source["entries"], LogbookEntry);
+	        this.totals = this.convertValues(source["totals"], LogbookTotals);
+	        this.buddies = this.convertValues(source["buddies"], BuddyStat);
+	        this.airports = this.convertValues(source["airports"], VisitedAirport);
+	        this.milestones = this.convertValues(source["milestones"], Milestone);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	
 	export class NavData {
 	    points: NavPoint[];
 	
@@ -809,26 +1154,6 @@ export namespace main {
 	
 	
 	
-	export class RouteWaypoint {
-	    kind: string;
-	    ident: string;
-	    name: string;
-	    lat: number;
-	    lon: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new RouteWaypoint(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.ident = source["ident"];
-	        this.name = source["name"];
-	        this.lat = source["lat"];
-	        this.lon = source["lon"];
-	    }
-	}
 	export class PlannedRoute {
 	    name: string;
 	    cruiseFt: number;
@@ -960,6 +1285,120 @@ export namespace main {
 	        this.hasBundled = source["hasBundled"];
 	    }
 	}
+	export class RunwayWind {
+	    airport: string;
+	    station: string;
+	    runway: string;
+	    headKt: number;
+	    crossKt: number;
+	    gustKt?: number;
+	    windText: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RunwayWind(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.airport = source["airport"];
+	        this.station = source["station"];
+	        this.runway = source["runway"];
+	        this.headKt = source["headKt"];
+	        this.crossKt = source["crossKt"];
+	        this.gustKt = source["gustKt"];
+	        this.windText = source["windText"];
+	    }
+	}
+	export class WxStation {
+	    ident: string;
+	    name: string;
+	    lat: number;
+	    lon: number;
+	    elevFt: number;
+	    metar: string;
+	    taf?: string;
+	    windDir: number;
+	    windKt: number;
+	    gustKt?: number;
+	    visM: number;
+	    ceilingFt?: number;
+	    category: string;
+	    alongNm: number;
+	    offNm: number;
+	    tafWarn?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WxStation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ident = source["ident"];
+	        this.name = source["name"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.elevFt = source["elevFt"];
+	        this.metar = source["metar"];
+	        this.taf = source["taf"];
+	        this.windDir = source["windDir"];
+	        this.windKt = source["windKt"];
+	        this.gustKt = source["gustKt"];
+	        this.visM = source["visM"];
+	        this.ceilingFt = source["ceilingFt"];
+	        this.category = source["category"];
+	        this.alongNm = source["alongNm"];
+	        this.offNm = source["offNm"];
+	        this.tafWarn = source["tafWarn"];
+	    }
+	}
+	export class RouteBriefing {
+	    source: string;
+	    fetchedAt: string;
+	    stations: WxStation[];
+	    legWinds: LegWind[];
+	    freezingLevelFt?: number;
+	    runwayWinds: RunwayWind[];
+	    warnings: string[];
+	    totalNm: number;
+	    terrain: number[][];
+	    terrainSource?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RouteBriefing(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.fetchedAt = source["fetchedAt"];
+	        this.stations = this.convertValues(source["stations"], WxStation);
+	        this.legWinds = this.convertValues(source["legWinds"], LegWind);
+	        this.freezingLevelFt = source["freezingLevelFt"];
+	        this.runwayWinds = this.convertValues(source["runwayWinds"], RunwayWind);
+	        this.warnings = source["warnings"];
+	        this.totalNm = source["totalNm"];
+	        this.terrain = source["terrain"];
+	        this.terrainSource = source["terrainSource"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class RunwayEnd {
 	    n: string;
@@ -1013,6 +1452,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class SavedServer {
 	    label: string;
 	    hostPort: string;
@@ -1027,6 +1467,227 @@ export namespace main {
 	        this.hostPort = source["hostPort"];
 	    }
 	}
+	export class Sight {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    lat: number;
+	    lon: number;
+	    links: number;
+	    alongNm: number;
+	    offNm: number;
+	    wiki?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Sight(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.links = source["links"];
+	        this.alongNm = source["alongNm"];
+	        this.offNm = source["offNm"];
+	        this.wiki = source["wiki"];
+	    }
+	}
+	
+	export class TourStatus {
+	    done: number;
+	    next: number;
+	    flownNm: number;
+	    totalNm: number;
+	    flownMin: number;
+	    finished: boolean;
+	    lastFlight?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TourStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.done = source["done"];
+	        this.next = source["next"];
+	        this.flownNm = source["flownNm"];
+	        this.totalNm = source["totalNm"];
+	        this.flownMin = source["flownMin"];
+	        this.finished = source["finished"];
+	        this.lastFlight = source["lastFlight"];
+	    }
+	}
+	export class TourStyle {
+	    cruiseFt: number;
+	    avoidControlled: boolean;
+	    radioNav: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TourStyle(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cruiseFt = source["cruiseFt"];
+	        this.avoidControlled = source["avoidControlled"];
+	        this.radioNav = source["radioNav"];
+	    }
+	}
+	export class TourLeg {
+	    from: string;
+	    to: string;
+	    toName: string;
+	    lat: number;
+	    lon: number;
+	    distanceNm: number;
+	    flightMin: number;
+	    tags: string[];
+	    note: string;
+	    manualDone: boolean;
+	    done: boolean;
+	    flightId?: string;
+	    doneAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TourLeg(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = source["from"];
+	        this.to = source["to"];
+	        this.toName = source["toName"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	        this.distanceNm = source["distanceNm"];
+	        this.flightMin = source["flightMin"];
+	        this.tags = source["tags"];
+	        this.note = source["note"];
+	        this.manualDone = source["manualDone"];
+	        this.done = source["done"];
+	        this.flightId = source["flightId"];
+	        this.doneAt = source["doneAt"];
+	    }
+	}
+	export class Tour {
+	    id: string;
+	    name: string;
+	    created: number;
+	    from: string;
+	    fromName: string;
+	    fromLat: number;
+	    fromLon: number;
+	    mode: string;
+	    hoursPerLeg: number;
+	    tasKt: number;
+	    minRunwayM: number;
+	    direction: number;
+	    to?: string;
+	    legs: TourLeg[];
+	    style: TourStyle;
+	    notes?: string[];
+	    progress?: TourStatus;
+	
+	    static createFrom(source: any = {}) {
+	        return new Tour(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.created = source["created"];
+	        this.from = source["from"];
+	        this.fromName = source["fromName"];
+	        this.fromLat = source["fromLat"];
+	        this.fromLon = source["fromLon"];
+	        this.mode = source["mode"];
+	        this.hoursPerLeg = source["hoursPerLeg"];
+	        this.tasKt = source["tasKt"];
+	        this.minRunwayM = source["minRunwayM"];
+	        this.direction = source["direction"];
+	        this.to = source["to"];
+	        this.legs = this.convertValues(source["legs"], TourLeg);
+	        this.style = this.convertValues(source["style"], TourStyle);
+	        this.notes = source["notes"];
+	        this.progress = this.convertValues(source["progress"], TourStatus);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class TourRequest {
+	    name: string;
+	    from: string;
+	    legs: number;
+	    hoursPerLeg: number;
+	    tasKt: number;
+	    minRunwayM: number;
+	    mode: string;
+	    to?: string;
+	    direction: number;
+	    seed: number;
+	    keep?: TourLeg[];
+	    style: TourStyle;
+	
+	    static createFrom(source: any = {}) {
+	        return new TourRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.from = source["from"];
+	        this.legs = source["legs"];
+	        this.hoursPerLeg = source["hoursPerLeg"];
+	        this.tasKt = source["tasKt"];
+	        this.minRunwayM = source["minRunwayM"];
+	        this.mode = source["mode"];
+	        this.to = source["to"];
+	        this.direction = source["direction"];
+	        this.seed = source["seed"];
+	        this.keep = this.convertValues(source["keep"], TourLeg);
+	        this.style = this.convertValues(source["style"], TourStyle);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	
 	export class UpdateInfo {
 	    version: string;
@@ -1040,6 +1701,7 @@ export namespace main {
 	        this.version = source["version"];
 	    }
 	}
+	
 
 }
 

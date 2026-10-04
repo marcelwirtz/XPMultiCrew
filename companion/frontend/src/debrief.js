@@ -620,6 +620,12 @@ export function showDebrief() {
   refreshList();
 }
 
+// Opens one flight (from the Logbook).
+export function showFlight(id) {
+  initMap();
+  refreshList(id);
+}
+
 export function updateDebrief(data, pageVisible) {
   const wasRecording = recordingNow;
   recordingNow = !!data.recording;

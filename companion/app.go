@@ -834,6 +834,66 @@ func (a *App) ImportFms() (*PlannedRoute, error) {
 	return &route, nil
 }
 
+// PlanAutoRoute plans a VFR route between two airports around restricted
+// and (optionally) controlled airspace - see autoroute.go.
+func (a *App) PlanAutoRoute(req AutoRouteRequest) (AutoRouteResult, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return AutoRouteResult{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	airports, err := loadAirports(root)
+	if err != nil {
+		return AutoRouteResult{}, err
+	}
+	nav, err := loadNav(root)
+	if err != nil {
+		return AutoRouteResult{}, err
+	}
+	return autoRoute(root, airports, nav, req)
+}
+
+// SuggestDestinations returns "where to tonight?" ideas - see
+// destinations.go. Airports from recorded flights count as visited.
+func (a *App) SuggestDestinations(req DestinationRequest) (DestinationIdeas, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return DestinationIdeas{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	airports, err := loadAirports(root)
+	if err != nil {
+		return DestinationIdeas{}, err
+	}
+	visited := map[string]bool{}
+	if flights, err := a.flights.list(); err == nil {
+		for _, f := range flights {
+			for _, id := range []string{f.Departure, f.Arrival} {
+				if id != "" {
+					visited[id] = true
+				}
+			}
+		}
+	}
+	return destinationIdeas(root, airports, visited, req)
+}
+
+// GetRouteSights returns well-known sights near a route - see sights.go.
+func (a *App) GetRouteSights(route PlannedRoute) ([]Sight, error) {
+	return routeSights(route)
+}
+
+// GetRouteBriefing returns the weather along a route - see weather.go.
+func (a *App) GetRouteBriefing(route PlannedRoute) (RouteBriefing, error) {
+	root := loadConfig().XPlanePath
+	if root == "" {
+		return RouteBriefing{}, errors.New("choose your X-Plane folder first (Setup)")
+	}
+	airports, err := loadAirports(root)
+	if err != nil {
+		return RouteBriefing{}, err
+	}
+	return routeBriefing(root, airports, route)
+}
+
 // --- Shared Cockpit: checklists, desync, resync (checklists.go) ---
 
 // LoadChecklists returns the checklists for an aircraft type (yours, else

@@ -22,6 +22,7 @@ type RouteWaypoint struct {
 	Name  string  `json:"name"`
 	Lat   float64 `json:"lat"`
 	Lon   float64 `json:"lon"`
+	AltFt int     `json:"altFt,omitempty"` // altitude for the leg to this point; 0 = the route's cruise altitude
 }
 
 // PlannedRoute is the map's route.
@@ -166,6 +167,9 @@ func fmsRoute(r PlannedRoute, cycle string) (string, error) {
 		}
 		via := "DRCT"
 		alt := float64(r.CruiseFt)
+		if w.AltFt > 0 {
+			alt = float64(w.AltFt)
+		}
 		if code == 1 {
 			alt = 0
 			if i == 0 {

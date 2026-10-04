@@ -151,6 +151,20 @@ func (a *App) DeleteLanding(key string) {
 	a.landings.deleteFromLog(key)
 }
 
+// GetLogbook returns the logbook built from the recorded flights - see
+// logbook.go.
+func (a *App) GetLogbook() (Logbook, error) {
+	flights, err := a.flights.list()
+	if err != nil {
+		return Logbook{}, err
+	}
+	airports := AirportData{}
+	if root := loadConfig().XPlanePath; root != "" {
+		airports, _ = loadAirports(root)
+	}
+	return buildLogbook(loadLogbookEntries(flights), airports), nil
+}
+
 // ListFlights returns the recorded flights, newest first.
 func (a *App) ListFlights() ([]FlightSummary, error) {
 	return a.flights.list()

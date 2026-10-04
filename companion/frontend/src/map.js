@@ -25,11 +25,17 @@ import {
   GetAirports,
   GetAirspaces,
   GetNavData,
+  GetRouteBriefing,
+  GetRouteSights,
+  SuggestDestinations,
   ImportFms,
+  PlanAutoRoute,
   ShareRoute,
 } from '../wailsjs/go/main/App';
 import { distanceNm, legInfo, trueCourse, variationAt, windAt } from './route-math.js';
 import { activeIndex, setActiveIndex } from './route-progress.js';
+import { briefingLegWind, kCategoryColors, renderBriefing, stationsGeoJson } from './briefing.js';
+import { BrowserOpenURL } from '../wailsjs/runtime/runtime';
 import { clearTracks, tracksGeoJson } from './tracks.js';
 
 maplibregl.setWorkerUrl(workerUrl);
@@ -77,6 +83,11 @@ let airspaceSeq = 0;
 let measureMode = false;
 let measurePoints = [];
 let routeListSignature = '';
+let briefing = null; // last weather briefing (weather.go) and the route it was made for
+let briefingKey = '';
+let briefingRoute = null;
+let sights = null; // sights near the route (sights.go) and the route they're for
+let sightsKey = '';
 
 function storageGet(key) {
   try {
@@ -269,6 +280,13 @@ function airspaceGeoJson(list) {
   };
 }
 
+// A user waypoint is shown by its name's first part (a VOR radial or a
+// sight's name), else as WPTn.
+function waypointTitle(w, i) {
+  if (w.kind !== 'USR') return w.ident;
+  return w.name ? w.name.split(' · ')[0] : `WPT${i + 1}`;
+}
+
 function routeGeoJson(waypoints, props = {}) {
   const features = [];
   if (waypoints.length >= 2) {
@@ -282,7 +300,7 @@ function routeGeoJson(waypoints, props = {}) {
     features.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [w.lon, w.lat] },
-      properties: { ...props, label: w.ident || `WPT${i + 1}` },
+      properties: { ...props, label: waypointTitle(w, i) },
     });
   });
   return { type: 'FeatureCollection', features };
@@ -293,7 +311,7 @@ function routeGeoJson(waypoints, props = {}) {
 // own route, aircraft. Sources that arrive late are inserted below the
 // first layer from this list that already exists.
 const kLayerOrder = ['airspace-fill', 'airspace-line', 'airspace-labels', 'runways', 'airports', 'airport-labels',
-  'nav-points', 'tracks-line', 'shared-route-line', 'shared-route-points', 'route-line', 'route-points',
+  'nav-points', 'sights-points', 'sights-labels', 'wx-stations', 'wx-labels', 'tracks-line', 'shared-route-line', 'shared-route-points', 'route-line', 'route-points',
   'measure-line', 'measure-label', 'aircraft'];
 
 function beforeIdFor(id) {
@@ -490,6 +508,62 @@ function addAircraftLayer() {
   });
 }
 
+// Sights stay valid while the route keeps its start and destination (adding
+// a sight as a waypoint changes the route, not the corridor much).
+function sightsRouteKey() {
+  const w = route.waypoints;
+  return w.length >= 2 ? JSON.stringify([w[0].lat, w[0].lon, w[w.length - 1].lat, w[w.length - 1].lon]) : '';
+}
+
+function sightsGeoJson() {
+  const valid = sights && sightsKey === sightsRouteKey();
+  return {
+    type: 'FeatureCollection',
+    features: (valid ? sights : []).map((s, i) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+      properties: { i, label: s.name },
+    })),
+  };
+}
+
+function addSightsLayers() {
+  if (map.getSource('sights')) return;
+  map.addSource('sights', { type: 'geojson', data: sightsGeoJson() });
+  addLayer({
+    id: 'sights-points',
+    type: 'circle',
+    source: 'sights',
+    paint: { 'circle-radius': 5, 'circle-color': '#e879f9', 'circle-stroke-color': '#14171c', 'circle-stroke-width': 1.5 },
+  });
+  addLayer({
+    id: 'sights-labels',
+    type: 'symbol',
+    source: 'sights',
+    minzoom: 8,
+    layout: { 'text-field': ['get', 'label'], 'text-font': textFont(), 'text-size': 10, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
+    paint: { 'text-color': '#f0abfc', 'text-halo-color': '#14171c', 'text-halo-width': 1.2 },
+  });
+}
+
+function addWxLayers() {
+  if (map.getSource('wx')) return;
+  map.addSource('wx', { type: 'geojson', data: stationsGeoJson(briefingValid() ? briefing : null) });
+  addLayer({
+    id: 'wx-stations',
+    type: 'circle',
+    source: 'wx',
+    paint: { 'circle-radius': 6, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#14171c', 'circle-stroke-width': 1.5 },
+  });
+  addLayer({
+    id: 'wx-labels',
+    type: 'symbol',
+    source: 'wx',
+    layout: { 'text-field': ['get', 'label'], 'text-font': textFont(), 'text-size': 10, 'text-offset': [0, -1.3], 'text-anchor': 'bottom' },
+    paint: { 'text-color': ['get', 'color'], 'text-halo-color': '#14171c', 'text-halo-width': 1.2 },
+  });
+}
+
 // (Re-)adds everything on top of the base style - needed after every
 // setStyle(), which throws away custom sources, layers and images.
 function addOverlays() {
@@ -500,6 +574,8 @@ function addOverlays() {
   addAirspaceLayers();
   addAirportLayers();
   addNavLayers();
+  addWxLayers();
+  addSightsLayers();
   applyLayerVisibility();
   renderRoute();
   refreshAirspaces();
@@ -625,9 +701,22 @@ function planningWind() {
   return windAt(lastData && lastData.wind, route.cruiseFt);
 }
 
+let wxShown = false;
+let sightsShown = false;
+
 function renderRoute() {
   readRouteFields();
   saveRoute();
+  // Stations on the map only while the briefing matches the route.
+  if (briefingValid() !== wxShown && map && map.getSource('wx')) {
+    wxShown = briefingValid();
+    map.getSource('wx').setData(stationsGeoJson(wxShown ? briefing : null));
+  }
+  const sightsValid = !!sights && sightsKey === sightsRouteKey();
+  if (sightsValid !== sightsShown && map && map.getSource('sights')) {
+    sightsShown = sightsValid;
+    map.getSource('sights').setData(sightsGeoJson());
+  }
   const wind = planningWind();
   const active = activeIndex(route.waypoints.length >= 2 ? route : null);
   if (map && map.getSource('route')) {
@@ -645,15 +734,18 @@ function renderRoute() {
 
   // The list only changes with the route, wind or active waypoint - not
   // rebuilt every second, so its buttons stay clickable.
-  const signature = JSON.stringify([route, wind && [Math.round(wind.fromDeg), Math.round(wind.speedKt)], active, vors.length]);
+  const legWinds = briefingValid() ? briefing : null;
+  const signature = JSON.stringify([route, wind && [Math.round(wind.fromDeg), Math.round(wind.speedKt)], active, vors.length, legWinds && briefing.fetchedAt]);
   if (signature === routeListSignature) return;
   routeListSignature = signature;
 
   const list = document.getElementById('route-list');
   const windEl = document.getElementById('route-wind');
-  windEl.textContent = wind
-    ? `Wind at ${route.cruiseFt} ft: ${pad3(wind.fromDeg)}°/${Math.round(wind.speedKt)} kt (X-Plane, now)`
-    : 'No wind data yet (X-Plane not running?) - times without wind.';
+  windEl.textContent = legWinds && legWinds.legWinds.some((w) => w)
+    ? `Wind per leg from the weather briefing (${briefing.fetchedAt})`
+    : wind
+      ? `Wind at ${route.cruiseFt} ft: ${pad3(wind.fromDeg)}°/${Math.round(wind.speedKt)} kt (X-Plane, now)`
+      : 'No wind data yet (X-Plane not running?) - times without wind.';
   if (route.waypoints.length === 0) {
     list.innerHTML = '<div class="empty">No waypoints yet.</div>';
     document.getElementById('route-total').textContent = '';
@@ -665,13 +757,14 @@ function renderRoute() {
     .map((w, i) => {
       let leg = '';
       if (i > 0) {
-        const l = legInfo(route.waypoints[i - 1], w, route.tasKt, vors, wind);
+        const l = legInfo(route.waypoints[i - 1], w, route.tasKt, vors, briefingLegWind(legWinds, i) || wind);
         totalNm += l.distNm;
         totalMin += l.minutes;
-        const heading = wind ? ` · MH ${pad3(l.magHeading)}° · GS ${Math.round(l.groundspeed)} kt` : '';
-        leg = `<div class="wp-leg">MC ${pad3(l.magCourse)}°${heading} · ${l.distNm.toFixed(1)} NM · ${formatMinutes(l.minutes)}</div>`;
+        const heading = briefingLegWind(legWinds, i) || wind ? ` · MH ${pad3(l.magHeading)}° · GS ${Math.round(l.groundspeed)} kt` : '';
+        const alt = w.altFt ? ` · <span class="wp-alt" title="Lower than cruise to stay clear of airspace">${w.altFt} ft</span>` : '';
+        leg = `<div class="wp-leg">MC ${pad3(l.magCourse)}°${heading} · ${l.distNm.toFixed(1)} NM · ${formatMinutes(l.minutes)}${alt}</div>`;
       }
-      const title = w.kind === 'USR' ? `WPT${i + 1}` : w.ident;
+      const title = waypointTitle(w, i);
       const sub = w.name && w.name !== w.ident ? ` <span class="wp-leg">${escapeHtml(w.name)}</span>` : '';
       const state = route.waypoints.length >= 2 ? (i < active ? 'passed' : i === active ? 'active' : '') : '';
       return `<div class="wp ${state}" data-i="${i}">
@@ -684,7 +777,7 @@ function renderRoute() {
     })
     .join('');
   document.getElementById('route-total').textContent = route.waypoints.length >= 2
-    ? `Total ${totalNm.toFixed(1)} NM · ${formatMinutes(totalMin)} at ${route.tasKt} kt TAS${wind ? ' with wind' : ' (no wind)'}`
+    ? `Total ${totalNm.toFixed(1)} NM · ${formatMinutes(totalMin)} at ${route.tasKt} kt TAS${wind || legWinds ? ' with wind' : ' (no wind)'}`
     : '';
 }
 
@@ -759,7 +852,7 @@ function routeForGo() {
     name: route.name,
     cruiseFt: route.cruiseFt,
     tasKt: route.tasKt,
-    waypoints: route.waypoints.map((w) => ({ kind: w.kind, ident: w.ident || '', name: w.name || '', lat: w.lat, lon: w.lon })),
+    waypoints: route.waypoints.map((w) => ({ kind: w.kind, ident: w.ident || '', name: w.name || '', lat: w.lat, lon: w.lon, altFt: w.altFt || 0 })),
   };
 }
 
@@ -979,6 +1072,359 @@ document.getElementById('tracks-clear').addEventListener('click', () => {
   clearTracks();
   if (map && map.getSource('tracks')) map.getSource('tracks').setData(tracksGeoJson());
 });
+// --- Weather briefing (companion/weather.go, briefing.js) ------------------
+
+function briefingRouteKey() {
+  return JSON.stringify([route.cruiseFt, route.waypoints.map((w) => [w.lat.toFixed(4), w.lon.toFixed(4), w.altFt || 0])]);
+}
+
+// The briefing only counts for the route it was made for.
+function briefingValid() {
+  return !!briefing && briefingKey === briefingRouteKey();
+}
+
+function setBriefingPanel(open) {
+  if (open) {
+    setIdeasPanel(false);
+    setSightsPanel(false);
+  }
+  document.getElementById('briefing-panel').classList.toggle('open', open);
+  document.getElementById('route-briefing').classList.toggle('active', open);
+}
+
+function renderBriefingPanel() {
+  const body = document.getElementById('briefing-body');
+  if (!briefing) {
+    body.innerHTML = '<div class="muted">No briefing yet.</div>';
+    return;
+  }
+  const stale = briefingValid() ? '' : '<div class="wx-stale">The route changed since this briefing - press ↻ to update it.</div>';
+  body.innerHTML = stale + renderBriefing(briefing, briefingRoute, distanceNm);
+  if (map && map.getSource('wx')) map.getSource('wx').setData(stationsGeoJson(briefingValid() ? briefing : null));
+}
+
+async function loadBriefing() {
+  readRouteFields();
+  if (route.waypoints.length < 2) {
+    setRouteNote('Plan a route first - the briefing covers the weather along it.');
+    return;
+  }
+  setBriefingPanel(true);
+  const body = document.getElementById('briefing-body');
+  body.innerHTML = '<div class="muted">Fetching METARs, TAFs and winds aloft...</div>';
+  const btn = document.getElementById('briefing-refresh');
+  btn.disabled = true;
+  try {
+    const key = briefingRouteKey();
+    const snapshot = routeForGo();
+    briefing = await GetRouteBriefing(snapshot);
+    briefingKey = key;
+    briefingRoute = snapshot;
+    routeListSignature = ''; // leg times now use the forecast winds
+    renderRoute();
+    renderBriefingPanel();
+  } catch (e) {
+    body.innerHTML = `<div class="wx-stale">Briefing failed: ${escapeHtml(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('route-briefing').addEventListener('click', () => {
+  const open = document.getElementById('briefing-panel').classList.contains('open');
+  if (open) setBriefingPanel(false);
+  else if (briefingValid()) {
+    renderBriefingPanel();
+    setBriefingPanel(true);
+  } else loadBriefing();
+});
+document.getElementById('briefing-refresh').addEventListener('click', loadBriefing);
+document.getElementById('briefing-close').addEventListener('click', () => setBriefingPanel(false));
+
+// --- Sights along the route (companion/sights.go) -------------------------------
+
+const kSightIcons = {
+  castle: '🏰', ruins: '🏚', palace: '🏛', lighthouse: '🗼', mountain: '⛰', volcano: '🌋', dam: '🧱', waterfall: '💧',
+  lake: '🌊', reservoir: '🌊', tower: '🗼', cathedral: '⛪', bridge: '🌉', island: '🏝', glacier: '🧊', fjord: '🌊', attraction: '★',
+};
+
+function setSightsPanel(open) {
+  if (open) {
+    setBriefingPanel(false);
+    setIdeasPanel(false);
+  }
+  document.getElementById('sights-panel').classList.toggle('open', open);
+  document.getElementById('route-sights').classList.toggle('active', open);
+}
+
+function renderSightsPanel() {
+  const body = document.getElementById('sights-body');
+  if (!sights) {
+    body.innerHTML = '<div class="muted">No sights loaded yet.</div>';
+    return;
+  }
+  const stale = sightsKey === sightsRouteKey() ? '' : '<div class="wx-stale">The route changed - press ↻ to look again.</div>';
+  const rows = sights.map((s, i) => `<div class="sight">
+      <div><span class="sight-icon">${kSightIcons[s.kind] || '★'}</span> <b>${escapeHtml(s.name)}</b> <span class="muted">${escapeHtml(s.kind)}</span></div>
+      <div class="muted">${Math.round(s.alongNm)} NM along · ${s.offNm < 0.5 ? 'on the route' : `${s.offNm.toFixed(1)} NM off`} · ${'★'.repeat(Math.min(5, Math.ceil(s.links / 6)))}</div>
+      <div class="sight-acts"><button data-add="${i}" type="button" title="Insert into the route at this point">Add as waypoint</button><button class="secondary" data-show="${i}" type="button">Show</button>
+      <a href="#" data-wiki="${i}">Wikidata</a></div>
+    </div>`);
+  body.innerHTML = stale + (rows.join('') || '<div class="muted">Nothing well known within 8 NM of the route.</div>') +
+    '<div class="muted wx-legend" style="margin-top:8px">Sights from Wikidata (CC0), ranked by how many Wikipedia editions have an article. Added sights are user waypoints - re-check the weather/terrain briefing afterwards.</div>';
+}
+
+async function loadSights() {
+  readRouteFields();
+  if (route.waypoints.length < 2) {
+    setRouteNote('Plan a route first - sights are looked up along it.');
+    return;
+  }
+  setSightsPanel(true);
+  document.getElementById('sights-body').innerHTML = '<div class="muted">Looking up castles, lakes, mountains... (the first look in a new area can take ~20 s)</div>';
+  const btn = document.getElementById('sights-refresh');
+  btn.disabled = true;
+  try {
+    const key = sightsRouteKey();
+    sights = await GetRouteSights(routeForGo());
+    sightsKey = key;
+    sightsShown = !sightsShown; // force the map layer update
+    renderRoute();
+    renderSightsPanel();
+  } catch (e) {
+    document.getElementById('sights-body').innerHTML = `<div class="wx-stale">Sights lookup failed: ${escapeHtml(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Inserts a sight into the route where it lies along it; the new legs keep
+// the altitude of the leg they split.
+function addSightWaypoint(s) {
+  const w = route.waypoints;
+  let acc = 0;
+  let at = w.length - 1;
+  for (let i = 1; i < w.length; i++) {
+    acc += distanceNm(w[i - 1], w[i]);
+    if (s.alongNm <= acc) {
+      at = i;
+      break;
+    }
+  }
+  const altFt = w[at] && w[at].kind !== 'APT' ? w[at].altFt || 0 : 0;
+  w.splice(at, 0, { kind: 'USR', ident: '', name: s.name, lat: s.lat, lon: s.lon, altFt });
+  renderRoute();
+  setRouteNote(`Added ${s.name} as waypoint ${at + 1}.`);
+  renderSightsPanel();
+}
+
+document.getElementById('route-sights').addEventListener('click', () => {
+  const open = document.getElementById('sights-panel').classList.contains('open');
+  if (open) setSightsPanel(false);
+  else if (sights && sightsKey === sightsRouteKey()) {
+    renderSightsPanel();
+    setSightsPanel(true);
+  } else loadSights();
+});
+document.getElementById('sights-refresh').addEventListener('click', loadSights);
+document.getElementById('sights-close').addEventListener('click', () => setSightsPanel(false));
+document.getElementById('sights-body').addEventListener('click', (e) => {
+  const add = e.target.closest('[data-add]');
+  const show = e.target.closest('[data-show]');
+  const wiki = e.target.closest('[data-wiki]');
+  if (wiki) {
+    e.preventDefault();
+    BrowserOpenURL(sights[Number(wiki.dataset.wiki)].wiki);
+  }
+  if (add) addSightWaypoint(sights[Number(add.dataset.add)]);
+  if (show && map) {
+    const s = sights[Number(show.dataset.show)];
+    setFollow(false);
+    map.flyTo({ center: [s.lon, s.lat], zoom: 12 });
+  }
+});
+
+// --- "Where to tonight?" (companion/destinations.go) --------------------------
+
+let ideasSeed = 0;
+
+function setIdeasPanel(open) {
+  if (open) {
+    setBriefingPanel(false);
+    setSightsPanel(false);
+  }
+  document.getElementById('ideas-panel').classList.toggle('open', open);
+  document.getElementById('map-ideas-btn').classList.toggle('active', open);
+  if (open) {
+    const fromEl = document.getElementById('ideas-from');
+    if (!fromEl.value.trim()) fromEl.value = nearestAirportIdent() || document.getElementById('auto-from').value.trim();
+    document.getElementById('ideas-tas').value = route.tasKt || 100;
+  }
+}
+
+// The airport closest to our aircraft (within 5 NM), for the "From" field.
+function nearestAirportIdent() {
+  const self = lastData && lastData.selfPos;
+  if (!self || !airportData) return '';
+  let best = '';
+  let bestNm = 5;
+  for (const a of airportData.airports) {
+    if (a[4] !== 1 || Math.abs(a[2] - self.lat) > 0.1) continue;
+    const d = distanceNm(self, { lat: a[2], lon: a[3] });
+    if (d < bestNm) {
+      best = a[0];
+      bestNm = d;
+    }
+  }
+  return best;
+}
+
+function ideaTagClass(tag) {
+  if (/sunset|Marginal|worsening/.test(tag)) return 'warn';
+  if (/scenery|New for you/.test(tag)) return 'good';
+  return '';
+}
+
+function compass(deg) {
+  return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];
+}
+
+async function loadIdeas(more) {
+  const from = document.getElementById('ideas-from').value.trim().toUpperCase();
+  const body = document.getElementById('ideas-body');
+  if (!from) {
+    body.innerHTML = '<div class="muted">Enter the departure airport (ICAO).</div>';
+    return;
+  }
+  ideasSeed = more ? ideasSeed + 1 : ideasSeed;
+  const roundTrip = document.getElementById('ideas-round').checked;
+  body.innerHTML = '<div class="muted">Looking at airports, weather and daylight...</div>';
+  try {
+    const res = await SuggestDestinations({
+      from,
+      hours: parseFloat(document.getElementById('ideas-hours').value) || 1.5,
+      tasKt: parseInt(document.getElementById('ideas-tas').value, 10) || 100,
+      roundTrip,
+      minRunwayM: parseInt(document.getElementById('ideas-rwy').value, 10) || 0,
+      seed: ideasSeed,
+    });
+    const cards = res.ideas.map((i) => {
+      const cat = i.category ? `<span class="wx-cat" style="background:${kCategoryColors[i.category] || '#8b93a1'}" title="${escapeHtml(i.metar)}">${i.category}</span> ` : '';
+      const tags = i.tags.map((t) => `<span class="${ideaTagClass(t)}">${escapeHtml(t)}</span>`).join('');
+      return `<div class="idea">
+        <div class="idea-title">${cat}${escapeHtml(i.ident)} · ${escapeHtml(i.name)}</div>
+        <div class="idea-meta">${Math.round(i.distanceNm)} NM ${compass(i.bearingDeg)} · ~${formatMinutes(i.flightMin)} one way · runway ${i.runwayM} m · ${i.elevFt} ft</div>
+        <div class="idea-tags">${tags}</div>
+        <button data-plan="${escapeHtml(i.ident)}" type="button">Plan route</button><button class="secondary" data-show="${i.lon},${i.lat}" type="button">Show</button>
+      </div>`;
+    });
+    const sunset = res.sunset ? `Sunset at ${escapeHtml(from)}: ${res.sunset}. ` : '';
+    body.innerHTML = (cards.join('') || '') + `<div class="notes">${sunset}${res.notes.map(escapeHtml).join(' · ')}</div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="wx-stale">${escapeHtml(String(e))}</div>`;
+  }
+}
+
+document.getElementById('map-ideas-btn').addEventListener('click', () => {
+  setIdeasPanel(!document.getElementById('ideas-panel').classList.contains('open'));
+});
+document.getElementById('ideas-close').addEventListener('click', () => setIdeasPanel(false));
+document.getElementById('ideas-go').addEventListener('click', () => loadIdeas(false));
+document.getElementById('ideas-more').addEventListener('click', () => loadIdeas(true));
+document.getElementById('ideas-from').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadIdeas(false);
+});
+document.getElementById('ideas-body').addEventListener('click', (e) => {
+  const plan = e.target.closest('[data-plan]');
+  const show = e.target.closest('[data-show]');
+  if (plan) {
+    document.getElementById('auto-from').value = document.getElementById('ideas-from').value.trim().toUpperCase();
+    document.getElementById('auto-to').value = plan.dataset.plan;
+    document.getElementById('route-tas').value = document.getElementById('ideas-tas').value;
+    route.name = '';
+    document.getElementById('route-name').value = '';
+    setIdeasPanel(false);
+    setRouteMode(true);
+    planAutoRoute();
+  } else if (show && map) {
+    const [lon, lat] = show.dataset.show.split(',').map(Number);
+    setFollow(false);
+    map.flyTo({ center: [lon, lat], zoom: 11 });
+  }
+});
+
+// A tour leg (tours.js): auto route between its airports with the tour's
+// settings, then the weather briefing for it.
+export async function planLeg(opts) {
+  document.getElementById('auto-from').value = opts.from;
+  document.getElementById('auto-to').value = opts.to;
+  document.getElementById('auto-avoid').checked = !!opts.avoidControlled;
+  document.getElementById('auto-radio').checked = !!opts.radioNav;
+  document.getElementById('route-tas').value = opts.tasKt || route.tasKt;
+  document.getElementById('route-cruise').value = opts.cruiseFt || route.cruiseFt;
+  route.name = opts.name || '';
+  document.getElementById('route-name').value = route.name;
+  setIdeasPanel(false);
+  setRouteMode(true);
+  if (await planAutoRoute()) loadBriefing();
+}
+
+// Auto route (companion/autoroute.go): From/To default to the route's
+// first/last airport; the result replaces the route.
+async function planAutoRoute() {
+  readRouteFields();
+  const wps = route.waypoints;
+  const fromEl = document.getElementById('auto-from');
+  const toEl = document.getElementById('auto-to');
+  if (!fromEl.value.trim() && wps.length && wps[0].kind === 'APT') fromEl.value = wps[0].ident;
+  if (!toEl.value.trim() && wps.length > 1 && wps[wps.length - 1].kind === 'APT') toEl.value = wps[wps.length - 1].ident;
+  const from = fromEl.value.trim().toUpperCase();
+  const to = toEl.value.trim().toUpperCase();
+  if (!from || !to) {
+    setRouteNote('Enter a departure and a destination airport (ICAO).');
+    return false;
+  }
+  if (wps.length && !confirm('Replace the current route with an automatic one?')) return false;
+  const btn = document.getElementById('auto-plan');
+  btn.disabled = true;
+  setRouteNote(`Planning ${from} → ${to} at up to ${route.cruiseFt} ft... (the first route in a new area unpacks X-Plane's terrain tiles - a few seconds each)`);
+  try {
+    const res = await PlanAutoRoute({
+      from,
+      to,
+      cruiseFt: route.cruiseFt,
+      avoidControlled: document.getElementById('auto-avoid').checked,
+      radioNav: document.getElementById('auto-radio').checked,
+    });
+    route.name = route.name || `${from}-${to}`;
+    document.getElementById('route-name').value = route.name;
+    route.waypoints = res.waypoints.map((w) => ({ ...w }));
+    renderRoute();
+    const extra = res.directNm > 0 ? ` (+${Math.round((res.distanceNm / res.directNm - 1) * 100)}% vs. direct)` : '';
+    document.getElementById('route-note').innerHTML =
+      `Auto route: ${res.waypoints.length} waypoints, ${res.distanceNm.toFixed(0)} NM${extra}. Check it before you fly it:` +
+      `<ul>${res.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`;
+    if (map) {
+      const pts = route.waypoints.map((w) => [w.lon, w.lat]);
+      const bounds = pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
+      map.fitBounds(bounds, { padding: { top: 40, bottom: 40, left: 330, right: 40 }, maxZoom: 11 });
+    }
+    return true;
+  } catch (e) {
+    setRouteNote(`Auto route failed: ${e}`);
+    return false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('auto-plan').addEventListener('click', planAutoRoute);
+for (const id of ['auto-from', 'auto-to']) {
+  document.getElementById(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') planAutoRoute();
+  });
+}
+
 document.getElementById('route-import').addEventListener('click', async () => {
   try {
     const imported = await ImportFms();

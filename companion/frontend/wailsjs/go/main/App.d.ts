@@ -22,6 +22,8 @@ export function DeleteLanding(arg1:string):Promise<void>;
 
 export function DeleteSavedServer(arg1:string):Promise<void>;
 
+export function DeleteTour(arg1:string):Promise<void>;
+
 export function DeleteUserChecklists(arg1:string):Promise<void>;
 
 export function DeleteUserProfile(arg1:string):Promise<void>;
@@ -31,6 +33,8 @@ export function DisconnectFormation():Promise<void>;
 export function DisconnectSharedCockpit():Promise<void>;
 
 export function ExportFms(arg1:main.PlannedRoute):Promise<string>;
+
+export function GenerateTour(arg1:main.TourRequest):Promise<main.Tour>;
 
 export function GetAirportInfo(arg1:string):Promise<main.AirportInfo>;
 
@@ -50,6 +54,8 @@ export function GetLandingBoard():Promise<main.LandingBoard>;
 
 export function GetLastPage():Promise<string>;
 
+export function GetLogbook():Promise<main.Logbook>;
+
 export function GetNavCollapsed():Promise<boolean>;
 
 export function GetNavData():Promise<main.NavData>;
@@ -58,11 +64,17 @@ export function GetPrefs():Promise<main.PluginPrefs>;
 
 export function GetRecentLogLines(arg1:number):Promise<main.LogLinesResult>;
 
+export function GetRouteBriefing(arg1:main.PlannedRoute):Promise<main.RouteBriefing>;
+
+export function GetRouteSights(arg1:main.PlannedRoute):Promise<Array<main.Sight>>;
+
 export function GetSavedServers():Promise<Array<main.SavedServer>>;
 
 export function GetXPlanePath():Promise<string>;
 
 export function ImportFms():Promise<main.PlannedRoute>;
+
+export function ImportTourCode(arg1:string):Promise<main.Tour>;
 
 export function InstallPlugin():Promise<void>;
 
@@ -72,6 +84,8 @@ export function ListFlights():Promise<Array<main.FlightSummary>>;
 
 export function ListProfiles():Promise<Array<main.ProfileInfo>>;
 
+export function ListTours():Promise<Array<main.Tour>>;
+
 export function LoadChecklists(arg1:string):Promise<main.ChecklistFile>;
 
 export function LoadFlight(arg1:string):Promise<main.Flight>;
@@ -80,6 +94,8 @@ export function LoadProfile(arg1:string):Promise<main.ProfileData>;
 
 export function NearestAirports(arg1:number,arg2:number):Promise<Array<main.AirportHit>>;
 
+export function PlanAutoRoute(arg1:main.AutoRouteRequest):Promise<main.AutoRouteResult>;
+
 export function ReloadCsl():Promise<void>;
 
 export function SaveChecklists(arg1:string,arg2:string):Promise<main.ChecklistFile>;
@@ -87,6 +103,8 @@ export function SaveChecklists(arg1:string,arg2:string):Promise<main.ChecklistFi
 export function SaveProfile(arg1:string,arg2:Array<main.ProfileEntry>):Promise<main.ProfileData>;
 
 export function SaveServer(arg1:string,arg2:string):Promise<void>;
+
+export function SaveTour(arg1:main.Tour):Promise<main.Tour>;
 
 export function ScResync():Promise<void>;
 
@@ -114,4 +132,10 @@ export function StartSharedCockpit(arg1:string,arg2:string,arg3:string):Promise<
 
 export function StopLearn():Promise<void>;
 
+export function SuggestDestinations(arg1:main.DestinationRequest):Promise<main.DestinationIdeas>;
+
 export function SyncEnv():Promise<void>;
+
+export function TourLegSights(arg1:main.Tour):Promise<Array<any>>;
+
+export function TourShareCode(arg1:main.Tour):Promise<string>;

@@ -81,6 +81,16 @@ window.addEventListener('xpmc-open-airport', (e) => {
   showPage('airports');
   openAirport(e.detail.ident);
 });
+// Tours -> Map: plan one leg (auto route + weather briefing).
+window.addEventListener('xpmc-plan-leg', (e) => {
+  showPage('map');
+  import('./map.js').then((m) => m.planLeg(e.detail)).catch((err) => pageLoadFailed('map', err));
+});
+// Logbook -> Debrief: open one recorded flight.
+window.addEventListener('xpmc-open-flight', (e) => {
+  showPage('debrief');
+  import('./debrief.js').then((m) => m.showFlight(e.detail.id)).catch((err) => pageLoadFailed('debrief', err));
+});
 window.addEventListener('xpmc-show-on-map', (e) => {
   showPage('map');
   import('./map.js').then((m) => m.centerOn(e.detail.lat, e.detail.lon)).catch((err) => pageLoadFailed('map', err));
@@ -126,6 +136,8 @@ function showPage(page) {
   if (page === 'landings') showLandings();
   if (page === 'airports') showAirports();
   if (page === 'debrief') openDebriefPage();
+  if (page === 'tours') import('./tours.js').then((m) => m.showTours()).catch((e) => pageLoadFailed('tours', e));
+  if (page === 'logbook') import('./logbook.js').then((m) => m.showLogbook()).catch((e) => pageLoadFailed('logbook', e));
   if (page === 'profiles') refreshProfileList();
   SetLastPage(page).catch(() => {});
 }
@@ -679,11 +691,12 @@ function renderRouteBanner(self) {
     return;
   }
   const w = progress.route.waypoints;
-  const nextName = progress.next.kind === 'USR' ? `WPT${progress.active + 1}` : progress.next.ident;
+  const nextName = progress.next.kind === 'USR' ? progress.next.name || `WPT${progress.active + 1}` : progress.next.ident;
   const dest = w[w.length - 1];
   el.textContent = progress.arrived
     ? `✓ Arrived at ${dest.ident || 'the last waypoint'}`
     : `▶ ${nextName} · MC ${String(Math.round(progress.magCourse)).padStart(3, '0')}° · ${progress.distNm.toFixed(1)} NM · ` +
+      `${progress.next.altFt ? `max ${progress.next.altFt} ft · ` : ''}` +
       `ETA ${formatMin(progress.etaMin)}   —   ${progress.remainingNm.toFixed(0)} NM / ${formatMin(progress.remainingMin)} to ${dest.ident || 'the end'}`;
   el.classList.add('visible');
 }
