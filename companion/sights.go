@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +103,43 @@ func parseSights(body []byte) ([]Sight, error) {
 	return out, nil
 }
 
+// sightsDiskTTL: sights don't move - answers are kept on disk (user cache
+// dir) for a month, so a restarted companion doesn't ask Wikidata again.
+const sightsDiskTTL = 30 * 24 * time.Hour
+
+func sightsCachePath(u string) string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	h := fnv.New64a()
+	h.Write([]byte(u))
+	return filepath.Join(dir, "xpmulticrew-companion", "sights", fmt.Sprintf("%016x.json", h.Sum64()))
+}
+
+func fetchSightsCached(u string) ([]byte, error) {
+	path := sightsCachePath(u)
+	if path != "" {
+		if st, err := os.Stat(path); err == nil && time.Since(st.ModTime()) < sightsDiskTTL {
+			if body, err := os.ReadFile(path); err == nil {
+				return body, nil
+			}
+		}
+	}
+	body, err := fetchCachedFor(u, 24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	if _, perr := parseSights(body); perr == nil && path != "" {
+		_ = os.MkdirAll(filepath.Dir(path), 0755)
+		tmp := path + ".tmp"
+		if os.WriteFile(tmp, body, 0644) == nil {
+			_ = os.Rename(tmp, path)
+		}
+	}
+	return body, nil
+}
+
 // routeChunks splits the route into boxes of at most sightsChunkNm, padded
 // by sightsMaxOffNm.
 func routeChunks(wps []RouteWaypoint) [][4]float64 {
@@ -141,7 +181,7 @@ func routeSights(r PlannedRoute) ([]Sight, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			body, err := fetchCachedFor(wikidataSparql+"?format=json&query="+url.QueryEscape(sightsQuery(c[0], c[1], c[2], c[3])), 24*time.Hour)
+			body, err := fetchSightsCached(wikidataSparql + "?format=json&query=" + url.QueryEscape(sightsQuery(c[0], c[1], c[2], c[3])))
 			if err == nil {
 				results[i], err = parseSights(body)
 			}

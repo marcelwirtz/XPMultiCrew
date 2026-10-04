@@ -856,8 +856,10 @@ function routeForGo() {
   };
 }
 
-function setRouteNote(text) {
-  document.getElementById('route-note').textContent = text;
+function setRouteNote(text, loading = false) {
+  const el = document.getElementById('route-note');
+  el.textContent = text;
+  el.classList.toggle('loading', loading);
 }
 
 // Someone's shared route (or our own, fromSenderId 0) - drawn dashed, with
@@ -1111,7 +1113,7 @@ async function loadBriefing() {
   }
   setBriefingPanel(true);
   const body = document.getElementById('briefing-body');
-  body.innerHTML = '<div class="muted">Fetching METARs, TAFs and winds aloft...</div>';
+  body.innerHTML = '<div class="muted loading">Fetching METARs, TAFs, winds aloft and terrain...</div>';
   const btn = document.getElementById('briefing-refresh');
   btn.disabled = true;
   try {
@@ -1181,7 +1183,7 @@ async function loadSights() {
     return;
   }
   setSightsPanel(true);
-  document.getElementById('sights-body').innerHTML = '<div class="muted">Looking up castles, lakes, mountains... (the first look in a new area can take ~20 s)</div>';
+  document.getElementById('sights-body').innerHTML = '<div class="muted loading">Looking up castles, lakes, mountains... (the first look in a new area can take ~20 s, then it\'s cached)</div>';
   const btn = document.getElementById('sights-refresh');
   btn.disabled = true;
   try {
@@ -1298,7 +1300,7 @@ async function loadIdeas(more) {
   }
   ideasSeed = more ? ideasSeed + 1 : ideasSeed;
   const roundTrip = document.getElementById('ideas-round').checked;
-  body.innerHTML = '<div class="muted">Looking at airports, weather and daylight...</div>';
+  body.innerHTML = '<div class="muted loading">Looking at airports, weather and daylight...</div>';
   try {
     const res = await SuggestDestinations({
       from,
@@ -1387,7 +1389,7 @@ async function planAutoRoute() {
   if (wps.length && !confirm('Replace the current route with an automatic one?')) return false;
   const btn = document.getElementById('auto-plan');
   btn.disabled = true;
-  setRouteNote(`Planning ${from} → ${to} at up to ${route.cruiseFt} ft... (the first route in a new area unpacks X-Plane's terrain tiles - a few seconds each)`);
+  setRouteNote(`Planning ${from} → ${to} at up to ${route.cruiseFt} ft... (the first route in a new area unpacks X-Plane's terrain tiles - a few seconds each)`, true);
   try {
     const res = await PlanAutoRoute({
       from,
@@ -1401,6 +1403,7 @@ async function planAutoRoute() {
     route.waypoints = res.waypoints.map((w) => ({ ...w }));
     renderRoute();
     const extra = res.directNm > 0 ? ` (+${Math.round((res.distanceNm / res.directNm - 1) * 100)}% vs. direct)` : '';
+    document.getElementById('route-note').classList.remove('loading');
     document.getElementById('route-note').innerHTML =
       `Auto route: ${res.waypoints.length} waypoints, ${res.distanceNm.toFixed(0)} NM${extra}. Check it before you fly it:` +
       `<ul>${res.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`;

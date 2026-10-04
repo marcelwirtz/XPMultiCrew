@@ -25,6 +25,7 @@ let tours = [];
 let current = null; // the tour shown (saved, or a preview with no id)
 let lastRequest = null;
 const legSightsCache = new Map(); // "from>to" -> sights on the way (sights.go)
+const legSightsLoading = new Set();
 const kSightIcons = { castle: '🏰', ruins: '🏚', palace: '🏛', lighthouse: '🗼', mountain: '⛰', volcano: '🌋', dam: '🧱', waterfall: '💧',
   lake: '🌊', reservoir: '🌊', tower: '🗼', cathedral: '⛪', bridge: '🌉', island: '🏝', glacier: '🧊', fjord: '🌊', attraction: '★' };
 let seed = 0;
@@ -38,10 +39,10 @@ function minutes(min) {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 }
 
-function setMessage(text, isError) {
+function setMessage(text, isError, loading) {
   const el = $('tours-message');
   el.style.display = text ? '' : 'none';
-  el.className = isError ? 'status err' : 'status';
+  el.className = `status${isError ? ' err' : ''}${loading ? ' loading' : ''}`;
   el.textContent = text || '';
 }
 
@@ -111,7 +112,7 @@ function formRequest() {
 }
 
 async function generate(req) {
-  setMessage('Picking the stops...');
+  setMessage('Picking the stops...', false, true);
   try {
     const t = await GenerateTour(req);
     lastRequest = req;
@@ -204,7 +205,7 @@ function showTour(t) {
     return `<div class="tour-leg">
       <div class="top"><span class="n">${i + 1}</span><span class="r">${esc(l.from)} → ${esc(l.to)}</span><span class="meta">${esc(l.toName)} · ${Math.round(l.distanceNm)} NM · ~${minutes(l.flightMin)} h</span>${status}</div>
       ${tags}
-      <div class="leg-sights" data-leg="${esc(l.from)}>${esc(l.to)}">${legSightsHtml(l)}</div>
+      <div class="leg-sights${legSightsLoading.has(`${l.from}>${l.to}`) ? ' loading' : ''}" data-leg="${esc(l.from)}>${esc(l.to)}">${legSightsHtml(l)}</div>
       <div class="acts">${acts.join('')}</div>
       ${saved ? `<textarea data-i="${i}" placeholder="Travel journal: how was it?">${esc(l.note)}</textarea>` : ''}
     </div>`;
@@ -217,7 +218,9 @@ function showTour(t) {
 }
 
 function legSightsHtml(l) {
-  const list = legSightsCache.get(`${l.from}>${l.to}`);
+  const key = `${l.from}>${l.to}`;
+  if (legSightsLoading.has(key)) return 'Looking up sights on the way...';
+  const list = legSightsCache.get(key);
   if (!list) return '';
   if (!list.length) return '';
   return `On the way: ${list.map((s) => `${kSightIcons[s.kind] || '★'} ${esc(s.name)}`).join(' · ')}`;
@@ -225,17 +228,26 @@ function legSightsHtml(l) {
 
 // Fills in the "on the way" sights of the legs not looked up yet.
 async function loadLegSights(t) {
-  const missing = t.legs.filter((l) => !legSightsCache.has(`${l.from}>${l.to}`));
+  const keys = t.legs.map((l) => `${l.from}>${l.to}`);
+  const missing = keys.filter((k) => !legSightsCache.has(k) && !legSightsLoading.has(k));
   if (!missing.length) return;
+  missing.forEach((k) => legSightsLoading.add(k));
+  refreshLegSights();
   try {
     const res = await TourLegSights({ ...t, legs: t.legs });
-    t.legs.forEach((l, i) => legSightsCache.set(`${l.from}>${l.to}`, res[i] || []));
+    keys.forEach((k, i) => legSightsCache.set(k, res[i] || []));
   } catch (e) {
-    return; // offline - the tour works without them
+    // offline - the tour works without them
+  } finally {
+    missing.forEach((k) => legSightsLoading.delete(k));
   }
-  if (current !== t) return;
+  refreshLegSights();
+}
+
+function refreshLegSights() {
   document.querySelectorAll('#td-legs .leg-sights').forEach((el) => {
     const [from, to] = el.dataset.leg.split('>');
+    el.classList.toggle('loading', legSightsLoading.has(el.dataset.leg));
     el.innerHTML = legSightsHtml({ from, to });
   });
 }

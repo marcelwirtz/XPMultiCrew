@@ -652,6 +652,13 @@
   .tour-leg .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 4px 30px; }
   .tour-leg .tags span { padding: 1px 6px; border-radius: 10px; border: 1px solid var(--border); font-size: 11px; }
   .tour-leg .leg-sights { margin: 2px 0 4px 30px; color: #f0abfc; font-size: 11px; }
+  .tour-leg .leg-sights.loading { color: var(--muted); }
+  /* "Loading..." with a small spinner, wherever something is fetched. */
+  .loading::before {
+    content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
+    border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: xpmc-spin 0.8s linear infinite;
+  }
+  @keyframes xpmc-spin { to { transform: rotate(360deg); } }
   .tour-leg .leg-sights:empty { display: none; }
   .tour-leg .acts { margin-left: 30px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .tour-leg .acts button { flex: none; padding: 3px 8px; font-size: 11px; }
@@ -936,7 +943,7 @@
             </div>
             <div class="ideas-form">
               <div class="route-fields">
-                <div><label>From</label><input type="text" id="ideas-from" placeholder="EDLM" maxlength="8"></div>
+                <div><label>From</label><input type="text" id="ideas-from" placeholder="ICAO" maxlength="8"></div>
                 <div><label>Time (h)</label><input type="number" id="ideas-hours" value="1.5" step="0.25" min="0.5"></div>
                 <div><label>TAS kt</label><input type="number" id="ideas-tas" value="100" step="5" min="40" title="The slower aircraft"></div>
                 <div><label>Min rwy m</label><input type="number" id="ideas-rwy" value="500" step="50" min="0"></div>
@@ -974,8 +981,8 @@
             </div>
             <div class="route-auto">
               <div class="route-fields">
-                <div><label>From</label><input type="text" id="auto-from" placeholder="EDFE" maxlength="8"></div>
-                <div><label>To</label><input type="text" id="auto-to" placeholder="EDDS" maxlength="8"></div>
+                <div><label>From</label><input type="text" id="auto-from" placeholder="ICAO" maxlength="8"></div>
+                <div><label>To</label><input type="text" id="auto-to" placeholder="ICAO" maxlength="8"></div>
                 <div class="auto-btn"><button id="auto-plan" type="button" title="Plan a VFR route between the two airports at the cruise altitude above">Auto route</button></div>
               </div>
               <label class="checkbox-row"><input type="checkbox" id="auto-avoid" checked><span>Avoid controlled airspace (C/D/CTR)</span></label>
@@ -1100,7 +1107,7 @@
               <h2>New tour</h2>
               <div class="tours-grid">
                 <div class="wide"><label>Name</label><input type="text" id="tf-name" placeholder="e.g. Alps with Marco"></div>
-                <div><label>Start airport</label><input type="text" id="tf-from" placeholder="EDLM" maxlength="8"></div>
+                <div><label>Start airport</label><input type="text" id="tf-from" placeholder="ICAO" maxlength="8"></div>
                 <div><label>Legs (evenings)</label><input type="number" id="tf-legs" value="5" min="1" max="20"></div>
                 <div><label>Hours per evening</label><input type="number" id="tf-hours" value="1.5" step="0.25" min="0.75"></div>
                 <div><label>TAS kt (slower aircraft)</label><input type="number" id="tf-tas" value="100" step="5" min="40"></div>
@@ -1110,7 +1117,7 @@
                   <option value="oneway">One way to...</option>
                   <option value="explore">Explore in a direction</option>
                 </select></div>
-                <div id="tf-to-wrap" style="display: none;"><label>Destination</label><input type="text" id="tf-to" placeholder="LOWI" maxlength="8"></div>
+                <div id="tf-to-wrap" style="display: none;"><label>Destination</label><input type="text" id="tf-to" placeholder="ICAO" maxlength="8"></div>
                 <div id="tf-dir-wrap"><label>Direction</label><select id="tf-dir">
                   <option value="0">North</option><option value="45">North-east</option><option value="90">East</option><option value="135">South-east</option>
                   <option value="180">South</option><option value="225">South-west</option><option value="270">West</option><option value="315">North-west</option>
