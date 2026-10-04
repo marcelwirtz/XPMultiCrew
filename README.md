@@ -34,7 +34,10 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
-## What's new in v0.5.1
+## What's new in v0.5.2
+
+(v0.5.1 had the same changes, but its Windows build failed in a test, so
+it was never published.)
 
 - A loading indicator wherever something is fetched (sights on the way of
   each tour leg, auto route, weather briefing, sights, "Where to?").
