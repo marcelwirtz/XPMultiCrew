@@ -99,6 +99,8 @@ add_library(XPMultiCrew SHARED
     src/shared_cockpit/shared_cockpit_config.cpp
     src/shared_cockpit/dataref_sync_protocol.cpp
     src/shared_cockpit/dataref_sync.cpp
+    src/shared_cockpit/sync_policy.cpp
+    src/shared_cockpit/controls_sync_protocol.cpp
     src/shared_cockpit/ownership_tracker.cpp
     src/shared_cockpit/dataref_learner.cpp
     src/shared_cockpit/command_sync_protocol.cpp

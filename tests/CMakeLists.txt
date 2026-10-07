@@ -108,6 +108,23 @@ target_compile_features(dataref_sync_protocol_test PRIVATE cxx_std_17)
 
 add_test(NAME dataref_sync_protocol_test COMMAND dataref_sync_protocol_test)
 
+add_executable(sync_policy_test
+    sync_policy_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/sync_policy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/dataref_sync_protocol.cpp
+)
+target_include_directories(sync_policy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(sync_policy_test PRIVATE cxx_std_17)
+add_test(NAME sync_policy_test COMMAND sync_policy_test)
+
+add_executable(controls_sync_protocol_test
+    controls_sync_protocol_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/controls_sync_protocol.cpp
+)
+target_include_directories(controls_sync_protocol_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(controls_sync_protocol_test PRIVATE cxx_std_17)
+add_test(NAME controls_sync_protocol_test COMMAND controls_sync_protocol_test)
+
 add_executable(weather_sync_protocol_test
     weather_sync_protocol_test.cpp
 )

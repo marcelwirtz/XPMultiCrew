@@ -37,6 +37,40 @@ std::string DatarefCategoryName(DatarefCategory category) {
     return "systems";
 }
 
+bool IsFlightControlDataref(const std::string& name) {
+    const std::string base = name.substr(0, name.find('['));
+    static const char* const kControls[] = {
+        "sim/joystick/yoke_pitch_ratio",
+        "sim/joystick/yoke_roll_ratio",
+        "sim/joystick/yoke_heading_ratio",
+        "sim/cockpit2/controls/yoke_pitch_ratio",
+        "sim/cockpit2/controls/yoke_roll_ratio",
+        "sim/cockpit2/controls/yoke_heading_ratio",
+        "sim/cockpit2/controls/left_brake_ratio",
+        "sim/cockpit2/controls/right_brake_ratio",
+        "sim/cockpit2/engine/actuators/throttle_ratio",
+        "sim/cockpit2/engine/actuators/throttle_ratio_all",
+        "sim/cockpit2/engine/actuators/throttle_beta_rev_ratio",
+        "sim/cockpit2/engine/actuators/throttle_beta_rev_ratio_all",
+        "sim/cockpit2/engine/actuators/throttle_jet_rev_ratio",
+        "sim/cockpit2/engine/actuators/throttle_jet_rev_ratio_all",
+        "sim/cockpit2/engine/actuators/mixture_ratio",
+        "sim/cockpit2/engine/actuators/mixture_ratio_all",
+        "sim/cockpit2/engine/actuators/prop_ratio",
+        "sim/cockpit2/engine/actuators/prop_ratio_all",
+        "sim/flightmodel/engine/ENGN_thro",
+        "sim/flightmodel/engine/ENGN_thro_use",
+        "sim/flightmodel/engine/ENGN_mixt",
+        "sim/flightmodel/engine/ENGN_prop",
+    };
+    for (const char* control : kControls) {
+        if (base == control) {
+            return true;
+        }
+    }
+    return false;
+}
+
 SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
     SharedCockpitConfig config;
 
@@ -70,6 +104,8 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
                 while (tokens >> token) {
                     if (token == "STREAM") {
                         spec.stream = true;
+                    } else if (token == "OUTPUT") {
+                        spec.output = true;
                     } else if (token == "CATEGORY") {
                         std::string category_name;
                         tokens >> category_name;
@@ -83,7 +119,7 @@ SharedCockpitConfig LoadSharedCockpitConfig(const std::string& path) {
                     // compatible, don't hard-fail on the unknown" spirit
                     // as everywhere else this file parses.
                 }
-                if (!spec.name.empty()) {
+                if (!spec.name.empty() && !IsFlightControlDataref(spec.name)) {
                     config.datarefs.push_back(spec);
                 }
             }

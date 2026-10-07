@@ -32,6 +32,9 @@ type ProfileEntry struct {
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	Stream   bool   `json:"stream"`
+	// OUTPUT: a result of the pilot flying's simulation (ENGN_running ...),
+	// only displayed in the co-pilot's cockpit - see the plugin's sync_policy.h.
+	Output   bool   `json:"output"`
 	Category string `json:"category"`
 	// Filled on load from X-Plane's DataRefs.txt: "" if fine, otherwise why
 	// the plugin will likely skip or be unable to write it.
@@ -110,9 +113,43 @@ func listProfiles(xplaneRoot string) []ProfileInfo {
 	return out
 }
 
+// Flight controls the plugin never syncs as DATAREF lines - they come from
+// the pilot flying as a stream. Mirrors the plugin's IsFlightControlDataref.
+var flightControlDatarefs = map[string]bool{
+	"sim/joystick/yoke_pitch_ratio":                             true,
+	"sim/joystick/yoke_roll_ratio":                              true,
+	"sim/joystick/yoke_heading_ratio":                           true,
+	"sim/cockpit2/controls/yoke_pitch_ratio":                    true,
+	"sim/cockpit2/controls/yoke_roll_ratio":                     true,
+	"sim/cockpit2/controls/yoke_heading_ratio":                  true,
+	"sim/cockpit2/controls/left_brake_ratio":                    true,
+	"sim/cockpit2/controls/right_brake_ratio":                   true,
+	"sim/cockpit2/engine/actuators/throttle_ratio":              true,
+	"sim/cockpit2/engine/actuators/throttle_ratio_all":          true,
+	"sim/cockpit2/engine/actuators/throttle_beta_rev_ratio":     true,
+	"sim/cockpit2/engine/actuators/throttle_beta_rev_ratio_all": true,
+	"sim/cockpit2/engine/actuators/throttle_jet_rev_ratio":      true,
+	"sim/cockpit2/engine/actuators/throttle_jet_rev_ratio_all":  true,
+	"sim/cockpit2/engine/actuators/mixture_ratio":               true,
+	"sim/cockpit2/engine/actuators/mixture_ratio_all":           true,
+	"sim/cockpit2/engine/actuators/prop_ratio":                  true,
+	"sim/cockpit2/engine/actuators/prop_ratio_all":              true,
+	"sim/flightmodel/engine/ENGN_thro":                          true,
+	"sim/flightmodel/engine/ENGN_thro_use":                      true,
+	"sim/flightmodel/engine/ENGN_mixt":                          true,
+	"sim/flightmodel/engine/ENGN_prop":                          true,
+}
+
+func isFlightControlDataref(name string) bool {
+	if i := strings.Index(name, "["); i >= 0 {
+		name = name[:i]
+	}
+	return flightControlDatarefs[name]
+}
+
 // parseProfile mirrors the plugin's LoadSharedCockpitConfig: DATAREF
-// <path> [STREAM] [CATEGORY <name>] in any order, comments/blank lines and
-// unknown tokens ignored, unknown categories fall back to systems.
+// <path> [STREAM] [OUTPUT] [CATEGORY <name>] in any order, comments/blank
+// lines and unknown tokens ignored, unknown categories fall back to systems.
 func parseProfile(text string) []ProfileEntry {
 	entries := []ProfileEntry{}
 	for _, raw := range strings.Split(text, "\n") {
@@ -132,6 +169,8 @@ func parseProfile(text string) []ProfileEntry {
 			switch fields[i] {
 			case "STREAM":
 				e.Stream = e.Kind == "dataref"
+			case "OUTPUT":
+				e.Output = e.Kind == "dataref"
 			case "CATEGORY":
 				if i+1 < len(fields) {
 					i++
@@ -149,7 +188,7 @@ func parseProfile(text string) []ProfileEntry {
 func formatProfile(icao string, entries []ProfileEntry) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Shared Cockpit profile for %s - edited with the XPMultiCrew companion app.\n", icao)
-	b.WriteString("# Format: DATAREF <path> [STREAM] [CATEGORY engine|avionics|systems]\n")
+	b.WriteString("# Format: DATAREF <path> [STREAM] [OUTPUT] [CATEGORY engine|avionics|systems]\n")
 	b.WriteString("#         COMMAND <command> [CATEGORY engine|avionics|systems]\n\n")
 	for _, e := range entries {
 		if e.Kind == "command" {
@@ -160,6 +199,9 @@ func formatProfile(icao string, entries []ProfileEntry) string {
 		b.WriteString(e.Name)
 		if e.Stream && e.Kind != "command" {
 			b.WriteString(" STREAM")
+		}
+		if e.Output && e.Kind != "command" {
+			b.WriteString(" OUTPUT")
 		}
 		b.WriteString(" CATEGORY ")
 		b.WriteString(e.Category)
@@ -441,6 +483,8 @@ func annotate(entries []ProfileEntry, index map[string]bool, commands map[string
 		}
 		w, ok := index[name]
 		switch {
+		case isFlightControlDataref(name):
+			entries[i].Warning = "flight control - the pilot flying's yoke and levers are shown automatically, this line is ignored"
 		case !ok:
 			entries[i].Warning = "not in X-Plane's DataRefs.txt - typo?"
 		case !w:
@@ -497,6 +541,7 @@ func saveProfile(xplaneRoot, icao string, entries []ProfileEntry) (ProfileData, 
 		seen[e.Kind+" "+e.Name] = true
 		if e.Kind == "command" {
 			e.Stream = false
+			e.Output = false
 		}
 		if !profileCategories[e.Category] {
 			e.Category = "systems"

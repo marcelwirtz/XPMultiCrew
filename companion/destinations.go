@@ -39,7 +39,8 @@ type DestinationIdea struct {
 	ElevFt     int      `json:"elevFt"`
 	DistanceNm float64  `json:"distanceNm"`
 	BearingDeg float64  `json:"bearingDeg"`
-	FlightMin  float64  `json:"flightMin"` // one way, with a little for routing
+	FlightMin  float64  `json:"flightMin"` // one way in the air, with a little for routing
+	BlockMin   float64  `json:"blockMin"`  // one way door to door: FlightMin + taxi/pattern
 	RunwayM    int      `json:"runwayM"`
 	Tags       []string `json:"tags"`
 	Category   string   `json:"category,omitempty"` // weather nearby, if any
@@ -56,7 +57,7 @@ type DestinationIdeas struct {
 
 const (
 	destRoutingFactor = 1.15 // a VFR route is a bit longer than the straight line
-	destGroundMin     = 15.0 // taxi, run-up, pattern per leg
+	destGroundMin     = 10.0 // taxi, run-up, pattern per leg
 	destMinBearingGap = 50.0 // spread the ideas over different directions
 	destCount         = 3
 )
@@ -159,8 +160,10 @@ func suggestDestinations(airports AirportData, stations []WxStation, visited, sc
 		return DestinationIdeas{}, fmt.Errorf("%.1f h is too short for a flight there%s", req.Hours, map[bool]string{true: " and back", false: ""}[req.RoundTrip])
 	}
 	maxNm := float64(req.TasKt) * airborneMin / 60 / destRoutingFactor
-	minNm := math.Max(15, maxNm*0.45)
-	ideal := maxNm * 0.8
+	// Ideas should use the time there is: an hour asked for is an hour's
+	// flight, not 40 minutes.
+	minNm := math.Max(15, maxNm*0.5)
+	ideal := maxNm * 0.95
 
 	res := DestinationIdeas{Ideas: []DestinationIdea{}, Notes: []string{}}
 	sunset, hasSunset := sunsetUTC(from.Lat, from.Lon, now)
@@ -193,8 +196,11 @@ func suggestDestinations(airports AirportData, stations []WxStation, visited, sc
 		idea := DestinationIdea{Ident: id, Name: name, Lat: lat, Lon: lon, ElevFt: airports.Details[id].ElevationFt,
 			DistanceNm: d, BearingDeg: trueBearing(from.Lat, from.Lon, lat, lon), RunwayM: rwy[id], Tags: []string{}}
 		idea.FlightMin = d * destRoutingFactor / float64(req.TasKt) * 60
+		idea.BlockMin = idea.FlightMin + destGroundMin
 
-		score := 1 - math.Abs(d/ideal-1) // prefer using the time there is
+		// Prefer using the time there is - weighted so it isn't drowned out
+		// by the tags and the daily shuffle below.
+		score := 2 * (1 - 2*math.Abs(d/ideal-1))
 		if scenery[id] {
 			score += 3
 			idea.Tags = append(idea.Tags, "Custom scenery installed")
@@ -280,8 +286,8 @@ func suggestDestinations(airports AirportData, stations []WxStation, visited, sc
 	if len(res.Ideas) == 0 {
 		res.Notes = append(res.Notes, fmt.Sprintf("No airport with a %d m runway and VFR weather %0.f-%0.f NM away", req.MinRunwayM, minNm, maxNm))
 	}
-	res.Notes = append(res.Notes, fmt.Sprintf("Range for %.1f h%s at %d kt: %.0f-%.0f NM", req.Hours,
-		map[bool]string{true: " there and back", false: " one way"}[req.RoundTrip], req.TasKt, minNm, maxNm))
+	res.Notes = append(res.Notes, fmt.Sprintf("Range for %.1f h%s at %d kt: %.0f-%.0f NM (%.0f min taxi and pattern per leg included)", req.Hours,
+		map[bool]string{true: " there and back", false: " one way"}[req.RoundTrip], req.TasKt, minNm, maxNm, destGroundMin))
 	if len(stations) == 0 {
 		res.Notes = append(res.Notes, "No weather data - ideas aren't checked against the weather")
 	}

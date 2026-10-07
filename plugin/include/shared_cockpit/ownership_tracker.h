@@ -18,6 +18,10 @@ namespace flytogether {
 // dead-reckoning math is kept separate from shared_cockpit_sync.h's XPLM-
 // touching glue.
 //
+// Today only DatarefCategory::kFlight (who flies) is ever claimed - switches
+// have no owner any more, see sync_policy.h for why claim-on-touch was
+// dropped for them. The rest of this comment describes the mechanism.
+//
 // "Claim and tell", not request/grant/deny: touching a dataref in a
 // category this side doesn't currently own claims that category
 // immediately (Claim()) and broadcasts an OwnershipClaimMessage alongside

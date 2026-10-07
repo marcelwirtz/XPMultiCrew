@@ -7,27 +7,27 @@
 namespace flytogether {
 
 bool DatarefSync::Start(const std::vector<DatarefSyncSpec>& watched, const std::vector<Peer>& peers,
-                         bool seedFromCurrentValues, bool startsOwningAllCategories) {
+                         bool isMaster) {
     peers_ = peers;
     watched_.clear();
     index_by_name_.clear();
-    ownership_ = OwnershipTracker(startsOwningAllCategories);
+    // Only the "flight" category means anything any more (who flies); the
+    // master starts with it.
+    ownership_ = OwnershipTracker(isMaster);
+    is_master_ = isMaster;
+    next_refresh_s_ = 0.0;
 
     for (const auto& spec : watched) {
         XPLMDataRef ref = XPLMFindDataRef(spec.name.c_str());
-        if (!ref) {
+        if (!ref || index_by_name_.count(spec.name)) {
             continue; // silently skip unknown datarefs, same as elsewhere in this plugin
         }
         WatchedDataref w;
         w.name = spec.name;
         w.ref = ref;
         w.xplm_type = XPLMGetDataRefTypes(ref);
-        w.stream = spec.stream;
-        w.category = spec.category;
-        if (seedFromCurrentValues) {
-            w.last_known = ReadCurrentValue(w);
-            w.has_last_known = true;
-        }
+        w.state.stream = spec.stream;
+        w.state.output = spec.output;
         watched_.push_back(w);
         index_by_name_[spec.name] = watched_.size() - 1;
     }
@@ -119,42 +119,53 @@ void DatarefSync::ApplyValue(WatchedDataref& w, const DatarefValue& value) {
     }
     // Cache the value we just applied so the next Poll() doesn't see it as
     // a new local change and bounce it right back to whoever sent it.
-    w.last_known = value;
-    w.has_last_known = true;
+    MarkApplied(w.state, value);
 }
 
-void DatarefSync::Poll() {
-    // 1. Detect local changes, claiming their category first if this side
-    // doesn't already own it (see this class's comment), then broadcast
-    // the new value unconditionally - touching it IS taking it. A dataref
-    // seen for the very first time (no last_known yet) is always adopted
-    // as the initial cached baseline (nothing to compare against), and
-    // still goes through the same claim-then-broadcast path as any other
-    // change - a cold-start value from an unowned category becomes this
-    // side's own claimed value, same as a real switch flip would.
+void DatarefSync::SetAuthority(bool isMaster) {
+    if (isMaster == is_master_) {
+        return;
+    }
+    is_master_ = isMaster;
+    for (auto& w : watched_) {
+        w.state.has_master_value = false;
+        w.state.hold_local_until = 0.0;
+    }
+    // A new master sends everything once, so both cockpits start its
+    // stint from the same state.
+    next_refresh_s_ = 0.0;
+}
+
+void DatarefSync::Poll(double now_s) {
+    // 1. Send what changed here (see sync_policy.h for who sends what).
+    // The master also re-sends everything every kRefreshIntervalS, which
+    // heals a lost packet or a co-pilot that joined late.
+    constexpr double kRefreshIntervalS = 10.0;
+    const bool refresh = is_master_ && now_s >= next_refresh_s_;
+    if (refresh) {
+        next_refresh_s_ = now_s + kRefreshIntervalS;
+    }
     for (auto& w : watched_) {
         const DatarefValue current = ReadCurrentValue(w);
-        const bool changed = w.stream || !w.has_last_known || current != w.last_known;
-        if (!changed) {
-            continue;
-        }
-
-        w.last_known = current;
-        w.has_last_known = true;
-
-        if (!ownership_.Owns(w.category)) {
-            ClaimOwnership(w.category);
-        }
-        const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
-        if (!encoded.empty()) {
-            SendToPeers(encoded);
+        switch (OnLocalValue(w.state, current, is_master_, refresh, now_s)) {
+            case LocalAction::kNone:
+                break;
+            case LocalAction::kSend: {
+                const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
+                if (!encoded.empty()) {
+                    SendToPeers(encoded);
+                }
+                break;
+            }
+            case LocalAction::kWriteMaster:
+                ApplyValue(w, w.state.master_value);
+                break;
         }
     }
 
-    // 2. Apply anything a peer changed. Runs after step 1 above, so a
-    // remote change applied this tick can't be mistaken for a local one
-    // until the *next* Poll() call - and by then w.last_known already
-    // matches, so it won't be re-broadcast either.
+    // 2. Apply what the peer sent. Runs after step 1 above, so a value
+    // applied this tick is already last_known by the next Poll() and isn't
+    // mistaken for a local change.
     uint8_t buf[512];
     while (true) {
         const int received = socket_.ReceiveFrom(buf, sizeof(buf));
@@ -176,11 +187,11 @@ void DatarefSync::Poll() {
             plain_data = opened->data();
             plain_size = opened->size();
         }
-        ApplyIncomingBytes(plain_data, plain_size);
+        ApplyIncomingBytes(plain_data, plain_size, now_s);
     }
 }
 
-void DatarefSync::IngestRelayedMessage(const void* data, size_t len) {
+void DatarefSync::IngestRelayedMessage(const void* data, size_t len, double now_s) {
     // Already PLAINTEXT, unlike the direct-UDP path above - NOT decrypted
     // again here. The relay channel multiplexes several message shapes
     // (position, dataref sync, ownership, weather) onto one stream, and
@@ -188,7 +199,7 @@ void DatarefSync::IngestRelayedMessage(const void* data, size_t len) {
     // can even peek the magic byte to know which Ingest* to call in the
     // first place - see that dispatcher's comment. A second Open() here
     // on already-decrypted bytes would just fail.
-    ApplyIncomingBytes(data, len);
+    ApplyIncomingBytes(data, len, now_s);
 }
 
 void DatarefSync::SendToPeers(const std::vector<uint8_t>& encoded) {
@@ -274,18 +285,9 @@ std::string DatarefSync::DescribeCurrentValue(size_t index) const {
     return buf;
 }
 
-void DatarefSync::ResendOwned() {
-    for (auto& w : watched_) {
-        if (!ownership_.Owns(w.category)) {
-            continue;
-        }
-        const DatarefValue current = ReadCurrentValue(w);
-        w.last_known = current;
-        w.has_last_known = true;
-        const auto encoded = EncodeDatarefSyncMessage(DatarefSyncMessage{w.name, current});
-        if (!encoded.empty()) {
-            SendToPeers(encoded);
-        }
+void DatarefSync::ResendAll() {
+    if (is_master_) {
+        next_refresh_s_ = 0.0; // the next Poll() sends everything
     }
 }
 
@@ -307,7 +309,7 @@ void DatarefSync::ClaimOwnership(DatarefCategory category) {
     }
 }
 
-void DatarefSync::ApplyIncomingBytes(const void* data, size_t len) {
+void DatarefSync::ApplyIncomingBytes(const void* data, size_t len, double now_s) {
     // `data`/`len` are always already PLAINTEXT by the time they reach
     // here - decrypted by Poll() for the direct-UDP path, or by
     // plugin_main.cpp's relay dispatcher for the relay path (see
@@ -334,10 +336,9 @@ void DatarefSync::ApplyIncomingBytes(const void* data, size_t len) {
         return; // not a dataref we're watching
     }
     WatchedDataref& w = watched_[it->second];
-    if (!ownership_.ShouldApplyRemoteWrite(w.category)) {
-        return; // this side owns the category - protect it from a stale/racing remote write
+    if (OnRemoteValue(w.state, msg.value, is_master_, now_s)) {
+        ApplyValue(w, msg.value);
     }
-    ApplyValue(w, msg.value);
 }
 
 } // namespace flytogether

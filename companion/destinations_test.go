@@ -70,12 +70,18 @@ func TestSuggestDestinations(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Ideas[0].Tags, ","), "Custom scenery installed") {
 		t.Fatalf("missing tag: %+v", res.Ideas[0])
 	}
-	// A round trip: 1.5 h = 2 x (30 min airborne + 15 min ground) -> 43 NM.
+	// One hour one way means about an hour door to door, not 40 minutes.
+	for _, i := range res.Ideas {
+		if i.BlockMin < 30 || i.BlockMin > 60 {
+			t.Fatalf("door to door %.0f min for a 1 h flight: %+v", i.BlockMin, i)
+		}
+	}
+	// A round trip: 1.5 h = 2 x (35 min airborne + 10 min ground) -> 51 NM.
 	req.RoundTrip = true
 	req.Hours = 1.5
 	res, _ = suggestDestinations(destTestAirports(), nil, nil, nil, req, now)
 	for _, i := range res.Ideas {
-		if i.DistanceNm > 43.5 {
+		if i.DistanceNm > 51 {
 			t.Fatalf("too far for a 1.5 h round trip: %+v", i)
 		}
 	}

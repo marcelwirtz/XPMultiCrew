@@ -7,23 +7,16 @@
 # Every dataref below was checked against a real X-Plane 12
 # Resources/plugins/DataRefs.txt, not guessed - see C172.txt's header
 # comment for the general ground rules (writable-only, no autopilot-mode-
-# engagement datarefs) and BE58.txt's header comment for why per-engine
-# array datarefs (not the "_all" variants) are used throughout - both
-# still apply here.
+# engagement datarefs) - still applies here. Power, prop and condition
+# levers come from the pilot flying as a stream, like the yoke, so they
+# aren't listed; the ignition/start switches are COMMANDs (end of file).
 #
 # Turboprop-specific differences from BE58.txt (piston twin):
 #   - No carb_heat_ratio/primer_on - turbine engines have neither a
 #     carburetor nor a primer, and X-Plane doesn't expose either dataref
 #     as meaningful for this engine type.
-#   - mixture_ratio (per-engine, 0.0=cutoff..1.0=full rich for a piston
-#     engine) is the SAME dataref X-Plane's generic engine model reuses
-#     for a turboprop's condition lever - there's no separate
-#     "condition_lever" dataref in X-Plane's data model. Synced here
-#     unchanged; the doc string's piston-specific wording just doesn't
-#     apply literally.
-#   - ENGN_propmode is added: the PT6's prop can be feathered or run in
-#     beta/reverse range for ground ops, which a fixed-pitch or simple
-#     constant-speed piston prop (BE58.txt) doesn't model.
+#   - ENGN_propmode (feather/beta/reverse) is shown on the co-pilot's
+#     side as a result of the pilot flying's levers (OUTPUT).
 
 # Radios - active and standby, so a flip/flop swap either pilot makes
 # shows up correctly on both sides, not just the currently-active side
@@ -64,20 +57,13 @@ DATAREF sim/flightmodel/controls/flaprqst CATEGORY systems
 DATAREF sim/cockpit2/controls/gear_handle_down CATEGORY systems
 DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
 
-# Engine / prop / fuel / start procedure - per-engine arrays throughout,
-# see this file's header comment for the mixture_ratio-as-condition-lever
-# note and why ENGN_propmode (feather/beta/reverse) is included here but
-# not in BE58.txt. ignition_key is STREAM for the same spring-loaded-
-# starter reason documented in C172.txt.
-DATAREF sim/cockpit2/engine/actuators/throttle_ratio CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/prop_ratio CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/mixture_ratio CATEGORY engine
-DATAREF sim/flightmodel/engine/ENGN_propmode CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+# Engine / fuel / start procedure (levers: see the header)
+DATAREF sim/flightmodel/engine/ENGN_propmode OUTPUT CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key OUTPUT CATEGORY engine
 DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
 DATAREF sim/cockpit2/fuel/fuel_tank_selector_left CATEGORY engine
 DATAREF sim/cockpit2/fuel/fuel_tank_selector_right CATEGORY engine
-DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running OUTPUT CATEGORY engine
 
 # Electrical / avionics / pitot-static
 DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
@@ -91,3 +77,9 @@ DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems
+
+# Ignition/start switches (held for the starter)
+COMMAND laminar/c90/powerplant/switch/ign_start_up_L CATEGORY engine
+COMMAND laminar/c90/powerplant/switch/ign_start_dn_L CATEGORY engine
+COMMAND laminar/c90/powerplant/switch/ign_start_up_R CATEGORY engine
+COMMAND laminar/c90/powerplant/switch/ign_start_dn_R CATEGORY engine

@@ -462,12 +462,10 @@ document.getElementById('reload-csl-btn').addEventListener('click', async () => 
   }
 });
 
-// One click handler for all three ownership buttons - each carries its
-// own category in data-category (see index.html), and is already
-// disabled while it's owned by this side (see the status handler below),
-// so a click here always means "take this category from the peer" -
-// instantly, no permission round trip (see ownership_tracker.h's
-// claim-and-tell model).
+// The "take the controls" button (data-category="flight", see index.html) -
+// disabled while this side already flies (see the status handler below),
+// so a click always means "I fly now", instantly, no permission round trip
+// (see ownership_tracker.h's claim-and-tell model).
 document.querySelectorAll('.ownership-toggle button').forEach((btn) => {
   btn.addEventListener('click', async () => {
     if (btn.dataset.category === 'flight' &&
@@ -954,7 +952,7 @@ function profileRowHtml(entry, index) {
       <option value="command" ${isCommand ? 'selected' : ''}>Button</option></select></td>
     <td><input type="text" class="p-name ${warn ? 'has-warning' : ''}" value="${escapeHtml(entry.name)}" placeholder="${isCommand ? 'sim/autopilot/...' : 'sim/cockpit2/...'}" title="${warn}"></td>
     <td><select class="p-category">${options}</select></td>
-    <td style="text-align: center;"><input type="checkbox" class="p-stream" ${entry.stream && !isCommand ? 'checked' : ''} ${isCommand ? 'disabled' : ''}></td>
+    <td style="text-align: center;"><input type="checkbox" class="p-output" data-stream="${entry.stream && !isCommand ? '1' : ''}" ${entry.output && !isCommand ? 'checked' : ''} ${isCommand ? 'disabled' : ''}></td>
     <td><button class="row-delete" type="button" title="Remove">✕</button></td>
   </tr>${warn ? `<tr><td colspan="5" class="warn">${warn}</td></tr>` : ''}`;
 }
@@ -964,7 +962,9 @@ function readProfileRows() {
     kind: tr.querySelector('.p-kind').value,
     name: tr.querySelector('.p-name').value.trim(),
     category: tr.querySelector('.p-category').value,
-    stream: tr.querySelector('.p-stream').checked,
+    // STREAM isn't offered in the editor any more, but kept if the file had it.
+    stream: tr.querySelector('.p-output').dataset.stream === '1',
+    output: tr.querySelector('.p-output').checked,
   }));
 }
 
@@ -1093,7 +1093,7 @@ document.getElementById('profile-icao').addEventListener('keydown', (e) => {
 document.getElementById('profile-add-btn').addEventListener('click', () => {
   if (!currentProfile) return;
   const entries = readProfileRows();
-  entries.push({ kind: 'dataref', name: '', category: 'systems', stream: false });
+  entries.push({ kind: 'dataref', name: '', category: 'systems', stream: false, output: false });
   renderProfile({ ...currentProfile, entries });
   const inputs = document.querySelectorAll('#profile-rows .p-name');
   inputs[inputs.length - 1].focus();
@@ -1145,8 +1145,8 @@ function pickSuggestion(item) {
   const kind = row && row.querySelector('.p-kind');
   if (kind && item.kind) {
     kind.value = item.kind;
-    row.querySelector('.p-stream').disabled = item.kind === 'command';
-    if (item.kind === 'command') row.querySelector('.p-stream').checked = false;
+    row.querySelector('.p-output').disabled = item.kind === 'command';
+    if (item.kind === 'command') row.querySelector('.p-output').checked = false;
   }
   hideSuggestions();
 }
@@ -1196,12 +1196,12 @@ document.getElementById('profile-rows').addEventListener('input', (e) => {
   }, 150);
 });
 
-// Switching a row between Value and Button: STREAM only applies to values.
+// Switching a row between Value and Button: "Display" only applies to values.
 document.getElementById('profile-rows').addEventListener('change', (e) => {
   if (!e.target.classList.contains('p-kind')) return;
-  const stream = e.target.closest('tr').querySelector('.p-stream');
-  stream.disabled = e.target.value === 'command';
-  if (stream.disabled) stream.checked = false;
+  const output = e.target.closest('tr').querySelector('.p-output');
+  output.disabled = e.target.value === 'command';
+  if (output.disabled) output.checked = false;
 });
 
 document.getElementById('profile-rows').addEventListener('keydown', (e) => {
@@ -1313,7 +1313,7 @@ document.getElementById('learn-add-btn').addEventListener('click', () => {
   let added = 0;
   for (const c of lastLearn.changes) {
     if (known.has(c.name) || learnUnchecked.has(c.name)) continue;
-    entries.push({ kind: c.kind || 'dataref', name: c.name, category: learnCategory.get(c.name) || c.category, stream: false });
+    entries.push({ kind: c.kind || 'dataref', name: c.name, category: learnCategory.get(c.name) || c.category, stream: false, output: false });
     known.add(c.name);
     added++;
   }

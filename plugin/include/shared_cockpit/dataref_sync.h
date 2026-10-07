@@ -8,6 +8,7 @@
 #include "shared_cockpit/dataref_sync_protocol.h"
 #include "shared_cockpit/ownership_tracker.h"
 #include "shared_cockpit/shared_cockpit_config.h"
+#include "shared_cockpit/sync_policy.h"
 
 #include <cstdint>
 #include <functional>
@@ -22,71 +23,44 @@ namespace flytogether {
 constexpr uint16_t kDatarefSyncUdpPort = 49021;
 
 // Generic sync of a configured list of "systems" datarefs (switches,
-// radios, autopilot modes, ...) between Shared Cockpit peers flying the
-// same aircraft - see docs/plan.md section 6. Deliberately not used for
-// flight-control position/attitude, which stays strictly master-
-// authoritative via shared_cockpit/shared_cockpit_sync.h + XPLM's
-// override_planepath.
+// radios, autopilot settings, ...) between Shared Cockpit peers flying the
+// same aircraft. Flight controls (yoke, throttle, ...) aren't part of it -
+// they travel as a stream from the pilot flying, see
+// shared_cockpit/controls_sync_protocol.h.
 //
-// Every watched dataref belongs to one of a small fixed set of
-// DatarefCategory buckets (see shared_cockpit_config.h), and ownership is
-// tracked per category via OwnershipTracker: touching a dataref in a
-// category this side doesn't currently own claims that category
-// immediately (broadcasting an OwnershipClaimMessage alongside the changed
-// value), and an incoming remote write for a category this side *does*
-// own is dropped rather than applied, protecting that ownership until
-// this side's own peer's claim is received. See ownership_tracker.h's
-// class comment for why this is a unilateral claim/notify design rather
-// than a request/grant handshake.
+// The pilot flying (master, SetAuthority(true)) is the single authority:
+// see shared_cockpit/sync_policy.h for exactly who sends and applies what.
+// Ownership claims are still carried on this channel, but only for the
+// "flight" category - which side flies - never for switches.
 //
 // Works for any aircraft without per-aircraft code: since both peers fly
 // the identical aircraft, watched dataref names resolve to the same thing
 // on both sides. The only per-aircraft "profile" needed is which dataref
-// names (and categories) to watch (see shared_cockpit/shared_cockpit_config.h's
-// DATAREF lines) - not a custom mapping/getter-setter per dataref.
+// names to watch (see shared_cockpit/shared_cockpit_config.h's DATAREF
+// lines).
 class DatarefSync {
 public:
-    // `seedFromCurrentValues`: if true, every watched dataref's *current*
-    // value is cached as already-known up front, so the first Poll()
-    // afterwards only broadcasts genuine future changes instead of
-    // treating every dataref as "just changed" - see Poll()'s
-    // `!w.has_last_known` check. Without this, a freshly-joined side
-    // would otherwise immediately broadcast its own stale/cold-start
-    // values back at the peer it just joined, alongside (and racing) the
-    // full state that side is itself broadcasting for the same reason -
-    // whichever message arrived last would silently win, sometimes
-    // clobbering a carefully-configured cockpit with the other side's
-    // defaults. Pass true for the joining CLIENT (so only the MASTER's
-    // already-configured state - which never sets this - reaches the
-    // client deterministically); leave false for the MASTER, so its own
-    // current state (fully "unknown" from this instance's point of view
-    // right after Start()) *is* broadcast in full on the very next
-    // Poll() - this is what gives a newly-connected client the master's
-    // complete state, not just future deltas from that point on.
-    //
-    // `startsOwningAllCategories`: see OwnershipTracker's constructor -
-    // pass true for MASTER, false for CLIENT. Independent of
-    // `seedFromCurrentValues` (which is about echoing cold-start values
-    // back at a just-joined peer, not about who's allowed to change
-    // what), though both happen to be role-derived the same way at every
-    // current call site.
-    bool Start(const std::vector<DatarefSyncSpec>& watched, const std::vector<Peer>& peers,
-               bool seedFromCurrentValues = false, bool startsOwningAllCategories = true);
+    // `isMaster`: see SetAuthority. The master's first Poll() sends every
+    // watched value, which gives a freshly joined co-pilot the complete
+    // cockpit state; the co-pilot just takes its current values as the
+    // baseline.
+    bool Start(const std::vector<DatarefSyncSpec>& watched, const std::vector<Peer>& peers, bool isMaster);
     void Stop();
 
-    // Call every frame or so: reads each watched dataref, broadcasts any
-    // that changed locally to every peer (claiming its category first if
-    // this side doesn't already own it - see this class's comment), and
-    // applies (with echo prevention and ownership gating) any change a
-    // peer sent for a dataref we're watching.
-    void Poll();
+    // Call ~10 times a second: sends what changed here, applies what the
+    // peer sent - see sync_policy.h.
+    void Poll(double now_s);
+
+    // Who flies: true makes this side the authority. Called on a role swap.
+    void SetAuthority(bool isMaster);
+    bool is_master() const { return is_master_; }
 
     // Feeds a message that arrived via the rendezvous server's relay
     // rather than this class's own direct-UDP socket - see
     // SharedCockpitSync::IngestRelayedPacket's comment for why relay is
     // needed as a NAT-traversal fallback for Shared Cockpit over the
     // internet. Applies exactly like a directly-received change would.
-    void IngestRelayedMessage(const void* data, size_t len);
+    void IngestRelayedMessage(const void* data, size_t len, double now_s);
 
     // Also hand every locally-detected change to this callback (set once
     // by plugin_main.cpp to relay through the rendezvous server), in
@@ -107,16 +81,14 @@ public:
     uint32_t ProfileHash() const;
     const std::string& WatchedName(size_t index) const { return watched_[index].name; }
     std::string DescribeCurrentValue(size_t index) const;
-    // Broadcasts the current value of every dataref in a category this side
-    // owns - the "bring the other side back in line" button.
-    void ResendOwned();
+    // Master: sends every watched value now (a co-pilot asked for it, or
+    // the "bring the other side back in line" button).
+    void ResendAll();
 
-    // Local UI action ("I'm taking this category now") - see
-    // OwnershipTracker::Claim. An immediate, unconditional claim: no
-    // permission step, see ownership_tracker.h's class comment. Sent to
-    // the peer (+ relay) a few times in a row (best-effort UDP, no ACK
-    // below this), same delivery policy as every other message on this
-    // channel. A no-op if this side already owns `category`.
+    // Local UI action ("I'm taking the controls") - see
+    // OwnershipTracker::Claim. Only used for DatarefCategory::kFlight.
+    // Sent to the peer (+ relay) a few times in a row (best-effort UDP, no
+    // ACK below this). A no-op if this side already owns `category`.
     void ClaimOwnership(DatarefCategory category);
 
     bool Owns(DatarefCategory category) const { return ownership_.Owns(category); }
@@ -137,17 +109,12 @@ private:
         std::string name;
         XPLMDataRef ref = nullptr;
         XPLMDataTypeID xplm_type = 0;
-        DatarefValue last_known;
-        bool has_last_known = false;
-        // See DatarefSyncSpec::stream - true bypasses change-detection in
-        // Poll() and broadcasts every tick.
-        bool stream = false;
-        DatarefCategory category = DatarefCategory::kSystems;
+        WatchedSyncState state;
     };
 
     DatarefValue ReadCurrentValue(const WatchedDataref& w) const;
     void ApplyValue(WatchedDataref& w, const DatarefValue& value);
-    void ApplyIncomingBytes(const void* data, size_t len);
+    void ApplyIncomingBytes(const void* data, size_t len, double now_s);
     void SendToPeers(const std::vector<uint8_t>& encoded);
 
     UdpSocket socket_;
@@ -156,6 +123,8 @@ private:
     std::unordered_map<std::string, size_t> index_by_name_;
     std::function<void(const void*, size_t)> relay_sender_;
     OwnershipTracker ownership_{/*startsAsOwner=*/true};
+    bool is_master_ = true;
+    double next_refresh_s_ = 0.0;
     const SessionCrypto* crypto_ = nullptr;
 };
 

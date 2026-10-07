@@ -47,6 +47,7 @@
 #include "formation/rendezvous_protocol.h" // SplitHostPort, reused by the control listener
 #include "net/session_crypto.h"
 #include "shared_cockpit/command_sync.h"
+#include "shared_cockpit/controls_sync_protocol.h"
 #include "shared_cockpit/dataref_learner.h"
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
@@ -1653,34 +1654,49 @@ void OnPeerDigest(const uint8_t* body, size_t len) {
     g_control_listener.SetScDesync("0 " + encoded);
 }
 
+// The pilot flying's cockpit is the reference: the master just sends
+// everything again, a co-pilot asks the master for it.
 void RequestSharedCockpitResync() {
     if (!g_shared_cockpit_active) return;
-    g_dataref_sync.ResendOwned();
-    SendSharedCockpitMessage(WithMagic(kResyncMagic, nullptr, 0));
+    if (g_dataref_sync.is_master()) {
+        g_dataref_sync.ResendAll();
+    } else {
+        SendSharedCockpitMessage(WithMagic(kResyncMagic, nullptr, 0));
+    }
     std::fill(g_desync_streak.begin(), g_desync_streak.end(), 0);
     g_control_listener.SetScDesync("0 ");
 }
 
 // Right seat: X-Plane puts every pilot's head in the left seat. Whoever
-// joined as CLIENT gets it mirrored across the centre line (the aircraft's
-// default eye point, sim/aircraft/view/acf_peX, negated). Re-applied if
-// X-Plane resets the view to the default (e.g. a view-reset key), but a
-// head the user moved themselves is left alone.
+// joined as CLIENT sits on the right: the aircraft's eye point
+// (sim/aircraft/view/acf_peX) is mirrored across the centre line, and the
+// head moved over once. Moving only the head (as before) didn't stick -
+// X-Plane put it back to the eye point again and again, and re-applying it
+// every second made the view jump between both seats. With the eye point
+// itself on the right, every view reset lands in the right seat too.
 XPLMDataRef g_head_x_ref = nullptr;
 XPLMDataRef g_acf_eye_x_ref = nullptr;
 bool g_right_seat_applied = false;
+float g_right_seat_orig_eye_x = 0.0f; // the aircraft's own (left seat) eye point
 
 void UpdateRightSeat() {
     if (!g_head_x_ref || !g_acf_eye_x_ref) return;
-    const float left_x = XPLMGetDataf(g_acf_eye_x_ref);
-    const float head_x = XPLMGetDataf(g_head_x_ref);
-    const bool want = g_shared_cockpit_active && g_sc_joined_as_client && g_pref_right_seat && std::fabs(left_x) > 0.05f;
-    if (want && std::fabs(head_x - left_x) < 0.02f) {
-        XPLMSetDataf(g_head_x_ref, -left_x);
-        if (!g_right_seat_applied) XPLMDebugString("XPMultiCrew: shared cockpit - moved your view to the right seat\n");
+    const bool want = g_shared_cockpit_active && g_sc_joined_as_client && g_pref_right_seat;
+    const float eye_x = XPLMGetDataf(g_acf_eye_x_ref);
+    // An aircraft (re)load sets the eye point back - apply it again.
+    if (g_right_seat_applied && std::fabs(eye_x + g_right_seat_orig_eye_x) > 0.01f) {
+        g_right_seat_applied = false;
+    }
+    if (want && !g_right_seat_applied) {
+        if (std::fabs(eye_x) <= 0.05f) return; // a centre seat - nothing to mirror
+        g_right_seat_orig_eye_x = eye_x;
+        XPLMSetDataf(g_acf_eye_x_ref, -eye_x);
+        XPLMSetDataf(g_head_x_ref, XPLMGetDataf(g_head_x_ref) - 2.0f * eye_x);
         g_right_seat_applied = true;
+        XPLMDebugString("XPMultiCrew: shared cockpit - moved your view to the right seat\n");
     } else if (!want && g_right_seat_applied) {
-        if (std::fabs(head_x + left_x) < 0.02f) XPLMSetDataf(g_head_x_ref, left_x);
+        XPLMSetDataf(g_acf_eye_x_ref, g_right_seat_orig_eye_x);
+        XPLMSetDataf(g_head_x_ref, XPLMGetDataf(g_head_x_ref) + 2.0f * g_right_seat_orig_eye_x);
         g_right_seat_applied = false;
     }
 }
@@ -2132,6 +2148,121 @@ void ReleasePhysicsOverride() {
     SetPhysicsOverride(false);
 }
 
+// --- Shared Cockpit: the pilot flying's controls (controls_sync_protocol.h) ---
+//
+// The master sends its yoke, pedals, toe brakes and power levers 20 times a
+// second; the co-pilot shows them in its cockpit. Its own joystick and
+// throttle quadrant are overridden meanwhile - otherwise X-Plane would keep
+// writing them over the received values (and before, the co-pilot's
+// throttle axis even reached the master's engine through the dataref sync).
+XPLMDataRef g_override_joystick_ref = nullptr;
+XPLMDataRef g_override_throttles_ref = nullptr;
+XPLMDataRef g_override_mixture_ref = nullptr;
+XPLMDataRef g_override_toe_brakes_ref = nullptr;
+XPLMDataRef g_joy_pitch_ref = nullptr;
+XPLMDataRef g_joy_roll_ref = nullptr;
+XPLMDataRef g_joy_heading_ref = nullptr;
+XPLMDataRef g_left_brake_ref = nullptr;
+XPLMDataRef g_right_brake_ref = nullptr;
+XPLMDataRef g_throttle_ratio_ref = nullptr;
+XPLMDataRef g_throttle_beta_rev_ref = nullptr;
+XPLMDataRef g_mixture_ratio_ref = nullptr;
+XPLMDataRef g_prop_ratio_ref = nullptr;
+XPLMDataRef g_num_engines_ref = nullptr;
+
+uint32_t g_controls_sequence = 0;
+std::optional<flytogether::ControlsState> g_remote_controls;
+double g_remote_controls_at_s = 0.0;
+bool g_control_overrides_active = false;
+constexpr double kRemoteControlsTimeoutS = 1.0;
+
+flytogether::ControlsState ReadOwnControls() {
+    flytogether::ControlsState c;
+    c.sequence = ++g_controls_sequence;
+    c.yoke_pitch = g_yoke_pitch_ref ? XPLMGetDataf(g_yoke_pitch_ref) : 0.0f;
+    c.yoke_roll = g_yoke_roll_ref ? XPLMGetDataf(g_yoke_roll_ref) : 0.0f;
+    c.yoke_heading = g_yoke_heading_ref ? XPLMGetDataf(g_yoke_heading_ref) : 0.0f;
+    c.left_brake = g_left_brake_ref ? XPLMGetDataf(g_left_brake_ref) : 0.0f;
+    c.right_brake = g_right_brake_ref ? XPLMGetDataf(g_right_brake_ref) : 0.0f;
+    const int engines = g_num_engines_ref ? XPLMGetDatai(g_num_engines_ref) : 1;
+    c.engines = std::clamp(engines, 0, flytogether::kControlsMaxEngines);
+    if (c.engines > 0) {
+        if (g_throttle_beta_rev_ref) XPLMGetDatavf(g_throttle_beta_rev_ref, c.throttle, 0, c.engines);
+        if (g_mixture_ratio_ref) XPLMGetDatavf(g_mixture_ratio_ref, c.mixture, 0, c.engines);
+        if (g_prop_ratio_ref) XPLMGetDatavf(g_prop_ratio_ref, c.prop, 0, c.engines);
+    }
+    return c;
+}
+
+void SetControlOverrides(bool enabled) {
+    const int value = enabled ? 1 : 0;
+    if (g_override_joystick_ref) XPLMSetDatai(g_override_joystick_ref, value);
+    if (g_override_throttles_ref) XPLMSetDatai(g_override_throttles_ref, value);
+    if (g_override_mixture_ref) XPLMSetDatai(g_override_mixture_ref, value);
+    if (g_override_toe_brakes_ref) XPLMSetDatai(g_override_toe_brakes_ref, value);
+    g_control_overrides_active = enabled;
+}
+
+// Back to the user's own joystick and levers (role swap, stop, master gone).
+void ReleaseRemoteControls() {
+    if (g_control_overrides_active) {
+        SetControlOverrides(false);
+    }
+    g_remote_controls.reset();
+}
+
+void OnRemoteControls(const uint8_t* data, size_t len, double now) {
+    if (g_shared_cockpit.role() != flytogether::SharedCockpitRole::kClient) {
+        return;
+    }
+    const auto c = flytogether::DecodeControlsState(data, len);
+    // Relay and direct path both deliver it - keep only the newest (unless
+    // the stream had stopped: the peer may have restarted its counter).
+    const bool fresh = g_remote_controls && now - g_remote_controls_at_s <= kRemoteControlsTimeoutS;
+    if (!c || (fresh && static_cast<int32_t>(c->sequence - g_remote_controls->sequence) <= 0)) {
+        return;
+    }
+    g_remote_controls = c;
+    g_remote_controls_at_s = now;
+}
+
+// Co-pilot, every frame: the pilot flying's controls into our cockpit.
+void ApplyRemoteControls(double now) {
+    if (!g_remote_controls || now - g_remote_controls_at_s > kRemoteControlsTimeoutS) {
+        if (g_control_overrides_active) {
+            SetControlOverrides(false);
+        }
+        return;
+    }
+    if (!g_control_overrides_active) {
+        SetControlOverrides(true);
+    }
+    const flytogether::ControlsState& c = *g_remote_controls;
+    if (g_joy_pitch_ref) XPLMSetDataf(g_joy_pitch_ref, c.yoke_pitch);
+    if (g_joy_roll_ref) XPLMSetDataf(g_joy_roll_ref, c.yoke_roll);
+    if (g_joy_heading_ref) XPLMSetDataf(g_joy_heading_ref, c.yoke_heading);
+    if (g_yoke_pitch_ref) XPLMSetDataf(g_yoke_pitch_ref, c.yoke_pitch);
+    if (g_yoke_roll_ref) XPLMSetDataf(g_yoke_roll_ref, c.yoke_roll);
+    if (g_yoke_heading_ref) XPLMSetDataf(g_yoke_heading_ref, c.yoke_heading);
+    if (g_left_brake_ref) XPLMSetDataf(g_left_brake_ref, c.left_brake);
+    if (g_right_brake_ref) XPLMSetDataf(g_right_brake_ref, c.right_brake);
+    const int engines = std::min(c.engines, g_num_engines_ref ? XPLMGetDatai(g_num_engines_ref) : 1);
+    for (int i = 0; i < engines; ++i) {
+        float throttle = c.throttle[i];
+        // Forward range through the plain handle (what single-lever
+        // cockpits animate), beta/reverse through the extended one.
+        if (throttle >= 0.0f && g_throttle_ratio_ref) {
+            XPLMSetDatavf(g_throttle_ratio_ref, &throttle, i, 1);
+        } else if (g_throttle_beta_rev_ref) {
+            XPLMSetDatavf(g_throttle_beta_rev_ref, &throttle, i, 1);
+        }
+        float mixture = c.mixture[i];
+        float prop = c.prop[i];
+        if (g_mixture_ratio_ref) XPLMSetDatavf(g_mixture_ratio_ref, &mixture, i, 1);
+        if (g_prop_ratio_ref) XPLMSetDatavf(g_prop_ratio_ref, &prop, i, 1);
+    }
+}
+
 float SendSharedCockpitStateCallback(float /*elapsedSinceLastCall*/,
                                       float /*elapsedTimeSinceLastFlightLoop*/,
                                       int /*counter*/,
@@ -2139,6 +2270,9 @@ float SendSharedCockpitStateCallback(float /*elapsedSinceLastCall*/,
     const flytogether::AircraftStatePacket packet =
         BuildOwnAircraftStatePacket(g_sender_id, g_shared_cockpit_sequence++);
     g_shared_cockpit.SendOwnState(packet); // no-op unless we're MASTER
+    if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kMaster) {
+        SendSharedCockpitMessage(flytogether::EncodeControlsState(ReadOwnControls()));
+    }
 
     // 20 Hz, matching Formation mode's rate - Shared Cockpit needs at
     // least that for a physically-overridden aircraft to look smooth.
@@ -2183,6 +2317,7 @@ float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
             // the client's aircraft in place indefinitely.
             ReleasePhysicsOverride();
         }
+        ApplyRemoteControls(now);
 
         // Client-side aircraft-type mismatch check: the master's ICAO
         // comes along for free on every AircraftStatePacket it already
@@ -2233,6 +2368,7 @@ void SyncSharedCockpitRoleWithFlightOwnership() {
         // Hand physics back with the master's last velocity first - see
         // ReleasePhysicsOverride's comment for why the order matters.
         ReleasePhysicsOverride();
+        ReleaseRemoteControls(); // our own yoke and levers fly now
         if (!g_last_pushed_aircraft_mismatch.empty()) {
             g_last_pushed_aircraft_mismatch.clear();
             g_control_listener.SetSharedCockpitAircraftMismatch("");
@@ -2248,6 +2384,7 @@ void SyncSharedCockpitRoleWithFlightOwnership() {
     }
     g_shared_cockpit.SetRole(wanted);
     g_weather_sync.SetRole(wanted);
+    g_dataref_sync.SetAuthority(wanted == flytogether::SharedCockpitRole::kMaster);
     // A rendezvous rejoin restarts the sync engines with this role - keep
     // it matching who's actually flying now.
     g_pending_shared_cockpit_role = wanted;
@@ -2258,8 +2395,9 @@ float PollDatarefSyncCallback(float /*elapsedSinceLastCall*/,
                                float /*elapsedTimeSinceLastFlightLoop*/,
                                int /*counter*/,
                                void* /*refcon*/) {
-    g_dataref_sync.Poll();
-    g_command_sync.Poll(XPLMGetElapsedTime());
+    const double now = XPLMGetElapsedTime();
+    g_dataref_sync.Poll(now);
+    g_command_sync.Poll(now);
     SyncSharedCockpitRoleWithFlightOwnership();
     // Catches the peer claiming a category over the network, which (unlike
     // a local ClaimOwnership() call) has no other point in this plugin
@@ -2327,6 +2465,7 @@ void StopSharedCockpit() {
     XPLMUnregisterFlightLoopCallback(PollDatarefSyncCallback, nullptr);
     XPLMUnregisterFlightLoopCallback(PollWeatherSyncCallback, nullptr);
     ReleasePhysicsOverride();
+    ReleaseRemoteControls();
     g_shared_cockpit.Stop();
     g_dataref_sync.Stop();
     g_weather_sync.Stop();
@@ -2399,19 +2538,9 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
     XPLMRegisterFlightLoopCallback(SendSharedCockpitStateCallback, 1.0f / 20.0f, nullptr);
     XPLMRegisterFlightLoopCallback(UpdateSharedCockpitCallback, -1.0f, nullptr);
 
-    // CLIENT seeds from its own current (cold-start) values so it doesn't
-    // broadcast them back at the MASTER it just joined - see
-    // DatarefSync::Start's comment. This is what makes the MASTER's
-    // untouched Start() (still comparing against "nothing known yet") the
-    // sole, deterministic source of the newly-joined CLIENT's initial
-    // full state, instead of a race between both sides' cold-start dumps.
-    const bool seed_from_current_values = role == flytogether::SharedCockpitRole::kClient;
-    // MASTER starts owning every category by default (Shared Cockpit's
-    // existing "master is authoritative unless told otherwise" posture);
-    // CLIENT starts owning none until it claims one via the companion
-    // app - see DatarefSync::Start's comment and ownership_tracker.h.
-    const bool starts_owning_all_categories = role == flytogether::SharedCockpitRole::kMaster;
-    if (!g_dataref_sync.Start(datarefs, peers, seed_from_current_values, starts_owning_all_categories)) {
+    // The master is the authority for every watched dataref; its first
+    // Poll() sends its whole cockpit state - see sync_policy.h.
+    if (!g_dataref_sync.Start(datarefs, peers, role == flytogether::SharedCockpitRole::kMaster)) {
         XPLMDebugString("XPMultiCrew: dataref sync port busy - relay/P2P via the rendezvous socket only\n");
     }
     {
@@ -2431,13 +2560,17 @@ void StartSharedCockpit(flytogether::SharedCockpitRole role, const std::vector<f
         // happened to end in the same state.
         g_has_pushed_ownership = false;
         PushSharedCockpitOwnershipIfChanged();
+        // A co-pilot asks for the full state too, in case the master's
+        // first round went out before we were listening.
+        if (role == flytogether::SharedCockpitRole::kClient) {
+            SendSharedCockpitMessage(WithMagic(kResyncMagic, nullptr, 0));
+        }
     }
 
     g_command_sync.Start(
         g_pending_shared_cockpit_commands, g_sender_id,
         [](const std::vector<uint8_t>& plain) { SendSharedCockpitMessage(plain); },
-        // Pressing a button claims its category, same as touching a switch.
-        [](flytogether::DatarefCategory category) { g_dataref_sync.ClaimOwnership(category); });
+        nullptr); // a button press claims nothing - see sync_policy.h
     {
         char cmd_buf[128];
         std::snprintf(cmd_buf, sizeof(cmd_buf), "XPMultiCrew: command sync mirroring %zu command(s)\n",
@@ -2612,7 +2745,11 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
             return;
         }
         if (magic == kResyncMagic) {
-            g_dataref_sync.ResendOwned();
+            g_dataref_sync.ResendAll(); // no-op unless we're the master
+            return;
+        }
+        if (magic == flytogether::kControlsSyncMagic) {
+            OnRemoteControls(plain.data(), plain.size(), now);
             return;
         }
         if (magic == flytogether::kTimeSyncMagic) {
@@ -2632,7 +2769,7 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
             // ownership message relayed (rather than reaching the peer via
             // direct UDP) was silently dropped here before ever reaching
             // that internal check.
-            g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size());
+            g_dataref_sync.IngestRelayedMessage(plain.data(), plain.size(), now);
         }
         // Anything else (wrong magic, too short): not one of ours, ignore.
     };
@@ -2979,6 +3116,20 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_groundspeed_ref = XPLMFindDataRef("sim/flightmodel/position/groundspeed");
     g_mag_heading_ref = XPLMFindDataRef("sim/flightmodel/position/mag_psi");
     g_head_x_ref = XPLMFindDataRef("sim/graphics/view/pilots_head_x");
+    g_override_joystick_ref = XPLMFindDataRef("sim/operation/override/override_joystick");
+    g_override_throttles_ref = XPLMFindDataRef("sim/operation/override/override_throttles");
+    g_override_mixture_ref = XPLMFindDataRef("sim/operation/override/override_mixture");
+    g_override_toe_brakes_ref = XPLMFindDataRef("sim/operation/override/override_toe_brakes");
+    g_joy_pitch_ref = XPLMFindDataRef("sim/joystick/yoke_pitch_ratio");
+    g_joy_roll_ref = XPLMFindDataRef("sim/joystick/yoke_roll_ratio");
+    g_joy_heading_ref = XPLMFindDataRef("sim/joystick/yoke_heading_ratio");
+    g_left_brake_ref = XPLMFindDataRef("sim/cockpit2/controls/left_brake_ratio");
+    g_right_brake_ref = XPLMFindDataRef("sim/cockpit2/controls/right_brake_ratio");
+    g_throttle_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/throttle_ratio");
+    g_throttle_beta_rev_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/throttle_beta_rev_ratio");
+    g_mixture_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/mixture_ratio");
+    g_prop_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_ratio");
+    g_num_engines_ref = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
     g_acf_eye_x_ref = XPLMFindDataRef("sim/aircraft/view/acf_peX");
     g_wind_alt_ref = XPLMFindDataRef("sim/weather/aircraft/wind_altitude_msl_m");
     g_wind_speed_ref = XPLMFindDataRef("sim/weather/aircraft/wind_speed_kts");

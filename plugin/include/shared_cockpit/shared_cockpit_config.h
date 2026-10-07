@@ -6,9 +6,9 @@
 
 namespace flytogether {
 
-// Which "who's allowed to touch this" bucket a watched dataref falls into -
-// see dataref_sync.h's ownership enforcement and the CATEGORY grammar
-// below. A small, fixed set rather than per-dataref ownership: coarse
+// Which group a watched dataref belongs to (the CATEGORY grammar below).
+// It no longer decides who may touch it (see sync_policy.h) - only
+// kFlight, who flies, is still claimed. A small, fixed set rather than per-dataref ownership: coarse
 // enough for a companion-app UI to offer as a couple of buttons, matching
 // the profile file's pre-existing comment groupings (Engine/fuel; Radios,
 // autopilot bugs, OBS/audio -> Avionics; everything else -> Systems).
@@ -54,9 +54,22 @@ struct DatarefSyncSpec {
     // C172.txt for the concrete example this was added for.
     bool stream = false;
     // See DatarefCategory above. Defaults to kSystems (the "CATEGORY"
-    // token's own default when omitted from a DATAREF line).
+    // token's own default when omitted from a DATAREF line). Only groups
+    // the profile now - switches have no owner (see sync_policy.h).
     DatarefCategory category = DatarefCategory::kSystems;
+    // true ("OUTPUT" in the profile file): a result of the simulation, not
+    // a control - e.g. ENGN_running. Only the pilot flying's value counts;
+    // the co-pilot never sends it. See sync_policy.h.
+    bool output = false;
 };
+
+// Flight controls (yoke, pedals, toe brakes, throttle/mixture/prop levers)
+// never go through the dataref sync: both pilots' joysticks and throttle
+// quadrants write them all the time, so the two cockpits would overwrite
+// each other. They come from the pilot flying as a stream instead
+// (controls_sync_protocol.h). True for such a dataref name (an "[n]"
+// suffix is ignored), so a profile listing one is ignored for it.
+bool IsFlightControlDataref(const std::string& name);
 
 // File-based "systems" DATAREF list for Shared Cockpit - see
 // ResolveSharedCockpitConfigPath below for how the right file is picked
@@ -67,14 +80,14 @@ struct DatarefSyncSpec {
 //
 // Expected file contents, one directive per line (# comments, blank lines
 // ignored):
-//   DATAREF <dataref/path> [STREAM] [CATEGORY <engine|avionics|systems>]
+//   DATAREF <dataref/path> [STREAM] [OUTPUT] [CATEGORY <engine|avionics|systems>]
 //     One line per "systems" dataref to keep in sync between both
 //     cockpits; same list on both sides, since Shared Cockpit assumes an
 //     identical aircraft. STREAM and CATEGORY are both optional and may
-//     appear in either order after the dataref path; omitting either
-//     keeps today's defaults (CHANGE / systems), so every profile file
+//     appear in any order after the dataref path; omitting them
+//     keeps the defaults (CHANGE / input / systems), so every profile file
 //     written before these were added still parses unchanged. See
-//     DatarefSyncSpec::stream/::category above for what each one does.
+//     DatarefSyncSpec::stream/::output/::category above for what each one does.
 // One X-Plane command to mirror between both cockpits (COMMAND line) - for
 // everything that's a button press rather than a value: autopilot modes,
 // G1000 softkeys, FMS keys, transponder IDENT. See shared_cockpit/command_sync.h.

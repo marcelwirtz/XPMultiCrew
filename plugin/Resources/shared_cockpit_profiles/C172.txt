@@ -23,15 +23,13 @@
 # only ever touches position/heading/pitch/roll on your own aircraft), so
 # they're listed here explicitly too.
 #
-# Every DATAREF line below also carries a CATEGORY tag (engine/avionics/
-# systems - "systems" is the default, so it's only spelled out here for
-# clarity). MASTER and CLIENT can each own a category's datarefs
-# independently, swapped via the companion app's ownership buttons - a
-# locally-detected change to a dataref whose category this side doesn't
-# own gets reverted instead of applied/broadcast, which is what actually
-# fixes a hardware switch fighting the network instead of just narrowing
-# the window it can happen in (see shared_cockpit/ownership_tracker.h).
-# MASTER owns every category by default when a session starts.
+# How it's synced (shared_cockpit/sync_policy.h): the pilot flying is the
+# single authority for every value below; a switch the co-pilot moves is
+# sent to the pilot flying and applied there. CATEGORY only groups the
+# list. OUTPUT marks a result of the pilot flying's simulation (the
+# co-pilot only displays it). Yoke, pedals, toe brakes, throttle and
+# mixture aren't listed on purpose: they come from the pilot flying as a
+# stream, so the co-pilot sees them move.
 
 # Radios - active and standby, so a flip/flop swap either pilot makes
 # shows up correctly on both sides, not just the currently-active side
@@ -72,31 +70,19 @@ DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
 
 # Engine / fuel / start procedure
 #
-# throttle_ratio_all and ignition_key were missing/undersynced here and
-# were the actual cause of a live-tested bug: the master's running engine
-# didn't show as running on the client, and the client couldn't start it
-# either.
-#   - throttle_ratio_all: simply wasn't in this list at all, so the two
-#     sides' independent engine physics had no way to agree once either
-#     pilot moved the throttle.
-#   - ignition_key's own X-Plane doc string says it's "spring-loaded for
-#     starter - you have to keep setting it to start in order to keep
-#     cranking." DatarefSync only broadcasts on value *change* by default,
-#     so the receiving side got exactly one "start" write instead of a
-#     sustained crank signal. STREAM makes DatarefSync resend it every
-#     tick regardless of change, like AircraftPosition already is.
-# ENGN_running is force-synced too, as a belt-and-suspenders measure so the
-# client's engine visually/audibly matches the master even if the
-# reconstructed start sequence doesn't perfectly reproduce X-Plane's
-# internal start timing.
-DATAREF sim/cockpit2/engine/actuators/throttle_ratio_all CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all CATEGORY engine
+# The C172's key and fuel selector are driven by its own Lua scripts
+# (plugins/xlua/scripts/c172_starter, c172_fuel_selector) through the
+# laminar/c172/* commands, holding the starter while the key is held in
+# START - so they're mirrored as COMMANDs (end of file), not written as
+# datarefs. Writing ignition_key from the network (it was even streamed
+# 10x a second) fought that script and the starter on the pilot flying's
+# side: the engine wouldn't start. The key position and ENGN_running are
+# only displayed on the co-pilot's side (OUTPUT).
 DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio CATEGORY engine
 DATAREF sim/cockpit2/engine/actuators/primer_on CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key OUTPUT CATEGORY engine
 DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
-DATAREF sim/cockpit/engine/fuel_tank_selector CATEGORY engine
-DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running OUTPUT CATEGORY engine
 
 # Electrical / avionics / pitot-static
 DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
@@ -110,6 +96,13 @@ DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems
+
+# Key, starter and fuel selector (see "Engine" above)
+COMMAND laminar/c172/ignition_up CATEGORY engine
+COMMAND laminar/c172/ignition_down CATEGORY engine
+COMMAND laminar/c172/fuel_selector_up CATEGORY engine
+COMMAND laminar/c172/fuel_selector_dwn CATEGORY engine
+COMMAND sim/starters/shut_down CATEGORY engine
 
 # Autopilot (GFC 700) and G1000 buttons - COMMAND lines mirror the button
 # *press* to the other cockpit (see shared_cockpit/command_sync.h), which is

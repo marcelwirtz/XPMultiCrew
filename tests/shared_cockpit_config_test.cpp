@@ -107,10 +107,11 @@ void ValidateBundledProfileFile(const std::string& path, size_t expected_dataref
         std::string name, token;
         tokens >> name;
         assert(!name.empty());
+        assert(!IsFlightControlDataref(name) && "flight controls are streamed, not a DATAREF line");
         assert(seen_names.insert(name).second && "duplicate DATAREF line (copy-paste mistake?)");
 
         while (tokens >> token) {
-            if (token == "STREAM") {
+            if (token == "STREAM" || token == "OUTPUT") {
                 continue;
             }
             if (token == "CATEGORY") {
@@ -150,9 +151,9 @@ void TestBundledProfilesParseCleanly() {
     // Counts are literal `grep -c '^DATAREF '` results at authoring time,
     // not derived from the files themselves - see this function's comment
     // for why that's the point.
-    ValidateBundledProfileFile(dir + "/C172.txt", 43);
-    ValidateBundledProfileFile(dir + "/BE58.txt", 47);
-    ValidateBundledProfileFile(dir + "/BE9L.txt", 45);
+    ValidateBundledProfileFile(dir + "/C172.txt", 40);
+    ValidateBundledProfileFile(dir + "/BE58.txt", 44);
+    ValidateBundledProfileFile(dir + "/BE9L.txt", 42);
     std::printf("TestBundledProfilesParseCleanly: OK\n");
 }
 
@@ -205,13 +206,14 @@ int main() {
     const std::string stream_path = "stream_test.txt";
     WriteFile(stream_path,
               "DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM\n"
-              "DATAREF sim/cockpit2/engine/actuators/mixture_ratio_all\n");
+              "DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio\n");
     const SharedCockpitConfig stream_config = LoadSharedCockpitConfig(stream_path);
     assert(stream_config.datarefs.size() == 2);
     assert(stream_config.datarefs[0].name == "sim/cockpit2/engine/actuators/ignition_key");
     assert(stream_config.datarefs[0].stream == true);
+    assert(stream_config.datarefs[0].output == false);
     assert(stream_config.datarefs[0].category == DatarefCategory::kSystems); // still defaults
-    assert(stream_config.datarefs[1].name == "sim/cockpit2/engine/actuators/mixture_ratio_all");
+    assert(stream_config.datarefs[1].name == "sim/cockpit2/engine/actuators/carb_heat_ratio");
     assert(stream_config.datarefs[1].stream == false);
     std::printf("Trailing STREAM token is parsed, and is opt-in per line: OK\n");
 
@@ -221,12 +223,12 @@ int main() {
     // defaults exactly as before.
     const std::string category_path = "category_test.txt";
     WriteFile(category_path,
-              "DATAREF sim/cockpit2/engine/actuators/throttle_ratio_all CATEGORY engine\n"
+              "DATAREF sim/cockpit2/engine/actuators/primer_on CATEGORY engine\n"
               "DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine\n"
               "DATAREF sim/cockpit2/radios/actuators/com1_frequency_hz CATEGORY avionics STREAM\n"
               "DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY bogus\n"
               "DATAREF sim/flightmodel/controls/parkbrake\n"
-              "DATAREF sim/cockpit2/controls/yoke_pitch_ratio CATEGORY flight\n");
+              "DATAREF sim/cockpit2/switches/pitot_heat_on CATEGORY flight\n");
     const SharedCockpitConfig category_config = LoadSharedCockpitConfig(category_path);
     assert(category_config.datarefs.size() == 6);
     // "flight" is the MASTER role, not a dataref bucket - see DatarefCategory::kFlight.
@@ -240,6 +242,25 @@ int main() {
     assert(category_config.datarefs[3].category == DatarefCategory::kSystems); // unknown name -> default
     assert(category_config.datarefs[4].category == DatarefCategory::kSystems); // no modifiers -> default
     std::printf("CATEGORY token is parsed in either order, unknown names fall back: OK\n");
+
+    // 5d. OUTPUT marks a simulation result; flight controls are dropped
+    // (they're streamed from the pilot flying instead).
+    WriteFile("output_test.txt",
+              "DATAREF sim/flightmodel/engine/ENGN_running OUTPUT CATEGORY engine\n"
+              "DATAREF sim/cockpit2/engine/actuators/throttle_ratio_all CATEGORY engine\n"
+              "DATAREF sim/cockpit2/engine/actuators/mixture_ratio[0]\n"
+              "DATAREF sim/cockpit2/controls/yoke_pitch_ratio\n"
+              "DATAREF sim/cockpit2/engine/actuators/ignition_key\n");
+    const SharedCockpitConfig output_config = LoadSharedCockpitConfig("output_test.txt");
+    assert(output_config.datarefs.size() == 2);
+    assert(output_config.datarefs[0].output == true);
+    assert(output_config.datarefs[0].category == DatarefCategory::kEngine);
+    assert(output_config.datarefs[1].name == "sim/cockpit2/engine/actuators/ignition_key");
+    assert(output_config.datarefs[1].output == false);
+    assert(IsFlightControlDataref("sim/cockpit2/engine/actuators/prop_ratio[1]"));
+    assert(!IsFlightControlDataref("sim/cockpit2/engine/actuators/prop_ratio_bogus"));
+    assert(!IsFlightControlDataref("sim/cockpit2/controls/elevator_trim"));
+    std::printf("OUTPUT token is parsed, flight controls are dropped: OK\n");
 
     // COMMAND lines: parsed separately from DATAREF lines, CATEGORY optional.
     WriteFile("commands_test.txt",

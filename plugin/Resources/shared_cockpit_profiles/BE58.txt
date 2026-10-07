@@ -10,18 +10,11 @@
 # ground rules this follows (writable-only, no autopilot-mode-engagement
 # datarefs, etc.), all still true here.
 #
-# Twin-specific difference from C172.txt worth calling out explicitly:
-# the per-engine handle datarefs below (throttle_ratio, prop_ratio,
-# mixture_ratio, ...) are deliberately NOT the "_all" variants C172.txt
-# uses (throttle_ratio_all etc.) - those move every engine's handle
-# together as one, which is exactly wrong for a twin: the 3D cockpit's two
-# separate throttle/prop/mixture levers are bound to these per-engine
-# array datarefs, and syncing the "_all" scalar instead would fight
-# independent per-engine handle positions (e.g. a deliberately asymmetric
-# power setting) instead of reproducing them. For a single-engine
-# aircraft like the C172 the distinction is moot (only one engine to
-# move), which is why that profile could get away with the simpler "_all"
-# form.
+# Throttle, prop and mixture levers (per engine) aren't listed: like the
+# yoke they come from the pilot flying as a stream - see C172.txt's header.
+# The key switches and fuel selectors are COMMANDs (end of file), for the
+# same reason as the C172's key: the starter has to be held, which a
+# written dataref can't do.
 
 # Radios - active and standby, so a flip/flop swap either pilot makes
 # shows up correctly on both sides, not just the currently-active side
@@ -64,21 +57,15 @@ DATAREF sim/flightmodel/controls/flaprqst CATEGORY systems
 DATAREF sim/cockpit2/controls/gear_handle_down CATEGORY systems
 DATAREF sim/flightmodel/controls/parkbrake CATEGORY systems
 
-# Engine / prop / fuel / start procedure - per-engine arrays throughout
-# (see this file's header comment for why _all would be wrong here).
-# ignition_key is STREAM for the same spring-loaded-starter reason
-# documented in C172.txt.
-DATAREF sim/cockpit2/engine/actuators/throttle_ratio CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/prop_ratio CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/mixture_ratio CATEGORY engine
+# Engine / fuel / start procedure (levers: see the header)
 DATAREF sim/cockpit2/engine/actuators/cowl_flap_ratio CATEGORY engine
 DATAREF sim/cockpit2/engine/actuators/carb_heat_ratio CATEGORY engine
 DATAREF sim/cockpit2/engine/actuators/primer_on CATEGORY engine
-DATAREF sim/cockpit2/engine/actuators/ignition_key STREAM CATEGORY engine
+DATAREF sim/cockpit2/engine/actuators/ignition_key OUTPUT CATEGORY engine
 DATAREF sim/cockpit/engine/fuel_pump_on CATEGORY engine
-DATAREF sim/cockpit2/fuel/fuel_tank_selector_left CATEGORY engine
-DATAREF sim/cockpit2/fuel/fuel_tank_selector_right CATEGORY engine
-DATAREF sim/flightmodel/engine/ENGN_running CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_left OUTPUT CATEGORY engine
+DATAREF sim/cockpit2/fuel/fuel_tank_selector_right OUTPUT CATEGORY engine
+DATAREF sim/flightmodel/engine/ENGN_running OUTPUT CATEGORY engine
 
 # Electrical / avionics / pitot-static
 DATAREF sim/cockpit2/electrical/battery_on CATEGORY systems
@@ -92,3 +79,13 @@ DATAREF sim/cockpit/electrical/beacon_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/landing_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/nav_lights_on CATEGORY systems
 DATAREF sim/cockpit/electrical/strobe_lights_on CATEGORY systems
+
+# Key switches (held in START for the starter) and fuel selectors
+COMMAND sim/ignition/ignition_up_1 CATEGORY engine
+COMMAND sim/ignition/ignition_down_1 CATEGORY engine
+COMMAND sim/ignition/ignition_up_2 CATEGORY engine
+COMMAND sim/ignition/ignition_down_2 CATEGORY engine
+COMMAND laminar/b58/fuel_selector_L_up CATEGORY engine
+COMMAND laminar/b58/fuel_selector_L_dwn CATEGORY engine
+COMMAND laminar/b58/fuel_selector_R_up CATEGORY engine
+COMMAND laminar/b58/fuel_selector_R_dwn CATEGORY engine

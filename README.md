@@ -6,7 +6,8 @@ pilots over the internet in two modes:
 1. **Formation** — everyone flies their own aircraft, sees the others
    correctly animated via CSL models (TCAS-override API + `XPLMInstance`).
 2. **Shared Cockpit** — multiple pilots fly the same aircraft across
-   separate X-Plane instances, master/client with request-release control.
+   separate X-Plane instances; the pilot flying (master) hands over the
+   controls with one click.
 
 ATC, flight plans and voice routing are explicitly out of scope. The
 sections below cover the architecture and rationale for each part
@@ -33,6 +34,34 @@ fully supported - see the sections below. The combined download above is
 the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
+
+## What's new in v0.5.3: Shared Cockpit reworked
+
+Both pilots need this version - the sync changed on both sides.
+
+- **The pilot flying's cockpit is the reference.** Every switch, radio and
+  autopilot setting is sent from there; a switch the co-pilot moves goes to
+  the pilot flying and is applied there. Before, touching *anything* -
+  or a value changing by itself, like an engine starting - made a side
+  "take over" its whole category, and both cockpits ended up overwriting
+  each other many times a second: the engine wouldn't start (it smoked),
+  and the desync warning never went away. The Engine/Avionics/Systems
+  buttons are gone; only "take the controls" is left.
+- **You see the other pilot fly:** yoke, rudder, toe brakes, throttle,
+  mixture and prop levers of the pilot flying move in the co-pilot's
+  cockpit. The co-pilot's own joystick and throttle quadrant are switched
+  off meanwhile (back on after taking the controls).
+- **C172 starting:** key, starter and fuel selector are mirrored as button
+  presses (the C172's own Lua scripts drive them), the engine state only
+  comes from the pilot flying. Baron and King Air profiles cleaned up the
+  same way. Profiles have a new `OUTPUT` flag ("Display" in the editor) for
+  simulation results like `ENGN_running`.
+- **Right seat** no longer jumps between both seats: the aircraft's eye
+  point itself is moved to the right.
+- **"Where to?"** uses the time you enter: 1 h one way now suggests about
+  an hour door to door (10 min taxi and pattern per leg, was 15, and ideas
+  near the full range are preferred) instead of ~40 minutes. The time
+  shown is door to door, the airborne time is in the tooltip.
 
 ## What's new in v0.5.2
 
@@ -589,24 +618,22 @@ master's state, reusing Formation mode's exact dead-reckoning
 
 **Systems (radios, autopilot, switches):** no per-aircraft mapping file
 with custom code — since both pilots fly an identical aircraft, a watched
-dataref name resolves to the same thing on both sides. A generic,
-*bidirectional* sync (`shared_cockpit/dataref_sync.h`) reads any configured
-dataref's type automatically (`XPLMGetDataRefTypes`) and mirrors changes
-either direction — either pilot can operate the listed systems, modeling a
-real shared cockpit's pilot-flying/pilot-monitoring split. Only flight
-control (position/attitude) is one-way, master → client. There's no
-per-switch ownership/request-release arbitration yet — whichever side
-writes last wins if both touch the same dataref near-simultaneously.
+dataref name resolves to the same thing on both sides
+(`shared_cockpit/dataref_sync.h`, types read via `XPLMGetDataRefTypes`).
+Either pilot can operate every listed switch, but the pilot flying's
+cockpit is the single reference (`shared_cockpit/sync_policy.h`): the
+master sends every change (and everything again every 10 s), a switch the
+co-pilot moves is sent to the master as a request and applied there.
+`OUTPUT` datarefs (simulation results such as `ENGN_running`) only ever
+flow master → co-pilot. Buttons (`COMMAND` lines) are pressed in both
+cockpits. A newly joined co-pilot asks the master for its complete state.
 
-**The CLIENT gets the MASTER's complete systems state once, right when it
-connects** — not just future changes from that point on. Both sides
-technically broadcast everything they're watching the moment they start
-(nothing's "known yet" to compare against), but the CLIENT seeds its own
-baseline from its current cold-start values first so it doesn't
-reciprocally broadcast *those* back at the MASTER it just joined — see
-`DatarefSync::Start`'s `seedFromCurrentValues` comment. Without this, both
-sides' initial dumps would race, and whichever arrived last would
-silently clobber the other's already-configured cockpit.
+**Flight controls** (yoke, pedals, toe brakes, throttle/mixture/prop
+levers) are a stream from the pilot flying (`controls_sync_protocol.h`,
+20 Hz); the co-pilot's own joystick and levers are overridden
+(`override_joystick`, `override_throttles`, ...) while it isn't flying, so
+two sets of hardware never fight. A profile line naming one of them is
+ignored.
 
 **Peer discovery works exactly like Formation's internet play** (same
 rendezvous/relay server, `server/`, docs/plan.md section 7) rather than a

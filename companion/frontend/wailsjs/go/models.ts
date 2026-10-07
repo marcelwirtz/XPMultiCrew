@@ -626,6 +626,7 @@ export namespace main {
 	    distanceNm: number;
 	    bearingDeg: number;
 	    flightMin: number;
+	    blockMin: number;
 	    runwayM: number;
 	    tags: string[];
 	    category?: string;
@@ -645,6 +646,7 @@ export namespace main {
 	        this.distanceNm = source["distanceNm"];
 	        this.bearingDeg = source["bearingDeg"];
 	        this.flightMin = source["flightMin"];
+	        this.blockMin = source["blockMin"];
 	        this.runwayM = source["runwayM"];
 	        this.tags = source["tags"];
 	        this.category = source["category"];
@@ -1216,6 +1218,7 @@ export namespace main {
 	    kind: string;
 	    name: string;
 	    stream: boolean;
+	    output: boolean;
 	    category: string;
 	    warning?: string;
 	
@@ -1228,6 +1231,7 @@ export namespace main {
 	        this.kind = source["kind"];
 	        this.name = source["name"];
 	        this.stream = source["stream"];
+	        this.output = source["output"];
 	        this.category = source["category"];
 	        this.warning = source["warning"];
 	    }

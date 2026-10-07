@@ -1315,7 +1315,7 @@ async function loadIdeas(more) {
       const tags = i.tags.map((t) => `<span class="${ideaTagClass(t)}">${escapeHtml(t)}</span>`).join('');
       return `<div class="idea">
         <div class="idea-title">${cat}${escapeHtml(i.ident)} · ${escapeHtml(i.name)}</div>
-        <div class="idea-meta">${Math.round(i.distanceNm)} NM ${compass(i.bearingDeg)} · ~${formatMinutes(i.flightMin)} one way · runway ${i.runwayM} m · ${i.elevFt} ft</div>
+        <div class="idea-meta">${Math.round(i.distanceNm)} NM ${compass(i.bearingDeg)} · <span title="${formatMinutes(i.flightMin)} in the air plus taxi and pattern">~${formatMinutes(i.blockMin)} one way</span> · runway ${i.runwayM} m · ${i.elevFt} ft</div>
         <div class="idea-tags">${tags}</div>
         <button data-plan="${escapeHtml(i.ident)}" type="button">Plan route</button><button class="secondary" data-show="${i.lon},${i.lat}" type="button">Show</button>
       </div>`;

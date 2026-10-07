@@ -489,7 +489,7 @@
   .profile-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; table-layout: fixed; }
   .profile-table col.c-kind { width: 84px; }
   .profile-table col.c-category { width: 104px; }
-  .profile-table col.c-stream { width: 56px; }
+  .profile-table col.c-stream { width: 64px; }
   .profile-table col.c-delete { width: 36px; }
   .profile-table select { width: 100%; }
   .profile-table th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 4px; }
@@ -1217,7 +1217,7 @@
             <div class="status" id="profile-status"><span class="dot"></span><span id="profile-status-text"></span></div>
             <table class="profile-table">
               <colgroup><col class="c-kind"><col><col class="c-category"><col class="c-stream"><col class="c-delete"></colgroup>
-              <thead><tr><th title="Value: kept in sync. Button: pressed in both cockpits.">Type</th><th>Dataref / command</th><th>Category</th><th title="Send every tick instead of only on change (spring-loaded switches like the starter)">Stream</th><th></th></tr></thead>
+              <thead><tr><th title="Value: kept in sync. Button: pressed in both cockpits.">Type</th><th>Dataref / command</th><th>Category</th><th title="Display only: a result of the pilot flying's simulation (e.g. ENGN_running) - the co-pilot never sends it">Display</th><th></th></tr></thead>
               <tbody id="profile-rows"></tbody>
             </table>
             <div class="hint">Type part of a name or what it does (e.g. "beacon", "mixture") for suggestions -
@@ -1394,13 +1394,12 @@
               <button id="disconnect-sc-btn" class="secondary" disabled>Disconnect</button>
             </div>
 
-            <label>Who controls what (click to take it)</label>
+            <label>Who's flying (click to take the controls)</label>
             <div class="ownership-toggle">
               <button id="own-flight" class="flight" data-category="flight" disabled>Flight controls</button>
-              <button id="own-engine" data-category="engine" disabled>Engine</button>
-              <button id="own-avionics" data-category="avionics" disabled>Avionics</button>
-              <button id="own-systems" data-category="systems" disabled>Systems</button>
             </div>
+            <div class="hint">Both of you can work every switch, radio and the autopilot - the pilot flying's
+              aircraft is the reference. Yoke and power levers belong to the pilot flying.</div>
 
             <label class="checkbox-row">
               <input type="checkbox" id="pref-right-seat">
