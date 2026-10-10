@@ -35,6 +35,25 @@ the only pre-built release artifact; there's no separate plugin-only zip
 anymore (there was for `v0.1.0` — dropped once the companion app could
 install the plugin itself, see `companion/README.md`).
 
+## What's new in v0.5.4: Shared Cockpit co-pilot fixes
+
+Found in a solo test with the new fake second pilot; the co-pilot's side
+needs this version (the pilot flying's doesn't).
+
+- **Engine as co-pilot:** the pilot flying's throttle and mixture now
+  really reach your engine (before, only the levers moved and the engine
+  stayed at idle), and your tachometer and engine sound show the pilot
+  flying's RPM. X-Plane doesn't run your own engine while the pilot flying
+  positions your aircraft - starting it on your side didn't work for that
+  reason.
+- **On the runway, not in it:** near the ground the co-pilot's aircraft
+  sits on its own runway even when both sceneries' elevations differ;
+  aircraft like the C172, whose reference point is at ground level, no
+  longer sink in by over a meter.
+- **Fake second pilot (`tools/sc_fake_peer`):** as pilot flying it lines up
+  on a runway of any airport (`--airport EDDK [--runway 24]`, or the
+  Airport field in its GUI), read from your X-Plane's apt.dat.
+
 ## What's new in v0.5.3: Shared Cockpit reworked
 
 Both pilots need this version - the sync changed on both sides.
@@ -383,6 +402,8 @@ plugin onto TCAS, and XPMultiCrew recognises it.
   UDP spike without a second X-Plane instance.
 - `tools/formation_fake_peer/` — standalone CLI that sends a synthetic
   orbiting aircraft, for testing Formation mode solo (see Phase 1 below).
+- `tools/sc_fake_peer/` — standalone CLI that joins or hosts a Shared
+  Cockpit session as a fake second pilot, for testing it solo (see Phase 3).
 - `tests/` — pure-logic unit tests (no XPLM/network dependency), run via CTest.
 - `server/` — rendezvous/relay server (Go, Phase 2 — see below).
 - `plugin/include+src/shared_cockpit/` — Shared Cockpit (Phase 3 — see below).
@@ -707,6 +728,35 @@ flying with two real X-Plane instances over the internet — this needs your
 co-pilot and hasn't happened yet, so treat the position takeover, dataref
 mirroring, and the new rendezvous-based peer discovery as
 implemented-but-unflown until that first real test.
+
+**Testing solo, without a second pilot:** `tools/sc_fake_peer` (built
+with everything else) is a stand-in for the other pilot. It speaks to the
+rendezvous server exactly like the plugin, so your X-Plane can't tell the
+difference. Start it without arguments and it opens a small GUI in your
+browser (served from the program itself on `127.0.0.1:49080`):
+
+- **Fake is co-pilot (join):** host Shared Cockpit in the companion, paste
+  its code. Shows your aircraft's position, the yoke/rudder/levers it
+  streams and every cockpit value.
+- **Fake is pilot flying (host):** give it an airport (and optionally a
+  runway) or a position; it prints a code to join in the companion. With an
+  airport it lines up on the runway (read from your X-Plane's apt.dat - the
+  X-Plane folder comes from the companion's settings); otherwise it flies a
+  gentle orbit (or sits on the ground, the elevation being the field
+  elevation) with the yoke moving. Sliders for speed, turn, vertical speed,
+  throttle, mixture and brakes.
+
+Both modes have a C172 panel built from the bundled C172 profile (switches,
+lights, radios, autopilot, flaps, trim), one-click cockpit states (cold &
+dark, before start, ready for takeoff), the profile's buttons (held as
+long as you hold them, e.g. the key on START) and "Take control". Use the
+same server as the companion (default `127.0.0.1:45000` for a local
+`server/`).
+
+There's also a console mode for scripting (`sc_fake_peer join <code>` /
+`sc_fake_peer host --airport <ICAO> [--runway <name>]` or `--pos <lat>
+<lon> <elev_m>`, then `help`); commands can be piped in from a file,
+`wait <s>` pauses.
 
 ## License
 
