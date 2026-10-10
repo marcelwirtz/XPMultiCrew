@@ -157,6 +157,9 @@ XPLMDataRef g_on_ground_ref = nullptr; // sim/flightmodel/failures/onground_any,
 // AircraftStatePacket::ref_height_agl_m. Re-measured whenever we're on
 // the ground, held while airborne, reset on aircraft change.
 float g_ref_height_agl_m = -1.0f;
+// Shared Cockpit client: our position is driven from the network (see
+// SetPhysicsOverride further below).
+bool g_physics_override_active = false;
 
 // Protocol_version 2 extras - see AircraftStatePacket's field comments.
 XPLMDataRef g_taxi_light_ref = nullptr;
@@ -1306,10 +1309,13 @@ flytogether::AircraftStatePacket BuildOwnAircraftStatePacket(uint32_t sender_id,
     if (g_y_agl_ref) {
         packet.agl_m = std::max(0.0f, XPLMGetDataf(g_y_agl_ref));
     }
-    if (g_y_agl_ref && g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0) {
+    // Not while the position is driven from the network - that would only
+    // measure where we put the aircraft. Small negatives count as 0: some
+    // aircraft (the C172) rest with their reference point at the ground.
+    if (g_y_agl_ref && g_on_ground_ref && XPLMGetDatai(g_on_ground_ref) != 0 && !g_physics_override_active) {
         const float y_agl = XPLMGetDataf(g_y_agl_ref);
-        if (y_agl >= 0.0f && y_agl < 15.0f) {
-            g_ref_height_agl_m = y_agl;
+        if (y_agl > -1.0f && y_agl < 15.0f) {
+            g_ref_height_agl_m = std::max(0.0f, y_agl);
         }
     }
     packet.ref_height_agl_m = g_ref_height_agl_m;
@@ -1503,7 +1509,6 @@ flytogether::WeatherSync g_weather_sync;
 flytogether::SimTimeFollower g_shared_cockpit_time;
 double g_shared_cockpit_next_time_broadcast_s = 0.0;
 uint32_t g_shared_cockpit_sequence = 0;
-bool g_physics_override_active = false;
 bool g_shared_cockpit_active = false;
 
 // Last ownership state actually pushed to the companion app via
@@ -1894,6 +1899,17 @@ void PluginMenuHandler(void* /*menuRef*/, void* itemRef) {
     if (itemRef == &g_approach_coach_enabled) SetApproachCoachEnabled(!g_approach_coach_enabled);
 }
 
+// Developer aid: reloads all plugins from disk (after an atomic rename of a
+// new lin.xpl) without restarting X-Plane - the same as Developer > Reload
+// plugins, but reachable as a command (keyboard, Web API). X-Plane does the
+// reload after this handler returns.
+XPLMCommandRef g_reload_plugins_cmd = nullptr;
+
+int ReloadPluginsCommandHandler(XPLMCommandRef /*cmd*/, XPLMCommandPhase phase, void* /*refcon*/) {
+    if (phase == xplm_CommandBegin) XPLMReloadPlugins();
+    return 1;
+}
+
 int ApproachCoachCommandHandler(XPLMCommandRef /*cmd*/, XPLMCommandPhase phase, void* /*refcon*/) {
     if (phase == xplm_CommandBegin) SetApproachCoachEnabled(!g_approach_coach_enabled);
     return 1;
@@ -2081,14 +2097,87 @@ void SetPhysicsOverride(bool enabled) {
     g_physics_override_active = enabled;
 }
 
+// Near the ground the client follows its OWN runway rather than the
+// master's absolute altitude - the same idea as Formation's
+// RemoteAircraftXPMP::GroundMismatchM. Two sceneries' ground can differ by
+// meters, and the master's reference-point height may differ from ours;
+// without this the co-pilot's aircraft floats above or sinks into the
+// runway. Full correction up to 100 m above the ground, none from 500 m.
+//
+// Our ground is the one X-Plane's own flight model uses: elevation minus
+// y_agl (still computed while the position is overridden). Not
+// XPLMProbeTerrainXYZ - live-tested at EDLM, that hit 1.25 m below the
+// runway X-Plane actually rolls on.
+bool g_sc_ground_mismatch_logged = false;
+
+double SharedCockpitGroundOffsetM(const flytogether::AircraftStatePacket* latest) {
+    constexpr double kFullM = 100.0, kNoneM = 500.0, kMaxMismatchM = 150.0;
+    if (!latest || latest->protocol_version < 3 || !std::isfinite(latest->agl_m) || latest->agl_m < 0.0f ||
+        !g_y_agl_ref || !g_elevation_ref || !g_physics_override_active) {
+        return 0.0; // the master didn't say where its ground was / not placed yet
+    }
+    const auto valid_ref = [](float v) { return std::isfinite(v) && v >= 0.0f && v <= 15.0f; };
+    const double own_ref = valid_ref(g_ref_height_agl_m) ? g_ref_height_agl_m
+                           : valid_ref(latest->ref_height_agl_m) ? latest->ref_height_agl_m
+                                                                 : 2.5;
+    const double master_ref = valid_ref(latest->ref_height_agl_m) ? latest->ref_height_agl_m : own_ref;
+    const double height_m = latest->agl_m - master_ref; // master's gear above its ground
+    if (height_m >= kNoneM) {
+        return 0.0;
+    }
+    const double master_ground_m = latest->elevation_m - latest->agl_m;
+    const double local_ground_m = XPLMGetDatad(g_elevation_ref) - XPLMGetDataf(g_y_agl_ref);
+    const double mismatch_m = local_ground_m - master_ground_m;
+    if (std::fabs(mismatch_m) > kMaxMismatchM) {
+        return 0.0;
+    }
+    if (!g_sc_ground_mismatch_logged && std::fabs(mismatch_m) >= 1.0 && height_m < 5.0) {
+        g_sc_ground_mismatch_logged = true;
+        char buf[200];
+        std::snprintf(buf, sizeof(buf),
+                      "XPMultiCrew: shared cockpit - your ground is %.1fm %s than the pilot flying's, "
+                      "following yours near the surface\n",
+                      std::fabs(mismatch_m), mismatch_m > 0 ? "higher" : "lower");
+        XPLMDebugString(buf);
+    }
+    const double fade = std::clamp((kNoneM - height_m) / (kNoneM - kFullM), 0.0, 1.0);
+    return (mismatch_m + own_ref - master_ref) * fade;
+}
+
+// While its position is overridden, X-Plane doesn't run the co-pilot's
+// engine model at all - live-tested: the master's ENGN_running arrived,
+// but the tach (and the engine sound) stayed at 0 RPM. So the master's prop
+// RPM is written straight into ours; the engine model leaves it alone.
+XPLMDataRef g_engn_tacrad_ref = nullptr;   // engine speed, rad/s, float[]
+XPLMDataRef g_point_tacrad_ref = nullptr;  // prop speed, rad/s, float[]
+XPLMDataRef g_prop_gear_ratio_ref = nullptr; // prop / engine speed, float[]
+XPLMDataRef g_num_engines_for_rpm_ref = nullptr;
+
+void ApplyMasterEngineSpeed(const flytogether::AircraftStatePacket& latest) {
+    if (!g_point_tacrad_ref || !std::isfinite(latest.prop_rpm)) {
+        return;
+    }
+    const int engines = std::clamp(g_num_engines_for_rpm_ref ? XPLMGetDatai(g_num_engines_for_rpm_ref) : 1, 0, 16);
+    float gear[16] = {};
+    if (g_prop_gear_ratio_ref && engines > 0) XPLMGetDatavf(g_prop_gear_ratio_ref, gear, 0, engines);
+    const float prop_rad_s = std::max(0.0f, latest.prop_rpm) * 2.0f * 3.14159265f / 60.0f;
+    for (int i = 0; i < engines; ++i) {
+        float prop = prop_rad_s;
+        float engine = gear[i] > 0.01f ? prop_rad_s / gear[i] : prop_rad_s;
+        XPLMSetDatavf(g_point_tacrad_ref, &prop, i, 1);
+        if (g_engn_tacrad_ref) XPLMSetDatavf(g_engn_tacrad_ref, &engine, i, 1);
+    }
+}
+
 void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose,
                                    const flytogether::AircraftStatePacket* latest) {
     if (!g_physics_override_active) {
         SetPhysicsOverride(true);
     }
 
+    const double elevation_m = pose.elevation_m + SharedCockpitGroundOffsetM(latest);
     double local_x = 0.0, local_y = 0.0, local_z = 0.0;
-    XPLMWorldToLocal(pose.latitude, pose.longitude, pose.elevation_m, &local_x, &local_y, &local_z);
+    XPLMWorldToLocal(pose.latitude, pose.longitude, elevation_m, &local_x, &local_y, &local_z);
 
     if (g_local_x_ref) XPLMSetDatad(g_local_x_ref, local_x);
     if (g_local_y_ref) XPLMSetDatad(g_local_y_ref, local_y);
@@ -2102,6 +2191,7 @@ void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose,
     // client's panel shows a parked aircraft. Also what ReleasePhysicsOverride
     // hands back on a role swap.
     if (latest && latest->protocol_version >= 2) {
+        ApplyMasterEngineSpeed(*latest);
         if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, latest->velocity_x_mps);
         if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, latest->velocity_y_mps);
         if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, latest->velocity_z_mps);
@@ -2169,6 +2259,10 @@ XPLMDataRef g_throttle_beta_rev_ref = nullptr;
 XPLMDataRef g_mixture_ratio_ref = nullptr;
 XPLMDataRef g_prop_ratio_ref = nullptr;
 XPLMDataRef g_num_engines_ref = nullptr;
+// What the engine model actually reads while override_throttles /
+// override_mixture are on - the cockpit2 handles above only move the levers.
+XPLMDataRef g_engn_thro_use_ref = nullptr;
+XPLMDataRef g_engn_mixt_ref = nullptr;
 
 uint32_t g_controls_sequence = 0;
 std::optional<flytogether::ControlsState> g_remote_controls;
@@ -2256,9 +2350,17 @@ void ApplyRemoteControls(double now) {
         } else if (g_throttle_beta_rev_ref) {
             XPLMSetDatavf(g_throttle_beta_rev_ref, &throttle, i, 1);
         }
+        // With override_throttles on, the engine runs on ENGN_thro_use, not
+        // the handle - without this the co-pilot's engine sat at idle
+        // whatever the pilot flying did. Beta/reverse shows as idle power
+        // here (the position comes from the master anyway, not our thrust).
+        float engine_throttle = std::max(throttle, 0.0f);
+        if (g_engn_thro_use_ref) XPLMSetDatavf(g_engn_thro_use_ref, &engine_throttle, i, 1);
         float mixture = c.mixture[i];
         float prop = c.prop[i];
         if (g_mixture_ratio_ref) XPLMSetDatavf(g_mixture_ratio_ref, &mixture, i, 1);
+        // Same for override_mixture: ENGN_mixt is what the engine burns.
+        if (g_engn_mixt_ref) XPLMSetDatavf(g_engn_mixt_ref, &mixture, i, 1);
         if (g_prop_ratio_ref) XPLMSetDatavf(g_prop_ratio_ref, &prop, i, 1);
     }
 }
@@ -3130,6 +3232,12 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_mixture_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/mixture_ratio");
     g_prop_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_ratio");
     g_num_engines_ref = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
+    g_engn_thro_use_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_thro_use");
+    g_engn_tacrad_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_tacrad");
+    g_point_tacrad_ref = XPLMFindDataRef("sim/flightmodel/engine/POINT_tacrad");
+    g_prop_gear_ratio_ref = XPLMFindDataRef("sim/aircraft/prop/acf_prop_gear_rat");
+    g_num_engines_for_rpm_ref = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
+    g_engn_mixt_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_mixt");
     g_acf_eye_x_ref = XPLMFindDataRef("sim/aircraft/view/acf_peX");
     g_wind_alt_ref = XPLMFindDataRef("sim/weather/aircraft/wind_altitude_msl_m");
     g_wind_speed_ref = XPLMFindDataRef("sim/weather/aircraft/wind_speed_kts");
@@ -3176,6 +3284,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
                           g_approach_coach_enabled ? xplm_Menu_Checked : xplm_Menu_Unchecked);
     }
     g_approach_coach_cmd = XPLMCreateCommand("xpmulticrew/approach_coach_toggle", "XPMultiCrew: Approach Coach on/off");
+    g_reload_plugins_cmd = XPLMCreateCommand("xpmulticrew/dev/reload_plugins", "XPMultiCrew (developer): reload all plugins");
     g_control_listener.SetApproachCoach(g_approach_coach_enabled);
     RefreshOwnIcaoType(); // best-effort now; XPLM_MSG_PLANE_LOADED refreshes it properly - see its comment
 
@@ -3333,6 +3442,9 @@ PLUGIN_API int XPluginEnable() {
     if (g_approach_coach_cmd) {
         XPLMRegisterCommandHandler(g_approach_coach_cmd, ApproachCoachCommandHandler, 1, nullptr);
     }
+    if (g_reload_plugins_cmd) {
+        XPLMRegisterCommandHandler(g_reload_plugins_cmd, ReloadPluginsCommandHandler, 1, nullptr);
+    }
 
     if (g_udp_socket.Open()) {
         XPLMRegisterFlightLoopCallback(SendPositionOverUdpCallback, 0.2f, nullptr);
@@ -3389,6 +3501,9 @@ PLUGIN_API void XPluginDisable() {
     XPLMUnregisterFlightLoopCallback(PollFormationEnvCallback, nullptr);
     XPLMUnregisterDrawCallback(DrawOverlayCallback, xplm_Phase_Window, 0, nullptr);
     XPLMUnregisterFlightLoopCallback(TouchdownCallback, nullptr);
+    if (g_reload_plugins_cmd) {
+        XPLMUnregisterCommandHandler(g_reload_plugins_cmd, ReloadPluginsCommandHandler, 1, nullptr);
+    }
     if (g_approach_coach_cmd) {
         XPLMUnregisterCommandHandler(g_approach_coach_cmd, ApproachCoachCommandHandler, 1, nullptr);
     }

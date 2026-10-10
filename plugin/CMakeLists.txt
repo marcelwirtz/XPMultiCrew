@@ -47,6 +47,14 @@ if(NOT EXISTS "${XPSDK_ROOT}/CHeaders/XPLM/XPLMDefs.h")
         "  - reconfigure with -DXPSDK_ROOT=/path/to/extracted/SDK")
 endif()
 
+# GCC marks some C++ symbols STB_GNU_UNIQUE, which makes glibc refuse to
+# ever unload the .so - X-Plane's "reload plugins" (and our
+# xpmulticrew/dev/reload_plugins command) would then keep running the old
+# code. Applies to XPMP2 below too, hence before it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND UNIX AND NOT APPLE)
+    add_compile_options(-fno-gnu-unique)
+endif()
+
 # --- XPMP2 (TCAS override + XPLMInstance + CSL model handling) --------------
 # MIT licensed, https://github.com/TwinFan/XPMP2. Not committed here (it's a
 # multi-MB third-party checkout); fetch it with:
