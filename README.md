@@ -37,15 +37,19 @@ install the plugin itself, see `companion/README.md`).
 
 ## What's new in v0.5.4: Shared Cockpit co-pilot fixes
 
-Found in a solo test with the new fake second pilot; the co-pilot's side
-needs this version (the pilot flying's doesn't).
+Found in a solo test with the new fake second pilot. Both pilots should
+update: the engine gauges come from the pilot flying's side (with a v0.5.3
+pilot flying you only get the RPM).
 
-- **Engine as co-pilot:** the pilot flying's throttle and mixture now
-  really reach your engine (before, only the levers moved and the engine
-  stayed at idle), and your tachometer and engine sound show the pilot
-  flying's RPM. X-Plane doesn't run your own engine while the pilot flying
-  positions your aircraft - starting it on your side didn't work for that
-  reason.
+- **Engine gauges as co-pilot:** X-Plane doesn't run your own engine
+  while the pilot flying positions your aircraft - starting it on your side
+  didn't work for that reason, and the tachometer stayed at idle whatever
+  the pilot flying did. Now the pilot flying's engines come over 5 times a
+  second: RPM (per engine), EGT, CHT, ITT, oil temperature and pressure,
+  fuel flow, manifold pressure, N1/N2, torque and the fuel in the tanks -
+  for any aircraft, no profile needed. Taking the controls continues from
+  exactly that state. Throttle and mixture also really reach the engine
+  now (before, only the levers moved).
 - **On the runway, not in it:** near the ground the co-pilot's aircraft
   sits on its own runway even when both sceneries' elevations differ;
   aircraft like the C172, whose reference point is at ground level, no
