@@ -45,6 +45,7 @@
 #include "net/session_crypto.h"
 #include "shared_cockpit/command_sync_protocol.h"
 #include "shared_cockpit/controls_sync_protocol.h"
+#include "shared_cockpit/engine_sync_protocol.h"
 #include "shared_cockpit/dataref_sync_protocol.h"
 #include "shared_cockpit/weather_sync_protocol.h"
 #include "sync/time_sync.h"
@@ -960,6 +961,33 @@ private:
         Send(std::vector<uint8_t>(bytes, bytes + sizeof(p)));
         controls_.sequence = ++controls_sequence_;
         Send(ft::EncodeControlsState(controls_));
+        if (now >= next_engine_send_) {
+            next_engine_send_ = now + 0.2;
+            Send(ft::EncodeEngineState(FakeEngineGauges()));
+        }
+    }
+
+    // Rough C172-like gauges for the engine message, from throttle and
+    // whether the fake engine runs - enough to see them move.
+    ft::EngineState FakeEngineGauges() {
+        ft::EngineState st;
+        st.sequence = ++engine_sequence_;
+        st.engines = std::min(controls_.engines, ft::kEngineSyncMaxEngines);
+        const bool on = engine_.running;
+        const float thr = std::clamp(controls_.throttle[0], 0.0f, 1.0f);
+        for (int i = 0; i < st.engines; ++i) {
+            ft::EngineGauges& e = st.engine[i];
+            e.prop_rad_s = e.engine_rad_s = engine_.Rpm(thr) * 2.0f * static_cast<float>(kPi) / 60.0f;
+            e.egt_c = on ? 400.0f + 300.0f * thr : 20.0f;
+            e.cht_c = on ? 120.0f + 60.0f * thr : 20.0f;
+            e.oil_temp = on ? 160.0f + 30.0f * thr : 60.0f; // the C172 has it in deg F
+            e.oil_press_psi = on ? 50.0f + 25.0f * thr : 0.0f;
+            e.fuel_flow_kg_s = on ? 0.003f + 0.010f * thr : 0.0f;
+            e.manifold_inhg = on ? 12.0f + 16.0f * thr : 29.9f;
+        }
+        st.tanks = 2;
+        st.fuel_kg[0] = st.fuel_kg[1] = 60.0f;
+        return st;
     }
 
     void PrintMasterSummary() const {
@@ -1070,6 +1098,12 @@ private:
         } else if (magic == ft::kTimeSyncMagic) {
             if (!seen_time_) Log("sim time from the pilot flying (not applied here)");
             seen_time_ = true;
+        } else if (magic == ft::kEngineSyncMagic) {
+            if (const auto st = ft::DecodeEngineState(plain.data(), plain.size()); st && st->engines > 0 && !seen_engines_) {
+                seen_engines_ = true;
+                Log("engine gauges from the pilot flying: %.0f rpm, EGT %.0f C, oil %.0f psi (shown once)",
+                    st->engine[0].prop_rad_s * 60.0 / (2.0 * kPi), st->engine[0].egt_c, st->engine[0].oil_press_psi);
+            }
         } else {
             Log("unknown message, magic 0x%08x, %zu bytes", magic, plain.size());
         }
@@ -1111,6 +1145,9 @@ private:
 
     std::map<std::string, ft::DatarefValue> values_;
     ft::CommandDedup command_dedup_;
+    double next_engine_send_ = 0.0;
+    bool seen_engines_ = false;
+    uint32_t engine_sequence_ = 0;
     std::string last_checklist_;
 };
 

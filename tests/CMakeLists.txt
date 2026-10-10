@@ -125,6 +125,14 @@ target_include_directories(controls_sync_protocol_test PRIVATE ${CMAKE_CURRENT_S
 target_compile_features(controls_sync_protocol_test PRIVATE cxx_std_17)
 add_test(NAME controls_sync_protocol_test COMMAND controls_sync_protocol_test)
 
+add_executable(engine_sync_protocol_test
+    engine_sync_protocol_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/src/shared_cockpit/engine_sync_protocol.cpp
+)
+target_include_directories(engine_sync_protocol_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../plugin/include)
+target_compile_features(engine_sync_protocol_test PRIVATE cxx_std_17)
+add_test(NAME engine_sync_protocol_test COMMAND engine_sync_protocol_test)
+
 add_executable(weather_sync_protocol_test
     weather_sync_protocol_test.cpp
 )

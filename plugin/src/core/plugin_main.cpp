@@ -48,6 +48,7 @@
 #include "net/session_crypto.h"
 #include "shared_cockpit/command_sync.h"
 #include "shared_cockpit/controls_sync_protocol.h"
+#include "shared_cockpit/engine_sync_protocol.h"
 #include "shared_cockpit/dataref_learner.h"
 #include "shared_cockpit/dataref_sync.h"
 #include "shared_cockpit/quaternion.h"
@@ -2144,28 +2145,165 @@ double SharedCockpitGroundOffsetM(const flytogether::AircraftStatePacket* latest
     return (mismatch_m + own_ref - master_ref) * fade;
 }
 
+// --- Shared Cockpit: the pilot flying's engine gauges (engine_sync_protocol.h) ---
+//
 // While its position is overridden, X-Plane doesn't run the co-pilot's
 // engine model at all - live-tested: the master's ENGN_running arrived,
-// but the tach (and the engine sound) stayed at 0 RPM. So the master's prop
-// RPM is written straight into ours; the engine model leaves it alone.
-XPLMDataRef g_engn_tacrad_ref = nullptr;   // engine speed, rad/s, float[]
-XPLMDataRef g_point_tacrad_ref = nullptr;  // prop speed, rad/s, float[]
-XPLMDataRef g_prop_gear_ratio_ref = nullptr; // prop / engine speed, float[]
-XPLMDataRef g_num_engines_for_rpm_ref = nullptr;
+// but RPM stayed 0, oil pressure and fuel flow 0, EGT/CHT cooled down to
+// ambient. So the master sends its gauges 5 times a second and the
+// co-pilot writes them into the engine model's own datarefs, which the
+// cockpit's indicators then follow (the cockpit2 indicators themselves get
+// recomputed every frame). Not so the temperature indicators: EGT's (per
+// cylinder) only follows while the engine model runs - stuck at 316 C
+// with 640 C everywhere underneath - so the indicators get the values too.
+struct EngineRefs {
+    XPLMDataRef num_engines = nullptr;
+    XPLMDataRef prop_gear_ratio = nullptr; // prop / engine speed
+    XPLMDataRef point_tacrad = nullptr;    // prop speed, rad/s
+    XPLMDataRef engn_tacrad = nullptr;     // engine speed, rad/s
+    XPLMDataRef n1 = nullptr, n2 = nullptr;
+    XPLMDataRef egt = nullptr, cht = nullptr, itt = nullptr; // flightmodel2, deg C
+    XPLMDataRef egt_cyl = nullptr, cht_cyl = nullptr;        // [16][12]
+    XPLMDataRef ind_egt = nullptr, ind_cht = nullptr, ind_itt = nullptr; // cockpit2 indicators
+    XPLMDataRef ind_egt_cyl = nullptr, ind_cht_cyl = nullptr;            // [16][12]
+    XPLMDataRef oil_temp = nullptr, oil_press = nullptr;
+    XPLMDataRef fuel_flow = nullptr, manifold = nullptr, torque = nullptr;
+    XPLMDataRef fuel_kg = nullptr; // m_fuel, per tank
+};
+EngineRefs g_eng;
 
-void ApplyMasterEngineSpeed(const flytogether::AircraftStatePacket& latest) {
-    if (!g_point_tacrad_ref || !std::isfinite(latest.prop_rpm)) {
+constexpr int kCylindersPerEngine = 12; // the [16][12] cylinder datarefs
+constexpr double kRemoteEnginesTimeoutS = 2.0;
+constexpr double kEngineSendIntervalS = 0.2;
+constexpr double kRpmSmoothingS = 0.25; // 5 Hz updates, shown smoothly
+
+uint32_t g_engine_sequence = 0;
+double g_next_engine_send_s = 0.0;
+std::optional<flytogether::EngineState> g_remote_engines;
+double g_remote_engines_at_s = 0.0;
+double g_engines_applied_at_s = -1.0; // < 0: start the shown RPM at the target
+float g_shown_prop_rad_s[flytogether::kEngineSyncMaxEngines] = {};
+float g_shown_engine_rad_s[flytogether::kEngineSyncMaxEngines] = {};
+
+int OwnEngineCount() {
+    const int n = g_eng.num_engines ? XPLMGetDatai(g_eng.num_engines) : 1;
+    return std::clamp(n, 0, flytogether::kEngineSyncMaxEngines);
+}
+
+float GetElement(XPLMDataRef ref, int index) {
+    float v = 0.0f;
+    if (ref) XPLMGetDatavf(ref, &v, index, 1);
+    return v;
+}
+
+void SetElement(XPLMDataRef ref, int index, float v) {
+    if (ref) XPLMSetDatavf(ref, &v, index, 1);
+}
+
+flytogether::EngineState ReadOwnEngines() {
+    flytogether::EngineState st;
+    st.sequence = ++g_engine_sequence;
+    st.engines = OwnEngineCount();
+    for (int i = 0; i < st.engines; ++i) {
+        flytogether::EngineGauges& e = st.engine[i];
+        e.prop_rad_s = GetElement(g_eng.point_tacrad, i);
+        e.engine_rad_s = GetElement(g_eng.engn_tacrad, i);
+        e.n1_percent = GetElement(g_eng.n1, i);
+        e.n2_percent = GetElement(g_eng.n2, i);
+        e.egt_c = GetElement(g_eng.egt, i);
+        e.cht_c = GetElement(g_eng.cht, i);
+        e.itt_c = GetElement(g_eng.itt, i);
+        e.oil_temp = GetElement(g_eng.oil_temp, i);
+        e.oil_press_psi = GetElement(g_eng.oil_press, i);
+        e.fuel_flow_kg_s = GetElement(g_eng.fuel_flow, i);
+        e.manifold_inhg = GetElement(g_eng.manifold, i);
+        e.torque_nm = GetElement(g_eng.torque, i);
+    }
+    if (g_eng.fuel_kg) {
+        st.tanks = std::clamp(XPLMGetDatavf(g_eng.fuel_kg, nullptr, 0, 0), 0, flytogether::kEngineSyncMaxTanks);
+        if (st.tanks > 0) XPLMGetDatavf(g_eng.fuel_kg, st.fuel_kg, 0, st.tanks);
+    }
+    return st;
+}
+
+void OnRemoteEngines(const uint8_t* data, size_t len, double now) {
+    if (g_shared_cockpit.role() != flytogether::SharedCockpitRole::kClient) {
         return;
     }
-    const int engines = std::clamp(g_num_engines_for_rpm_ref ? XPLMGetDatai(g_num_engines_for_rpm_ref) : 1, 0, 16);
-    float gear[16] = {};
-    if (g_prop_gear_ratio_ref && engines > 0) XPLMGetDatavf(g_prop_gear_ratio_ref, gear, 0, engines);
+    const auto st = flytogether::DecodeEngineState(data, len);
+    // Same newest-only rule as OnRemoteControls (relay and direct path).
+    const bool fresh = g_remote_engines && now - g_remote_engines_at_s <= kRemoteEnginesTimeoutS;
+    if (!st || (fresh && static_cast<int32_t>(st->sequence - g_remote_engines->sequence) <= 0)) {
+        return;
+    }
+    g_remote_engines = st;
+    g_remote_engines_at_s = now;
+}
+
+bool RemoteEnginesFresh(double now) {
+    return g_remote_engines && now - g_remote_engines_at_s <= kRemoteEnginesTimeoutS;
+}
+
+// Co-pilot, every frame while following the master.
+void ApplyRemoteEngines(double now) {
+    if (!g_physics_override_active || !RemoteEnginesFresh(now)) {
+        g_engines_applied_at_s = -1.0;
+        return;
+    }
+    const flytogether::EngineState& st = *g_remote_engines;
+    const double dt = g_engines_applied_at_s < 0.0 ? -1.0 : now - g_engines_applied_at_s;
+    g_engines_applied_at_s = now;
+    const float blend = dt < 0.0 ? 1.0f : static_cast<float>(1.0 - std::exp(-dt / kRpmSmoothingS));
+    const int engines = std::min(st.engines, OwnEngineCount());
+    for (int i = 0; i < engines; ++i) {
+        const flytogether::EngineGauges& e = st.engine[i];
+        g_shown_prop_rad_s[i] += (e.prop_rad_s - g_shown_prop_rad_s[i]) * blend;
+        g_shown_engine_rad_s[i] += (e.engine_rad_s - g_shown_engine_rad_s[i]) * blend;
+        SetElement(g_eng.point_tacrad, i, g_shown_prop_rad_s[i]);
+        SetElement(g_eng.engn_tacrad, i, g_shown_engine_rad_s[i]);
+        SetElement(g_eng.n1, i, e.n1_percent);
+        SetElement(g_eng.n2, i, e.n2_percent);
+        SetElement(g_eng.egt, i, e.egt_c);
+        SetElement(g_eng.cht, i, e.cht_c);
+        SetElement(g_eng.itt, i, e.itt_c);
+        SetElement(g_eng.ind_egt, i, e.egt_c);
+        SetElement(g_eng.ind_cht, i, e.cht_c);
+        SetElement(g_eng.ind_itt, i, e.itt_c);
+        for (int c = 0; c < kCylindersPerEngine; ++c) {
+            const int k = i * kCylindersPerEngine + c;
+            SetElement(g_eng.egt_cyl, k, e.egt_c);
+            SetElement(g_eng.cht_cyl, k, e.cht_c);
+            SetElement(g_eng.ind_egt_cyl, k, e.egt_c);
+            SetElement(g_eng.ind_cht_cyl, k, e.cht_c);
+        }
+        SetElement(g_eng.oil_temp, i, e.oil_temp);
+        SetElement(g_eng.oil_press, i, e.oil_press_psi);
+        SetElement(g_eng.fuel_flow, i, e.fuel_flow_kg_s);
+        SetElement(g_eng.manifold, i, e.manifold_inhg);
+        SetElement(g_eng.torque, i, e.torque_nm);
+    }
+    // Our engines don't burn anything meanwhile - the master's fuel, which
+    // is also what we continue with after taking the controls.
+    if (g_eng.fuel_kg && st.tanks > 0) {
+        float fuel[flytogether::kEngineSyncMaxTanks];
+        std::copy(st.fuel_kg, st.fuel_kg + st.tanks, fuel);
+        const int own_tanks = std::min(st.tanks, XPLMGetDatavf(g_eng.fuel_kg, nullptr, 0, 0));
+        if (own_tanks > 0) XPLMSetDatavf(g_eng.fuel_kg, fuel, 0, own_tanks);
+    }
+}
+
+// Fallback for a master without the engine message (v0.5.3): only the
+// prop RPM from its state packet, the same for every engine.
+void ApplyMasterEngineSpeed(const flytogether::AircraftStatePacket& latest) {
+    if (!g_eng.point_tacrad || !std::isfinite(latest.prop_rpm)) {
+        return;
+    }
+    const int engines = OwnEngineCount();
     const float prop_rad_s = std::max(0.0f, latest.prop_rpm) * 2.0f * 3.14159265f / 60.0f;
     for (int i = 0; i < engines; ++i) {
-        float prop = prop_rad_s;
-        float engine = gear[i] > 0.01f ? prop_rad_s / gear[i] : prop_rad_s;
-        XPLMSetDatavf(g_point_tacrad_ref, &prop, i, 1);
-        if (g_engn_tacrad_ref) XPLMSetDatavf(g_engn_tacrad_ref, &engine, i, 1);
+        const float gear = GetElement(g_eng.prop_gear_ratio, i);
+        SetElement(g_eng.point_tacrad, i, prop_rad_s);
+        SetElement(g_eng.engn_tacrad, i, gear > 0.01f ? prop_rad_s / gear : prop_rad_s);
     }
 }
 
@@ -2191,7 +2329,7 @@ void ApplyMasterPoseToOwnAircraft(const flytogether::AircraftPose& pose,
     // client's panel shows a parked aircraft. Also what ReleasePhysicsOverride
     // hands back on a role swap.
     if (latest && latest->protocol_version >= 2) {
-        ApplyMasterEngineSpeed(*latest);
+        if (!RemoteEnginesFresh(XPLMGetElapsedTime())) ApplyMasterEngineSpeed(*latest);
         if (g_local_vx_ref) XPLMSetDataf(g_local_vx_ref, latest->velocity_x_mps);
         if (g_local_vy_ref) XPLMSetDataf(g_local_vy_ref, latest->velocity_y_mps);
         if (g_local_vz_ref) XPLMSetDataf(g_local_vz_ref, latest->velocity_z_mps);
@@ -2374,6 +2512,11 @@ float SendSharedCockpitStateCallback(float /*elapsedSinceLastCall*/,
     g_shared_cockpit.SendOwnState(packet); // no-op unless we're MASTER
     if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kMaster) {
         SendSharedCockpitMessage(flytogether::EncodeControlsState(ReadOwnControls()));
+        const double now = XPLMGetElapsedTime();
+        if (now >= g_next_engine_send_s) {
+            g_next_engine_send_s = now + kEngineSendIntervalS;
+            SendSharedCockpitMessage(flytogether::EncodeEngineState(ReadOwnEngines()));
+        }
     }
 
     // 20 Hz, matching Formation mode's rate - Shared Cockpit needs at
@@ -2420,6 +2563,7 @@ float UpdateSharedCockpitCallback(float /*elapsedSinceLastCall*/,
             ReleasePhysicsOverride();
         }
         ApplyRemoteControls(now);
+        ApplyRemoteEngines(now);
 
         // Client-side aircraft-type mismatch check: the master's ICAO
         // comes along for free on every AircraftStatePacket it already
@@ -2854,6 +2998,10 @@ void SetupSharedCockpitRendezvousCallbacksOnce() {
             OnRemoteControls(plain.data(), plain.size(), now);
             return;
         }
+        if (magic == flytogether::kEngineSyncMagic) {
+            OnRemoteEngines(plain.data(), plain.size(), now);
+            return;
+        }
         if (magic == flytogether::kTimeSyncMagic) {
             if (g_shared_cockpit.role() == flytogether::SharedCockpitRole::kClient) {
                 if (const auto time = flytogether::DecodeTimeSyncPacket(plain.data(), plain.size())) {
@@ -3233,10 +3381,28 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc) {
     g_prop_ratio_ref = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_ratio");
     g_num_engines_ref = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
     g_engn_thro_use_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_thro_use");
-    g_engn_tacrad_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_tacrad");
-    g_point_tacrad_ref = XPLMFindDataRef("sim/flightmodel/engine/POINT_tacrad");
-    g_prop_gear_ratio_ref = XPLMFindDataRef("sim/aircraft/prop/acf_prop_gear_rat");
-    g_num_engines_for_rpm_ref = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
+    g_eng.num_engines = XPLMFindDataRef("sim/aircraft/engine/acf_num_engines");
+    g_eng.prop_gear_ratio = XPLMFindDataRef("sim/aircraft/prop/acf_prop_gear_rat");
+    g_eng.point_tacrad = XPLMFindDataRef("sim/flightmodel/engine/POINT_tacrad");
+    g_eng.engn_tacrad = XPLMFindDataRef("sim/flightmodel/engine/ENGN_tacrad");
+    g_eng.n1 = XPLMFindDataRef("sim/flightmodel/engine/ENGN_N1_");
+    g_eng.n2 = XPLMFindDataRef("sim/flightmodel/engine/ENGN_N2_");
+    g_eng.egt = XPLMFindDataRef("sim/flightmodel2/engines/EGT_deg_cel");
+    g_eng.cht = XPLMFindDataRef("sim/flightmodel2/engines/CHT_deg_cel");
+    g_eng.itt = XPLMFindDataRef("sim/flightmodel2/engines/ITT_deg_cel");
+    g_eng.egt_cyl = XPLMFindDataRef("sim/flightmodel2/engines/EGT_CYL_cel");
+    g_eng.cht_cyl = XPLMFindDataRef("sim/flightmodel2/engines/CHT_CYL_cel");
+    g_eng.ind_egt = XPLMFindDataRef("sim/cockpit2/engine/indicators/EGT_deg_cel");
+    g_eng.ind_cht = XPLMFindDataRef("sim/cockpit2/engine/indicators/CHT_deg_cel");
+    g_eng.ind_itt = XPLMFindDataRef("sim/cockpit2/engine/indicators/ITT_deg_cel");
+    g_eng.ind_egt_cyl = XPLMFindDataRef("sim/cockpit2/engine/indicators/EGT_CYL_deg_cel");
+    g_eng.ind_cht_cyl = XPLMFindDataRef("sim/cockpit2/engine/indicators/CHT_CYL_deg_cel");
+    g_eng.oil_temp = XPLMFindDataRef("sim/flightmodel/engine/ENGN_oil_temp_c");
+    g_eng.oil_press = XPLMFindDataRef("sim/flightmodel/engine/ENGN_oil_press_psi");
+    g_eng.fuel_flow = XPLMFindDataRef("sim/flightmodel/engine/ENGN_FF_");
+    g_eng.manifold = XPLMFindDataRef("sim/flightmodel/engine/ENGN_MPR");
+    g_eng.torque = XPLMFindDataRef("sim/flightmodel/engine/ENGN_TRQ");
+    g_eng.fuel_kg = XPLMFindDataRef("sim/flightmodel/weight/m_fuel");
     g_engn_mixt_ref = XPLMFindDataRef("sim/flightmodel/engine/ENGN_mixt");
     g_acf_eye_x_ref = XPLMFindDataRef("sim/aircraft/view/acf_peX");
     g_wind_alt_ref = XPLMFindDataRef("sim/weather/aircraft/wind_altitude_msl_m");

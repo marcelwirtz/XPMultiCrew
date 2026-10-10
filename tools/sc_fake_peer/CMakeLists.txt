@@ -16,6 +16,7 @@ add_executable(sc_fake_peer
     ${XPMC_ROOT}/plugin/src/net/secure_random.cpp
     ${XPMC_ROOT}/plugin/src/shared_cockpit/dataref_sync_protocol.cpp
     ${XPMC_ROOT}/plugin/src/shared_cockpit/controls_sync_protocol.cpp
+    ${XPMC_ROOT}/plugin/src/shared_cockpit/engine_sync_protocol.cpp
     ${XPMC_ROOT}/plugin/src/shared_cockpit/command_sync_protocol.cpp
     ${XPMC_ROOT}/plugin/src/shared_cockpit/shared_cockpit_config.cpp
     ${XPMC_ROOT}/third_party/monocypher/monocypher.c
